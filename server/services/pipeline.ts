@@ -482,6 +482,7 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
   };
 }
 
+
 // ── Stap 4: Voiceover genereren (via N8N) ──
 
 const VOICES_PATH = '/root/.openclaw/workspace/video-producer/presets/voices.json';
@@ -494,7 +495,6 @@ async function resolveVoiceId(voiceName: string): Promise<{ voice_id: string; na
     throw new Error('voices.json niet gevonden op ' + VOICES_PATH);
   }
 
-  // Zoek op exacte naam of "Naam — Beschrijving" formaat
   const cleanName = voiceName.split('—')[0].split('-')[0].trim().toLowerCase();
   const match = voices.find((v: any) =>
     v.name.toLowerCase() === cleanName ||
@@ -503,7 +503,7 @@ async function resolveVoiceId(voiceName: string): Promise<{ voice_id: string; na
   );
 
   if (!match) {
-    console.warn(`[Step 4] Voice "${voiceName}" niet gevonden, fallback naar eerste voice`);
+    console.warn('[Step 4] Voice "' + voiceName + '" niet gevonden, fallback naar eerste voice');
     if (voices.length === 0) throw new Error('Geen voices beschikbaar in voices.json');
     return { voice_id: voices[0].voice_id, name: voices[0].name };
   }
@@ -511,58 +511,66 @@ async function resolveVoiceId(voiceName: string): Promise<{ voice_id: string; na
   return { voice_id: match.voice_id, name: match.name };
 }
 
-async function pollForFile(filePath: string, intervalMs: number, timeoutMs: number): Promise<boolean> {
+async function pollForStatus(statusPath: string, intervalMs: number, timeoutMs: number): Promise<any> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const stat = await fs.stat(filePath);
-      if (stat.size > 0) return true;
-    } catch {}
+      const content = await readJson<any>(statusPath);
+      if (content.status === 'completed') return content;
+      if (content.status === 'failed') throw new Error(content.error || 'N8N workflow failed');
+    } catch (e: any) {
+      if (e.message && !e.message.includes('ENOENT') && !e.message.includes('Unexpected')) {
+        throw e;
+      }
+    }
     await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
-  return false;
+  throw new Error('Timeout: status.json niet gevonden of niet voltooid binnen de tijdslimiet');
 }
 
 export async function executeStep4(project: any, settings: any) {
   const projPath = projectDir(project.name);
   const scriptVoiceoverPath = path.join(projPath, 'script', 'script-voiceover.txt');
   const outputPath = path.join(projPath, 'audio', 'voiceover.mp3');
+  const statusPath = path.join(projPath, 'audio', 'voiceover-status.json');
 
-  // Check of schoon script bestaat
+  // Check of schoon script bestaat, zo niet: maak het aan
+  let scriptText: string;
   try {
-    const text = await readText(scriptVoiceoverPath);
-    if (!text.trim()) throw new Error('Bestand is leeg');
+    scriptText = await readText(scriptVoiceoverPath);
+    if (!scriptText.trim()) throw new Error('Bestand is leeg');
   } catch {
-    // Maak het aan vanuit script.txt als fallback
     console.log('[Step 4] script-voiceover.txt niet gevonden, maak aan vanuit script.txt...');
     const scriptPath = path.join(projPath, 'script', 'script.txt');
     const script = await readText(scriptPath);
-    const clean = script.replace(/\[CLIP:.*?\]\n?/g, '').replace(/\n{3,}/g, '\n\n').trim();
-    await writeText(scriptVoiceoverPath, clean);
+    scriptText = script.replace(/\[CLIP:.*?\]\n?/g, '').replace(/\n{3,}/g, '\n\n').trim();
+    await writeText(scriptVoiceoverPath, scriptText);
   }
 
   // Zoek voice_id op
   const voice = await resolveVoiceId(project.voice);
-  console.log(`[Step 4] Voice: ${voice.name} (${voice.voice_id})`);
+  console.log('[Step 4] Voice: ' + voice.name + ' (' + voice.voice_id + ')');
 
   // Zorg dat audio dir bestaat
   await ensureDir(path.join(projPath, 'audio'));
 
-  // Verwijder eventueel oud bestand zodat polling schoon is
+  // Verwijder oude status en audio zodat polling schoon is
+  try { await fs.unlink(statusPath); } catch {}
   try { await fs.unlink(outputPath); } catch {}
 
-  // Stuur webhook naar N8N
+  // Stuur webhook naar N8N — nu met tekst en API key in payload
   const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/audio-generator';
 
   const payload = {
     project: project.name,
-    script_path: scriptVoiceoverPath,
+    text: scriptText,
     output_path: outputPath,
     voice_id: voice.voice_id,
     model: 'eleven_flash_v2_5',
+    elevate_api_key: settings.elevateApiKey,
   };
 
-  console.log(`[Step 4] Webhook sturen naar ${n8nUrl}...`);
+  console.log('[Step 4] Webhook sturen naar ' + n8nUrl + '...');
 
   const response = await fetch(n8nUrl, {
     method: 'POST',
@@ -572,29 +580,22 @@ export async function executeStep4(project: any, settings: any) {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`N8N webhook mislukt (${response.status}): ${body}`);
+    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
   }
 
   const webhookResult = await response.json();
-  console.log(`[Step 4] N8N response: ${JSON.stringify(webhookResult)}`);
+  console.log('[Step 4] N8N response: ' + JSON.stringify(webhookResult));
 
-  // Poll tot het audio bestand bestaat (max 3 minuten)
-  console.log(`[Step 4] Wachten op audio bestand: ${outputPath}`);
-  const found = await pollForFile(outputPath, 5000, 180000);
+  // Poll status.json (max 3 minuten)
+  console.log('[Step 4] Wachten op status: ' + statusPath);
+  const status = await pollForStatus(statusPath, 5000, 180000);
 
-  if (!found) {
-    throw new Error('Voiceover timeout: audio bestand niet gevonden na 3 minuten. Check N8N logs en Discord.');
-  }
-
-  // Lees bestandsgrootte
-  const stat = await fs.stat(outputPath);
-  const fileSizeKb = Math.round(stat.size / 1024);
-
-  console.log(`[Step 4] Voiceover klaar! ${fileSizeKb} KB`);
+  console.log('[Step 4] Voiceover klaar! ' + (status.file_size_kb || 0) + ' KB, ' + (status.duration || 0).toFixed(1) + 's');
 
   return {
     audioPath: outputPath,
-    fileSizeKb,
+    fileSizeKb: status.file_size_kb || 0,
+    duration: status.duration || 0,
     voiceName: voice.name,
     voiceId: voice.voice_id,
   };
@@ -607,6 +608,7 @@ export async function executeStep5(project: any, settings: any) {
   const audioPath = path.join(projPath, 'audio', 'voiceover.mp3');
   const scriptPath = path.join(projPath, 'script', 'script.txt');
   const outputDir = path.join(projPath, 'audio') + '/';
+  const statusPath = path.join(projPath, 'audio', 'timestamps-status.json');
   const timestampsPath = path.join(projPath, 'audio', 'timestamps.json');
 
   // Check of voiceover bestaat
@@ -617,11 +619,12 @@ export async function executeStep5(project: any, settings: any) {
     throw new Error('voiceover.mp3 niet gevonden. Voer eerst stap 4 uit.');
   }
 
-  // Verwijder oude timestamps zodat polling schoon is
+  // Verwijder oude bestanden zodat polling schoon is
+  try { await fs.unlink(statusPath); } catch {}
   try { await fs.unlink(timestampsPath); } catch {}
   try { await fs.unlink(path.join(projPath, 'audio', 'clip-positions.json')); } catch {}
 
-  // Stuur webhook naar N8N
+  // Stuur webhook naar N8N — met API key in payload
   const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/timestamp-generator';
 
   const payload = {
@@ -629,9 +632,10 @@ export async function executeStep5(project: any, settings: any) {
     audio_path: audioPath,
     script_path: scriptPath,
     output_dir: outputDir,
+    assemblyai_api_key: settings.assemblyAiApiKey,
   };
 
-  console.log(`[Step 5] Webhook sturen naar ${n8nUrl}...`);
+  console.log('[Step 5] Webhook sturen naar ' + n8nUrl + '...');
 
   const response = await fetch(n8nUrl, {
     method: 'POST',
@@ -641,40 +645,24 @@ export async function executeStep5(project: any, settings: any) {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`N8N webhook mislukt (${response.status}): ${body}`);
+    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
   }
 
   const webhookResult = await response.json();
-  console.log(`[Step 5] N8N response: ${JSON.stringify(webhookResult)}`);
+  console.log('[Step 5] N8N response: ' + JSON.stringify(webhookResult));
 
-  // Poll tot timestamps.json bestaat (max 5 minuten)
-  console.log(`[Step 5] Wachten op timestamps: ${timestampsPath}`);
-  const found = await pollForFile(timestampsPath, 5000, 300000);
+  // Poll status.json (max 5 minuten)
+  console.log('[Step 5] Wachten op status: ' + statusPath);
+  const status = await pollForStatus(statusPath, 5000, 300000);
 
-  if (!found) {
-    throw new Error('Timestamps timeout: bestand niet gevonden na 5 minuten. Check N8N logs en Discord.');
-  }
-
-  // Lees resultaten
-  const timestamps = await readJson<any>(timestampsPath);
-
-  let clipPositions: any = null;
-  try {
-    clipPositions = await readJson(path.join(projPath, 'audio', 'clip-positions.json'));
-  } catch {}
-
-  const wordCount = timestamps.words?.length || 0;
-  const duration = timestamps.duration || 0;
-  const clipCount = clipPositions?.clips?.length || 0;
-
-  console.log(`[Step 5] Timestamps klaar! ${wordCount} woorden, ${Math.round(duration)}s, ${clipCount} clips`);
+  console.log('[Step 5] Timestamps klaar! ' + (status.word_count || 0) + ' woorden, ' + Math.round(status.duration || 0) + 's, ' + (status.clip_count || 0) + ' clips');
 
   return {
     timestampsPath,
-    wordCount,
-    duration: Math.round(duration * 10) / 10,
-    sentenceCount: timestamps.sentences?.length || 0,
-    clipCount,
-    totalDurationWithClips: clipPositions?.total_duration_with_clips || duration,
+    wordCount: status.word_count || 0,
+    duration: Math.round((status.duration || 0) * 10) / 10,
+    sentenceCount: status.sentence_count || 0,
+    clipCount: status.clip_count || 0,
+    totalDurationWithClips: status.total_duration_with_clips || status.duration || 0,
   };
 }
