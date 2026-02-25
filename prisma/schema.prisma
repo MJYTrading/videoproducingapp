@@ -1,0 +1,110 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../data/video-producer.db"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Settings {
+  id                  String  @id @default("singleton")
+  elevateApiKey       String  @default("")
+  n8nBaseUrl          String  @default("https://n8n.srv1275252.hstgr.cloud")
+  assemblyAiApiKey    String  @default("")
+  discordWebhookUrl   String  @default("")
+  discordUserId       String  @default("1154154714699665418")
+  openClawUrl         String  @default("http://127.0.0.1:18789")
+  openClawHooksToken  String  @default("")
+  defaultVoice        String  @default("Brody — Crime Narrator")
+  defaultVisualStyle  String  @default("ai-3d-render")
+  defaultLanguage     String  @default("EN")
+  defaultScriptLength Int     @default(5000)
+  defaultSubtitles    Boolean @default(true)
+  defaultColorGrading String  @default("cinematic_dark")
+}
+
+model Project {
+  id                  String    @id @default(cuid())
+  name                String
+  title               String
+  description         String?
+  language            String    @default("EN")
+  scriptSource        String    @default("new")
+  referenceVideos     String    @default("[]")
+  scriptLength        Int?
+  scriptUrl           String?
+  voice               String
+  backgroundMusic     Boolean   @default(false)
+  visualStyle         String
+  visualStyleParent   String?
+  customVisualStyle   String?
+  imageSelectionMode  String    @default("auto")
+  imagesPerScene      Int       @default(1)
+  selectedImages      String    @default("[]")
+  transitionMode      String    @default("none")
+  uniformTransition   String?
+  sceneTransitions    String    @default("[]")
+  useClips            Boolean   @default(false)
+  referenceClips      String    @default("[]")
+  montageClips        String    @default("[]")
+  stockImages         Boolean   @default(false)
+  checkpoints         String    @default("[]")
+  feedbackHistory     String    @default("[]")
+  colorGrading        String    @default("Geen")
+  subtitles           Boolean   @default(true)
+  output              String    @default("YouTube 1080p")
+  status              String    @default("config")
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  steps               Step[]
+  logs                LogEntry[]
+}
+
+model Step {
+  id             String    @id @default(cuid())
+  stepNumber     Int
+  name           String
+  executor       String
+  status         String    @default("waiting")
+  duration       Int?
+  error          String?
+  retryCount     Int       @default(0)
+  startedAt      DateTime?
+  firstAttemptAt DateTime?
+  result         String?
+  aiResponse     String?
+  attemptNumber  Int       @default(1)
+  metadata       String?
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@unique([projectId, stepNumber])
+}
+
+model LogEntry {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  level     String
+  step      Int
+  source    String
+  message   String
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}

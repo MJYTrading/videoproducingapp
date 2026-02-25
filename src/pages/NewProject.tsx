@@ -76,7 +76,7 @@ export default function NewProject() {
     setVisualStyleParent(parentId);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!name || !title) {
@@ -84,7 +84,7 @@ export default function NewProject() {
       return;
     }
 
-    const project = addProject({
+    const project = await addProject({
       name,
       title,
       description: description || undefined,

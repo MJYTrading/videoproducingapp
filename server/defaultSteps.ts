@@ -1,0 +1,16 @@
+export const DEFAULT_STEPS = [
+  { stepNumber: 0,  name: 'Config validatie',         executor: 'App' },
+  { stepNumber: 1,  name: 'Transcripts ophalen',      executor: 'App' },
+  { stepNumber: 2,  name: 'Style profile maken',      executor: 'Elevate AI' },
+  { stepNumber: 3,  name: 'Script schrijven',          executor: 'Elevate AI' },
+  { stepNumber: 4,  name: 'Voiceover genereren',       executor: 'N8N' },
+  { stepNumber: 5,  name: 'Timestamps genereren',      executor: 'N8N' },
+  { stepNumber: 6,  name: 'Scene prompts genereren',   executor: 'Elevate AI' },
+  { stepNumber: 7,  name: 'Assets zoeken',             executor: 'N8N' },
+  { stepNumber: 8,  name: 'YouTube clips ophalen',     executor: 'N8N' },
+  { stepNumber: 9,  name: 'Video scenes genereren',    executor: 'N8N' },
+  { stepNumber: 10, name: 'Video editing',             executor: 'N8N' },
+  { stepNumber: 11, name: 'Color grading',             executor: 'N8N' },
+  { stepNumber: 12, name: 'Subtitles',                 executor: 'App' },
+  { stepNumber: 13, name: 'Final export',              executor: 'N8N' },
+];
