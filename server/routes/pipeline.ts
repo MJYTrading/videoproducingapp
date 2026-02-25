@@ -6,7 +6,7 @@
 
 import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
-import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep6 } from '../services/pipeline.js';
+import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6 } from '../services/pipeline.js';
 
 const router = Router();
 
@@ -45,10 +45,10 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
     });
 
     const stepNames: Record<number, string> = {
-      0: 'Config validatie', 1: 'Transcripts ophalen', 2: 'Style profile maken',
+      0: 'Config validatie', 1: 'Transcripts ophalen', 2: 'Style profile maken', 4: 'Voiceover genereren', 5: 'Timestamps genereren',
       3: 'Script schrijven', 6: 'Scene prompts genereren',
     };
-    const source = stepNumber <= 1 || stepNumber === 12 ? 'App' : 'Elevate AI';
+    const source = stepNumber <= 1 || stepNumber === 12 ? 'App' : [4, 5, 7, 8, 9, 10, 11, 13].includes(stepNumber) ? 'N8N' : 'Elevate AI';
 
     await prisma.logEntry.create({
       data: { level: 'info', step: stepNumber, source, message: `${stepNames[stepNumber] || `Stap ${stepNumber}`} gestart...`, projectId: id },
@@ -90,6 +90,18 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
           const scriptResult = await executeStep3(projectData, { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey });
           result = { wordCount: scriptResult.wordCount, sections: scriptResult.sections, filePath: scriptResult.filePath };
           metadata = { wordCount: scriptResult.wordCount };
+          break;
+        }
+        case 4: {
+          const voiceoverResult = await executeStep4(projectData, settings);
+          result = voiceoverResult;
+          metadata = { fileSizeKb: voiceoverResult.fileSizeKb, voiceName: voiceoverResult.voiceName };
+          break;
+        }
+        case 5: {
+          const timestampResult = await executeStep5(projectData, settings);
+          result = timestampResult;
+          metadata = { wordCount: timestampResult.wordCount, duration: timestampResult.duration, clipCount: timestampResult.clipCount };
           break;
         }
         case 6: {

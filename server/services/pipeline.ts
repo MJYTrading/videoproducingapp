@@ -481,3 +481,200 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
     preview: allScenes.slice(0, 3),
   };
 }
+
+// ── Stap 4: Voiceover genereren (via N8N) ──
+
+const VOICES_PATH = '/root/.openclaw/workspace/video-producer/presets/voices.json';
+
+async function resolveVoiceId(voiceName: string): Promise<{ voice_id: string; name: string }> {
+  let voices: any[] = [];
+  try {
+    voices = await readJson(VOICES_PATH);
+  } catch {
+    throw new Error('voices.json niet gevonden op ' + VOICES_PATH);
+  }
+
+  // Zoek op exacte naam of "Naam — Beschrijving" formaat
+  const cleanName = voiceName.split('—')[0].split('-')[0].trim().toLowerCase();
+  const match = voices.find((v: any) =>
+    v.name.toLowerCase() === cleanName ||
+    v.name.toLowerCase() === voiceName.toLowerCase() ||
+    voiceName.toLowerCase().includes(v.name.toLowerCase())
+  );
+
+  if (!match) {
+    console.warn(`[Step 4] Voice "${voiceName}" niet gevonden, fallback naar eerste voice`);
+    if (voices.length === 0) throw new Error('Geen voices beschikbaar in voices.json');
+    return { voice_id: voices[0].voice_id, name: voices[0].name };
+  }
+
+  return { voice_id: match.voice_id, name: match.name };
+}
+
+async function pollForFile(filePath: string, intervalMs: number, timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const stat = await fs.stat(filePath);
+      if (stat.size > 0) return true;
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+
+export async function executeStep4(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const scriptVoiceoverPath = path.join(projPath, 'script', 'script-voiceover.txt');
+  const outputPath = path.join(projPath, 'audio', 'voiceover.mp3');
+
+  // Check of schoon script bestaat
+  try {
+    const text = await readText(scriptVoiceoverPath);
+    if (!text.trim()) throw new Error('Bestand is leeg');
+  } catch {
+    // Maak het aan vanuit script.txt als fallback
+    console.log('[Step 4] script-voiceover.txt niet gevonden, maak aan vanuit script.txt...');
+    const scriptPath = path.join(projPath, 'script', 'script.txt');
+    const script = await readText(scriptPath);
+    const clean = script.replace(/\[CLIP:.*?\]\n?/g, '').replace(/\n{3,}/g, '\n\n').trim();
+    await writeText(scriptVoiceoverPath, clean);
+  }
+
+  // Zoek voice_id op
+  const voice = await resolveVoiceId(project.voice);
+  console.log(`[Step 4] Voice: ${voice.name} (${voice.voice_id})`);
+
+  // Zorg dat audio dir bestaat
+  await ensureDir(path.join(projPath, 'audio'));
+
+  // Verwijder eventueel oud bestand zodat polling schoon is
+  try { await fs.unlink(outputPath); } catch {}
+
+  // Stuur webhook naar N8N
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/audio-generator';
+
+  const payload = {
+    project: project.name,
+    script_path: scriptVoiceoverPath,
+    output_path: outputPath,
+    voice_id: voice.voice_id,
+    model: 'eleven_flash_v2_5',
+  };
+
+  console.log(`[Step 4] Webhook sturen naar ${n8nUrl}...`);
+
+  const response = await fetch(n8nUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`N8N webhook mislukt (${response.status}): ${body}`);
+  }
+
+  const webhookResult = await response.json();
+  console.log(`[Step 4] N8N response: ${JSON.stringify(webhookResult)}`);
+
+  // Poll tot het audio bestand bestaat (max 3 minuten)
+  console.log(`[Step 4] Wachten op audio bestand: ${outputPath}`);
+  const found = await pollForFile(outputPath, 5000, 180000);
+
+  if (!found) {
+    throw new Error('Voiceover timeout: audio bestand niet gevonden na 3 minuten. Check N8N logs en Discord.');
+  }
+
+  // Lees bestandsgrootte
+  const stat = await fs.stat(outputPath);
+  const fileSizeKb = Math.round(stat.size / 1024);
+
+  console.log(`[Step 4] Voiceover klaar! ${fileSizeKb} KB`);
+
+  return {
+    audioPath: outputPath,
+    fileSizeKb,
+    voiceName: voice.name,
+    voiceId: voice.voice_id,
+  };
+}
+
+// ── Stap 5: Timestamps genereren (via N8N) ──
+
+export async function executeStep5(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const audioPath = path.join(projPath, 'audio', 'voiceover.mp3');
+  const scriptPath = path.join(projPath, 'script', 'script.txt');
+  const outputDir = path.join(projPath, 'audio') + '/';
+  const timestampsPath = path.join(projPath, 'audio', 'timestamps.json');
+
+  // Check of voiceover bestaat
+  try {
+    const stat = await fs.stat(audioPath);
+    if (stat.size === 0) throw new Error('Bestand is leeg');
+  } catch {
+    throw new Error('voiceover.mp3 niet gevonden. Voer eerst stap 4 uit.');
+  }
+
+  // Verwijder oude timestamps zodat polling schoon is
+  try { await fs.unlink(timestampsPath); } catch {}
+  try { await fs.unlink(path.join(projPath, 'audio', 'clip-positions.json')); } catch {}
+
+  // Stuur webhook naar N8N
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/timestamp-generator';
+
+  const payload = {
+    project: project.name,
+    audio_path: audioPath,
+    script_path: scriptPath,
+    output_dir: outputDir,
+  };
+
+  console.log(`[Step 5] Webhook sturen naar ${n8nUrl}...`);
+
+  const response = await fetch(n8nUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`N8N webhook mislukt (${response.status}): ${body}`);
+  }
+
+  const webhookResult = await response.json();
+  console.log(`[Step 5] N8N response: ${JSON.stringify(webhookResult)}`);
+
+  // Poll tot timestamps.json bestaat (max 5 minuten)
+  console.log(`[Step 5] Wachten op timestamps: ${timestampsPath}`);
+  const found = await pollForFile(timestampsPath, 5000, 300000);
+
+  if (!found) {
+    throw new Error('Timestamps timeout: bestand niet gevonden na 5 minuten. Check N8N logs en Discord.');
+  }
+
+  // Lees resultaten
+  const timestamps = await readJson<any>(timestampsPath);
+
+  let clipPositions: any = null;
+  try {
+    clipPositions = await readJson(path.join(projPath, 'audio', 'clip-positions.json'));
+  } catch {}
+
+  const wordCount = timestamps.words?.length || 0;
+  const duration = timestamps.duration || 0;
+  const clipCount = clipPositions?.clips?.length || 0;
+
+  console.log(`[Step 5] Timestamps klaar! ${wordCount} woorden, ${Math.round(duration)}s, ${clipCount} clips`);
+
+  return {
+    timestampsPath,
+    wordCount,
+    duration: Math.round(duration * 10) / 10,
+    sentenceCount: timestamps.sentences?.length || 0,
+    clipCount,
+    totalDurationWithClips: clipPositions?.total_duration_with_clips || duration,
+  };
+}
