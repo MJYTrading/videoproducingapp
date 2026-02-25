@@ -25,7 +25,7 @@ router.patch('/', async (req: Request, res: Response) => {
       'discordWebhookUrl', 'discordUserId', 'openClawUrl',
       'openClawHooksToken', 'defaultVoice', 'defaultVisualStyle',
       'defaultLanguage', 'defaultScriptLength', 'defaultSubtitles',
-      'defaultColorGrading',
+      'defaultColorGrading', 'youtubeTranscriptApiKey', 'anthropicApiKey',
     ];
     for (const field of allowedFields) {
       if (data[field] !== undefined) updateData[field] = data[field];

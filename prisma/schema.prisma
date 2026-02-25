@@ -37,6 +37,8 @@ model Settings {
   defaultScriptLength Int     @default(5000)
   defaultSubtitles    Boolean @default(true)
   defaultColorGrading String  @default("cinematic_dark")
+  youtubeTranscriptApiKey String @default("")
+  anthropicApiKey      String  @default("")
 }
 
 model Project {

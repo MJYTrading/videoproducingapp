@@ -6,6 +6,7 @@ import { authMiddleware } from './auth.js';
 import authRoutes from './routes/auth.js';
 import projectRoutes from './routes/projects.js';
 import settingsRoutes from './routes/settings.js';
+import pipelineRoutes from './routes/pipeline.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +26,7 @@ app.use('/api/auth', authRoutes);
 app.use(authMiddleware);
 
 app.use('/api/projects', projectRoutes);
+app.use('/api/projects', pipelineRoutes);
 app.use('/api/settings', settingsRoutes);
 
 const frontendPath = path.join(__dirname, '..', 'dist-frontend');

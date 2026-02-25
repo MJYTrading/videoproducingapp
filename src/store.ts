@@ -45,6 +45,8 @@ export const useStore = create<Store>((set, get) => ({
     defaultVoice: 'Brody — Crime Narrator', defaultVisualStyle: 'ai-3d-render',
     defaultLanguage: 'EN', defaultScriptLength: 5000, defaultSubtitles: true,
     defaultColorGrading: 'cinematic_dark',
+    youtubeTranscriptApiKey: '',
+      anthropicApiKey: '',
   },
   toasts: [],
   loading: false,

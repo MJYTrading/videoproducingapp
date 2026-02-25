@@ -128,6 +128,8 @@ export interface Settings {
   defaultScriptLength: number;
   defaultSubtitles: boolean;
   defaultColorGrading: string;
+  youtubeTranscriptApiKey: string;
+  anthropicApiKey: string;
 }
 
 export interface ConnectionStatus {

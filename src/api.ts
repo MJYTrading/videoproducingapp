@@ -127,3 +127,19 @@ export const settings = {
     return res.json();
   },
 };
+
+export const pipeline = {
+  async executeStep(projectId: string, stepNumber: number): Promise<any> {
+    const res = await apiFetch(`/projects/${projectId}/execute-step/${stepNumber}`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Kon stap niet starten');
+    }
+    return res.json();
+  },
+  async getStepResult(projectId: string, stepNumber: number): Promise<any> {
+    const res = await apiFetch(`/projects/${projectId}/step-result/${stepNumber}`);
+    if (!res.ok) throw new Error('Kon resultaat niet ophalen');
+    return res.json();
+  },
+};

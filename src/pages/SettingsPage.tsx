@@ -140,6 +140,14 @@ export default function SettingsPage() {
                 type="password"
               />
               <ConnectionField
+                id="anthropic"
+                label="Anthropic API (fallback)"
+                description="Backup LLM als Elevate niet werkt"
+                field="anthropicApiKey"
+                value={localSettings.anthropicApiKey}
+                type="password"
+              />
+              <ConnectionField
                 id="n8n"
                 label="N8N"
                 description="Workflow automation"
