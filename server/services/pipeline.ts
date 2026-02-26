@@ -578,12 +578,12 @@ export async function executeStep6b(project: any, settings: any) {
   let completed = 0;
   let failed = 0;
 
-  for (let i = 0; i < aiScenes.length; i++) {
-    const scene = aiScenes[i];
+  // ── Stap 1: Alle webhooks tegelijk versturen ──
+  const sceneJobs: { sceneId: number; scene: any; statusPath: string; webhookOk: boolean }[] = [];
+
+  await Promise.all(aiScenes.map(async (scene: any, i: number) => {
     const sceneId = scene.id;
     const statusPath = path.join(projPath, 'assets', 'image-options', 'scene' + sceneId + '-status.json');
-
-    console.log('[Step 6b] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') starten...');
 
     const prompts = isAutoMode
       ? [scene.visual_prompt_variants[0] || scene.visual_prompt]
@@ -600,7 +600,6 @@ export async function executeStep6b(project: any, settings: any) {
     };
 
     try {
-      // Verwijder vorige status
       try { await fs.unlink(statusPath); } catch {}
 
       const response = await fetch(n8nUrl, {
@@ -614,32 +613,11 @@ export async function executeStep6b(project: any, settings: any) {
         throw new Error('Webhook mislukt (' + response.status + '): ' + body);
       }
 
-      console.log('[Step 6b] Scene ' + sceneId + ' webhook verstuurd, wachten op images...');
-
-      // Poll voor deze scene (max 3 minuten — images zijn snel)
-      const status = await pollForStatus(statusPath, 5000, 180000);
-
-      if (status.status === 'completed') {
-        completed++;
-        allOptions.push({
-          scene_id: sceneId,
-          text: scene.text || '',
-          visual_prompt: scene.visual_prompt,
-          options: status.options || [],
-        });
-        console.log('[Step 6b] Scene ' + sceneId + ' klaar! (' + completed + '/' + aiScenes.length + ')');
-      } else {
-        failed++;
-        allOptions.push({
-          scene_id: sceneId,
-          text: scene.text || '',
-          visual_prompt: scene.visual_prompt,
-          options: [],
-          error: status.error || 'Unknown',
-        });
-        console.warn('[Step 6b] Scene ' + sceneId + ' mislukt: ' + (status.error || 'Unknown'));
-      }
+      console.log('[Step 6b] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') webhook verstuurd');
+      sceneJobs.push({ sceneId, scene, statusPath, webhookOk: true });
     } catch (err: any) {
+      console.error('[Step 6b] Scene ' + sceneId + ' webhook error: ' + err.message);
+      sceneJobs.push({ sceneId, scene, statusPath, webhookOk: false });
       failed++;
       allOptions.push({
         scene_id: sceneId,
@@ -648,9 +626,49 @@ export async function executeStep6b(project: any, settings: any) {
         options: [],
         error: err.message,
       });
-      console.error('[Step 6b] Scene ' + sceneId + ' error: ' + err.message);
     }
-  }
+  }));
+
+  const activeJobs = sceneJobs.filter(j => j.webhookOk);
+  console.log('[Step 6b] ' + activeJobs.length + '/' + aiScenes.length + ' webhooks verstuurd, parallel pollen...');
+
+  // ── Stap 2: Alle status files parallel pollen ──
+  await Promise.all(activeJobs.map(async (job) => {
+    try {
+      const status = await pollForStatus(job.statusPath, 5000, 180000);
+
+      if (status.status === 'completed') {
+        completed++;
+        allOptions.push({
+          scene_id: job.sceneId,
+          text: job.scene.text || '',
+          visual_prompt: job.scene.visual_prompt,
+          options: status.options || [],
+        });
+        console.log('[Step 6b] Scene ' + job.sceneId + ' klaar! (' + completed + '/' + aiScenes.length + ')');
+      } else {
+        failed++;
+        allOptions.push({
+          scene_id: job.sceneId,
+          text: job.scene.text || '',
+          visual_prompt: job.scene.visual_prompt,
+          options: [],
+          error: status.error || 'Unknown',
+        });
+        console.warn('[Step 6b] Scene ' + job.sceneId + ' mislukt: ' + (status.error || 'Unknown'));
+      }
+    } catch (err: any) {
+      failed++;
+      allOptions.push({
+        scene_id: job.sceneId,
+        text: job.scene.text || '',
+        visual_prompt: job.scene.visual_prompt,
+        options: [],
+        error: err.message,
+      });
+      console.error('[Step 6b] Scene ' + job.sceneId + ' poll error: ' + err.message);
+    }
+  }));
 
   // Schrijf alle opties naar image-options.json
   const imageOptionsPath = path.join(projPath, 'assets', 'image-options.json');
