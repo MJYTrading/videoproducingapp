@@ -118,6 +118,7 @@ export interface Project {
   priority?: number;
   queuePosition?: number;
   channelId?: string;
+  driveUrl?: string;
 }
 
 export interface Settings {

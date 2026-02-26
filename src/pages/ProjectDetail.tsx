@@ -172,6 +172,23 @@ export default function ProjectDetail() {
             </div>
           </div>
 
+          {project.driveUrl && (
+            <div className="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg flex items-center gap-3">
+              <span className="text-green-400 text-lg">📁</span>
+              <div className="flex-1">
+                <span className="text-green-400 font-medium">Google Drive</span>
+                <a
+                  href={project.driveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-3 text-blue-400 hover:text-blue-300 underline text-sm"
+                >
+                  Open in Drive →
+                </a>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-3">
             {project.status === 'config' && (
               <button

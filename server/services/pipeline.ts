@@ -1381,3 +1381,50 @@ export async function executeStep13(project: any, settings: any) {
     format: status.format,
   };
 }
+
+// ── Stap 14: Google Drive Upload ──
+
+export async function executeStep14(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const statusPath = path.join(projPath, 'drive-upload-status.json');
+  const channelName = project.channel?.name || 'Geen Kanaal';
+
+  console.log(`[Step 14] Google Drive upload starten voor ${project.name}...`);
+
+  try { await fs.unlink(statusPath); } catch {}
+
+  // Voer het upload script uit via child_process
+  const { execSync } = await import('child_process');
+  const result = execSync(
+    `bash /root/video-producer-app/scripts/gdrive-upload.sh "${project.name}" "${channelName}"`,
+    { timeout: 600000, encoding: 'utf-8' }
+  );
+
+  let status;
+  try {
+    status = JSON.parse(result.trim());
+  } catch {
+    // Lees status bestand als fallback
+    status = await pollForStatus(statusPath, 5000, 60000);
+  }
+
+  if (status.status === 'error') {
+    throw new Error(status.message || 'Google Drive upload mislukt');
+  }
+
+  console.log(`[Step 14] Upload klaar! ${status.files_uploaded} bestanden → ${status.drive_url}`);
+
+  // Sla drive URL op in project
+  const prisma = (await import('../db.js')).default;
+  await prisma.project.update({
+    where: { id: project.id },
+    data: { driveUrl: status.drive_url },
+  });
+
+  return {
+    driveUrl: status.drive_url,
+    drivePath: status.drive_path,
+    filesUploaded: status.files_uploaded,
+    errors: status.errors,
+  };
+}

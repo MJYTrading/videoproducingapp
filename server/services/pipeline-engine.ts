@@ -17,7 +17,7 @@ import {
   executeStep0, executeStep1, executeStep2, executeStep3,
   executeStep4, executeStep5, executeStep6, executeStep6b,
   executeStep7, executeStep8, executeStep9, executeStep10,
-  executeStep11, executeStep12, executeStep13,
+  executeStep11, executeStep12, executeStep13, executeStep14,
 } from './pipeline.js';
 
 // ── Types ──
@@ -83,7 +83,7 @@ const STEP_CONFIG: Record<number, {
 };
 
 // Stap volgorde voor display (stepNumber waarden)
-const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 65, 7, 8, 9, 10, 11, 12, 13];
+const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 65, 7, 8, 9, 10, 11, 12, 13, 14];
 
 // Parallel groep: stappen 65, 7, 8 mogen tegelijk starten zodra stap 6 klaar is
 const PARALLEL_GROUP = [65, 7, 8];
@@ -97,7 +97,7 @@ const activePipelines: Map<string, PipelineState> = new Map();
 async function getProjectData(projectId: string) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    include: { steps: { orderBy: { stepNumber: 'asc' } } },
+    include: { steps: { orderBy: { stepNumber: 'asc' } }, channel: true },
   });
   if (!project) throw new Error('Project niet gevonden');
   return {
@@ -304,6 +304,7 @@ async function executeStepFunction(
     case 11: return executeStep11(project, settings);
     case 12: return executeStep12(project, settings);
     case 13: return executeStep13(project, settings);
+    case 14: return executeStep14(project, settings);
     default: throw new Error(`Stap ${stepNumber} niet geïmplementeerd`);
   }
 }
