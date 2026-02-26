@@ -529,10 +529,9 @@ export async function executeStep6b(project: any, settings: any) {
     return { skipped: true, reason: 'Geen scenes met visual_prompt_variants in scene-prompts.json' };
   }
 
-  // Check of imageSelectionMode manual is
-  if (project.imageSelectionMode !== 'manual') {
-    console.log('[Step 6b] Image selectie staat op auto — stap overgeslagen');
-    return { skipped: true, reason: 'Image selectie mode is auto, geen handmatige selectie nodig' };
+  const isAutoMode = project.imageSelectionMode !== 'manual';
+  if (isAutoMode) {
+    console.log('[Step 6b] Auto mode: 1 image per scene genereren, automatisch selecteren');
   }
 
   const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/image-options-generator';
@@ -551,10 +550,14 @@ export async function executeStep6b(project: any, settings: any) {
 
     console.log('[Step 6b] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') starten...');
 
+    const prompts = isAutoMode
+      ? [scene.visual_prompt_variants[0] || scene.visual_prompt]
+      : scene.visual_prompt_variants.slice(0, 3);
+
     const payload = {
       project: project.name,
       scene_id: sceneId,
-      visual_prompts: scene.visual_prompt_variants.slice(0, 3),
+      visual_prompts: prompts,
       aspect_ratio: aspectRatio,
       output_dir: imageOptionsDir,
       elevate_api_key: settings.elevateApiKey,
@@ -627,11 +630,33 @@ export async function executeStep6b(project: any, settings: any) {
 
   console.log('[Step 6b] Klaar! ' + completed + ' scenes gelukt, ' + failed + ' mislukt');
 
+  // Auto mode: schrijf automatisch image-selections.json (altijd optie 1)
+  if (isAutoMode) {
+    const autoSelections = allOptions
+      .filter((s: any) => s.options && s.options.length > 0)
+      .map((s: any) => ({
+        scene_id: s.scene_id,
+        chosen_option: 1,
+        chosen_path: s.options[0]?.path || '',
+      }));
+
+    const selectionsPath = path.join(projPath, 'assets', 'image-selections.json');
+    await writeJson(selectionsPath, {
+      project: project.name,
+      saved_at: new Date().toISOString(),
+      auto_selected: true,
+      total_selections: autoSelections.length,
+      selections: autoSelections,
+    });
+    console.log('[Step 6b] Auto mode: ' + autoSelections.length + ' images automatisch geselecteerd');
+  }
+
   return {
     totalScenes: aiScenes.length,
     scenesCompleted: completed,
     scenesFailed: failed,
     filePath: imageOptionsPath,
+    autoSelected: isAutoMode,
   };
 }
 
@@ -1015,11 +1040,12 @@ export async function executeStep8(project: any, settings: any) {
 }
 
 
-// ── Stap 9: Video scenes genereren (VEO 3) via N8N ──
+// ── Stap 9: Video scenes genereren (VEO 3 image-to-video) via N8N ──
 
 export async function executeStep9(project: any, settings: any) {
   const projPath = projectDir(project.name);
   const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
+  const selectionsPath = path.join(projPath, 'assets', 'image-selections.json');
   const statusPath = path.join(projPath, 'assets', 'scenes-status.json');
   const outputDir = path.join(projPath, 'assets', 'scenes') + '/';
 
@@ -1029,6 +1055,17 @@ export async function executeStep9(project: any, settings: any) {
   } catch {
     throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 6 uit.');
   }
+
+  // Lees image selecties (van stap 6b)
+  let imageSelections: any = { selections: [] };
+  try {
+    imageSelections = await readJson(selectionsPath);
+    console.log('[Step 9] ' + (imageSelections.selections?.length || 0) + ' image selecties geladen');
+  } catch {
+    throw new Error('image-selections.json niet gevonden. Voer eerst stap 6b uit.');
+  }
+
+  const selections = imageSelections.selections || [];
 
   const aiScenes = (scenePrompts.scenes || []).filter(
     (s: any) => s.asset_type === 'ai_video' || s.type === 'ai_video'
@@ -1042,7 +1079,7 @@ export async function executeStep9(project: any, settings: any) {
   const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/video-scene-generator';
   const aspectRatio = project.output === 'youtube_short' ? 'portrait' : 'landscape';
 
-  console.log(`[Step 9] ${aiScenes.length} scenes genereren, 1 per keer via ${n8nUrl}`);
+  console.log('[Step 9] ' + aiScenes.length + ' scenes genereren via image-to-video, 1 per keer via ' + n8nUrl);
 
   const results: any[] = [];
   let completed = 0;
@@ -1051,7 +1088,20 @@ export async function executeStep9(project: any, settings: any) {
   for (let i = 0; i < aiScenes.length; i++) {
     const scene = aiScenes[i];
     const sceneId = scene.id;
-    console.log(`[Step 9] Scene ${sceneId} (${i + 1}/${aiScenes.length}) starten...`);
+    console.log('[Step 9] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') starten...');
+
+    // Zoek de image selectie voor deze scene
+    const selection = selections.find((s: any) => s.scene_id === sceneId || String(s.scene_id) === String(sceneId));
+    const sourceImagePath = selection?.chosen_path || '';
+
+    if (!sourceImagePath) {
+      console.warn('[Step 9] Scene ' + sceneId + ': geen source image, overgeslagen');
+      failed++;
+      results.push({ scene_id: sceneId, status: 'failed', error: 'Geen source image geselecteerd' });
+      continue;
+    }
+
+    console.log('[Step 9] Scene ' + sceneId + ': image-to-video met ' + sourceImagePath);
 
     const payload = {
       project: project.name,
@@ -1061,6 +1111,7 @@ export async function executeStep9(project: any, settings: any) {
       aspect_ratio: aspectRatio,
       output_dir: outputDir,
       elevate_api_key: settings.elevateApiKey,
+      source_image_path: sourceImagePath,
     };
 
     try {

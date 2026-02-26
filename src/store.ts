@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { Project, Settings, Step, LogEntry, StepStatus } from './types';
 import * as api from './api';
 
-let pipelineIntervals: Map<string, NodeJS.Timeout> = new Map();
+// Polling interval voor project refresh tijdens pipeline
+let pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
 
 interface Store {
   projects: Project[];
@@ -20,11 +21,12 @@ interface Store {
   updateSettings: (updates: Partial<Settings>) => Promise<void>;
   updateStepStatus: (projectId: string, stepId: number, status: StepStatus, extras?: Partial<Step>) => Promise<void>;
   addLogEntry: (projectId: string, level: 'info' | 'warn' | 'error', step: number, source: string, message: string) => Promise<void>;
+  // Pipeline Engine — echte server calls
   startPipeline: (projectId: string) => void;
   pausePipeline: (projectId: string) => void;
   resumePipeline: (projectId: string) => void;
-  retryStep: (projectId: string, stepId: number) => void;
-  skipStep: (projectId: string, stepId: number) => void;
+  retryStep: (projectId: string, stepNumber: number) => void;
+  skipStep: (projectId: string, stepNumber: number) => void;
   retryFailed: (projectId: string) => void;
   forceContinue: (projectId: string) => void;
   submitFeedback: (projectId: string, stepNumber: number, feedback: string) => void;
@@ -35,6 +37,8 @@ interface Store {
   setSceneTransition: (projectId: string, sceneId: string, transitionId: string) => void;
   addToast: (message: string, type: 'success' | 'error' | 'info' | 'ai') => void;
   removeToast: (id: string) => void;
+  startPolling: (projectId: string) => void;
+  stopPolling: (projectId: string) => void;
 }
 
 export const useStore = create<Store>((set, get) => ({
@@ -47,7 +51,7 @@ export const useStore = create<Store>((set, get) => ({
     defaultLanguage: 'EN', defaultScriptLength: 5000, defaultSubtitles: true,
     defaultColorGrading: 'cinematic_dark',
     youtubeTranscriptApiKey: '',
-      anthropicApiKey: '',
+    anthropicApiKey: '',
   },
   toasts: [],
   loading: false,
@@ -61,6 +65,13 @@ export const useStore = create<Store>((set, get) => ({
         api.projects.getAll(), api.settings.get(),
       ]);
       set({ projects: projectsData, settings: settingsData, initialized: true, loading: false });
+
+      // Start polling voor actieve projecten
+      for (const p of projectsData) {
+        if (p.status === 'running' || p.status === 'review') {
+          get().startPolling(p.id);
+        }
+      }
     } catch (error) {
       console.error('Failed to initialize store:', error);
       set({ loading: false, initialized: true });
@@ -87,8 +98,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   deleteProject: async (id) => {
-    const interval = pipelineIntervals.get(id);
-    if (interval) { clearInterval(interval); pipelineIntervals.delete(id); }
+    get().stopPolling(id);
     set((state) => ({ projects: state.projects.filter((p) => p.id !== id) }));
     try { await api.projects.delete(id); } catch (error) { console.error('Failed to delete project:', error); }
   },
@@ -105,6 +115,11 @@ export const useStore = create<Store>((set, get) => ({
     try {
       const project = await api.projects.get(id);
       set((state) => ({ projects: state.projects.map((p) => (p.id === id ? project : p)) }));
+
+      // Stop polling als project klaar of mislukt is
+      if (project.status === 'completed' || project.status === 'failed' || project.status === 'config' || project.status === 'paused') {
+        get().stopPolling(id);
+      }
     } catch (error) { console.error('Failed to refresh project:', error); }
   },
 
@@ -130,138 +145,112 @@ export const useStore = create<Store>((set, get) => ({
     try { await api.logs.add(projectId, level, step, source, message); } catch (error) { console.error('Failed to add log:', error); }
   },
 
-  startPipeline: (projectId) => {
+  // ── Pipeline Engine — Server-side ──
+
+  startPipeline: async (projectId: string) => {
+    try {
+      await api.pipelineEngine.start(projectId);
+      get().addToast('Pipeline gestart', 'info');
+      get().startPolling(projectId);
+      // Refresh meteen om de nieuwe status te zien
+      setTimeout(() => get().refreshProject(projectId), 500);
+    } catch (error: any) {
+      console.error('Pipeline start failed:', error);
+      get().addToast('Pipeline starten mislukt: ' + error.message, 'error');
+    }
+  },
+
+  pausePipeline: async (projectId: string) => {
+    try {
+      await api.pipelineEngine.pause(projectId);
+      get().addToast('Pipeline gepauzeerd', 'info');
+      get().refreshProject(projectId);
+    } catch (error: any) {
+      console.error('Pipeline pause failed:', error);
+      get().addToast('Pauzeren mislukt: ' + error.message, 'error');
+    }
+  },
+
+  resumePipeline: async (projectId: string) => {
+    try {
+      await api.pipelineEngine.resume(projectId);
+      get().addToast('Pipeline hervat', 'info');
+      get().startPolling(projectId);
+      setTimeout(() => get().refreshProject(projectId), 500);
+    } catch (error: any) {
+      console.error('Pipeline resume failed:', error);
+      get().addToast('Hervatten mislukt: ' + error.message, 'error');
+    }
+  },
+
+  retryStep: async (projectId: string, stepNumber: number) => {
+    try {
+      await api.pipelineEngine.retry(projectId, stepNumber);
+      get().addToast(`Stap ${stepNumber} opnieuw gestart`, 'info');
+      get().startPolling(projectId);
+      setTimeout(() => get().refreshProject(projectId), 500);
+    } catch (error: any) {
+      get().addToast('Retry mislukt: ' + error.message, 'error');
+    }
+  },
+
+  skipStep: async (projectId: string, stepNumber: number) => {
+    try {
+      await api.pipelineEngine.skip(projectId, stepNumber);
+      get().addToast(`Stap ${stepNumber} overgeslagen`, 'info');
+      setTimeout(() => get().refreshProject(projectId), 500);
+    } catch (error: any) {
+      get().addToast('Overslaan mislukt: ' + error.message, 'error');
+    }
+  },
+
+  retryFailed: async (projectId: string) => {
     const project = get().getProject(projectId);
     if (!project) return;
-    get().updateProject(projectId, { status: 'running', startedAt: new Date().toISOString() });
-    get().addLogEntry(projectId, 'info', 0, 'App', 'Pipeline gestart');
-    get().addToast('Pipeline gestart', 'info');
-    const stepsToSkip: number[] = [];
-    if (project.scriptSource === 'existing') stepsToSkip.push(1, 2, 3);
-    if (!project.stockImages) stepsToSkip.push(7);
-    if (!project.useClips && (!project.montageClips || project.montageClips.length === 0)) stepsToSkip.push(8);
-    if (!project.colorGrading || project.colorGrading === 'Geen') stepsToSkip.push(11);
-    if (!project.subtitles) stepsToSkip.push(12);
-    stepsToSkip.forEach((stepId) => {
-      get().updateStepStatus(projectId, stepId, 'skipped');
-      get().addLogEntry(projectId, 'info', stepId, 'App', 'Stap ' + stepId + ' overgeslagen');
-    });
-    const runNextStep = () => {
-      const currentProject = get().getProject(projectId);
-      if (!currentProject || currentProject.status !== 'running') return;
-      const nextStep = currentProject.steps.find((s) => s.status === 'waiting');
-      if (!nextStep) {
-        get().updateProject(projectId, { status: 'completed', completedAt: new Date().toISOString() });
-        get().addLogEntry(projectId, 'info', 13, 'App', 'Pipeline voltooid!');
-        get().addToast('Video klaar!', 'success');
-        const interval = pipelineIntervals.get(projectId);
-        if (interval) { clearInterval(interval); pipelineIntervals.delete(projectId); }
-        return;
-      }
-      const firstAttempt = nextStep.firstAttemptAt || new Date().toISOString();
-      get().updateStepStatus(projectId, nextStep.id, 'running', { startedAt: new Date().toISOString(), firstAttemptAt: firstAttempt });
-      get().addLogEntry(projectId, 'info', nextStep.id, nextStep.executor, nextStep.name + ' gestart...');
-      const duration = Math.floor(Math.random() * 3000) + 2000;
-      setTimeout(() => {
-        const stillRunning = get().getProject(projectId);
-        if (!stillRunning || stillRunning.status !== 'running') return;
-        const durationSec = Math.floor(duration / 1000);
-        const currentProject2 = get().getProject(projectId);
-        const isCheckpoint = currentProject2?.checkpoints?.includes(nextStep.id);
-        if (isCheckpoint) {
-          get().updateStepStatus(projectId, nextStep.id, 'review', { duration: durationSec, result: { status: 'success', data: 'Mock result data' } });
-          get().updateProject(projectId, { status: 'review' });
-          get().addLogEntry(projectId, 'info', nextStep.id, nextStep.executor, nextStep.name + ' voltooid — wacht op review');
-          get().addToast('Stap ' + nextStep.id + ': ' + nextStep.name + ' klaar — wacht op je review', 'info');
-          const interval = pipelineIntervals.get(projectId);
-          if (interval) { clearInterval(interval); pipelineIntervals.delete(projectId); }
-        } else {
-          get().updateStepStatus(projectId, nextStep.id, 'completed', { duration: durationSec, result: { status: 'success', data: 'Mock result data' } });
-          get().addLogEntry(projectId, 'info', nextStep.id, nextStep.executor, nextStep.name + ' voltooid (' + durationSec + 's)');
-        }
-      }, duration);
-    };
-    const interval = setInterval(runNextStep, 2000);
-    pipelineIntervals.set(projectId, interval);
-    runNextStep();
+    // Retry elke gefaalde stap via de server
+    const failedSteps = project.steps.filter((s) => s.status === 'failed');
+    for (const step of failedSteps) {
+      try { await api.pipelineEngine.retry(projectId, step.id); } catch {}
+    }
+    get().addToast('Mislukte stappen opnieuw proberen', 'info');
+    get().startPolling(projectId);
+    setTimeout(() => get().refreshProject(projectId), 500);
   },
 
-  pausePipeline: (projectId) => {
-    get().updateProject(projectId, { status: 'paused' });
-    get().addLogEntry(projectId, 'info', 0, 'App', 'Pipeline gepauzeerd');
-    const interval = pipelineIntervals.get(projectId);
-    if (interval) { clearInterval(interval); pipelineIntervals.delete(projectId); }
-  },
-
-  resumePipeline: (projectId) => {
-    get().updateProject(projectId, { status: 'running' });
-    get().addLogEntry(projectId, 'info', 0, 'App', 'Pipeline hervat');
-    get().startPipeline(projectId);
-  },
-
-  retryStep: (projectId, stepId) => {
+  forceContinue: async (projectId: string) => {
     const project = get().getProject(projectId);
     if (!project) return;
-    const step = project.steps.find((s) => s.id === stepId);
-    const currentRetryCount = step?.retryCount || 0;
-    get().updateStepStatus(projectId, stepId, 'waiting', { error: undefined, duration: undefined, retryCount: currentRetryCount });
-    get().addLogEntry(projectId, 'info', stepId, 'App', 'Stap ' + stepId + ' handmatig opnieuw gestart (poging ' + (currentRetryCount + 1) + ')');
-    get().updateProject(projectId, { status: 'running' });
-    get().startPipeline(projectId);
+    const failedSteps = project.steps.filter((s) => s.status === 'failed');
+    for (const step of failedSteps) {
+      try { await api.pipelineEngine.skip(projectId, step.id); } catch {}
+    }
+    // Resume de pipeline
+    try { await api.pipelineEngine.resume(projectId); } catch {}
+    get().addToast('Force Continue: gefaalde stappen overgeslagen', 'info');
+    get().startPolling(projectId);
+    setTimeout(() => get().refreshProject(projectId), 500);
   },
 
-  skipStep: (projectId, stepId) => {
-    get().updateStepStatus(projectId, stepId, 'skipped');
-    get().addLogEntry(projectId, 'info', stepId, 'App', 'Stap ' + stepId + ' overgeslagen door gebruiker');
-    get().updateProject(projectId, { status: 'running' });
-    get().startPipeline(projectId);
+  submitFeedback: async (projectId: string, stepNumber: number, feedback: string) => {
+    try {
+      await api.pipelineEngine.feedback(projectId, stepNumber, feedback);
+      get().addToast('Feedback verstuurd — stap wordt opnieuw gegenereerd', 'ai');
+      get().startPolling(projectId);
+      setTimeout(() => get().refreshProject(projectId), 500);
+    } catch (error: any) {
+      get().addToast('Feedback versturen mislukt: ' + error.message, 'error');
+    }
   },
 
-  retryFailed: (projectId) => {
-    const project = get().getProject(projectId);
-    if (!project) return;
-    project.steps.forEach((step) => {
-      if (step.status === 'failed') get().updateStepStatus(projectId, step.id, 'waiting', { error: undefined, duration: undefined, retryCount: step.retryCount || 0 });
-    });
-    get().addLogEntry(projectId, 'info', 0, 'App', 'Mislukte stappen opnieuw proberen');
-    get().updateProject(projectId, { status: 'running' });
-    get().startPipeline(projectId);
-  },
-
-  forceContinue: (projectId) => {
-    const project = get().getProject(projectId);
-    if (!project) return;
-    project.steps.forEach((step) => {
-      if (step.status === 'failed') {
-        get().updateStepStatus(projectId, step.id, 'skipped');
-        get().addLogEntry(projectId, 'info', step.id, 'App', 'Stap ' + step.id + ' overgeslagen via Force Continue');
-      }
-    });
-    get().updateProject(projectId, { status: 'running' });
-    get().addLogEntry(projectId, 'info', 0, 'App', 'Force Continue: gefaalde stappen overgeslagen');
-    get().startPipeline(projectId);
-  },
-
-  submitFeedback: (projectId, stepNumber, feedback) => {
-    const project = get().getProject(projectId);
-    if (!project) return;
-    const step = project.steps.find((s) => s.id === stepNumber);
-    if (!step) return;
-    const feedbackEntry = { stepNumber, feedback, attempt: (step.attemptNumber || 1) + 1, timestamp: new Date().toISOString() };
-    get().updateProject(projectId, { feedbackHistory: [...project.feedbackHistory, feedbackEntry] });
-    get().updateStepStatus(projectId, stepNumber, 'waiting', { result: { feedback }, attemptNumber: feedbackEntry.attempt });
-    get().updateProject(projectId, { status: 'running' });
-    get().addLogEntry(projectId, 'info', stepNumber, 'App', 'Feedback gegeven, stap wordt opnieuw gegenereerd');
-    get().addToast('Feedback verstuurd — stap wordt opnieuw gegenereerd', 'ai');
-    setTimeout(() => get().startPipeline(projectId), 100);
-  },
-
-  approveStep: (projectId, stepNumber) => {
-    get().updateStepStatus(projectId, stepNumber, 'completed');
-    get().updateProject(projectId, { status: 'running' });
-    get().addLogEntry(projectId, 'info', stepNumber, 'App', 'Stap ' + stepNumber + ' goedgekeurd');
-    get().addToast('Stap ' + stepNumber + ' goedgekeurd — pipeline gaat verder', 'success');
-    setTimeout(() => get().startPipeline(projectId), 100);
+  approveStep: async (projectId: string, stepNumber: number) => {
+    try {
+      await api.pipelineEngine.approve(projectId, stepNumber);
+      get().addToast(`Stap ${stepNumber} goedgekeurd — pipeline gaat verder`, 'success');
+      get().startPolling(projectId);
+      setTimeout(() => get().refreshProject(projectId), 500);
+    } catch (error: any) {
+      get().addToast('Goedkeuren mislukt: ' + error.message, 'error');
+    }
   },
 
   selectImage: (projectId, sceneId, optionNumber, chosenPath, clipOption) => {
@@ -290,12 +279,21 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
 
-  confirmImageSelection: (projectId) => {
-    get().updateStepStatus(projectId, 65, 'completed');
-    get().updateProject(projectId, { status: 'running' });
-    get().addLogEntry(projectId, 'info', 9, 'App', 'Afbeeldingen geselecteerd, video generatie start');
-    get().addToast('Afbeeldingen geselecteerd — video generatie start', 'success');
-    setTimeout(() => get().startPipeline(projectId), 100);
+  confirmImageSelection: async (projectId: string) => {
+    try {
+      // Sla selecties op via de bestaande API
+      const project = get().getProject(projectId);
+      if (project) {
+        await api.imageOptions.saveSelections(projectId, project.selectedImages);
+      }
+      // Keur stap 65 goed via de pipeline engine
+      await api.pipelineEngine.approve(projectId, 65);
+      get().addToast('Afbeeldingen geselecteerd — video generatie start', 'success');
+      get().startPolling(projectId);
+      setTimeout(() => get().refreshProject(projectId), 500);
+    } catch (error: any) {
+      get().addToast('Bevestigen mislukt: ' + error.message, 'error');
+    }
   },
 
   setSceneTransition: (projectId, sceneId, transitionId) => {
@@ -304,6 +302,28 @@ export const useStore = create<Store>((set, get) => ({
     const existingTransitions = project.sceneTransitions.filter((t) => t.sceneId !== sceneId);
     get().updateProject(projectId, { sceneTransitions: [...existingTransitions, { sceneId, transition: transitionId }] });
   },
+
+  // ── Polling ──
+
+  startPolling: (projectId: string) => {
+    // Stop bestaande polling eerst
+    get().stopPolling(projectId);
+    // Poll elke 3 seconden
+    const interval = setInterval(() => {
+      get().refreshProject(projectId);
+    }, 3000);
+    pollingIntervals.set(projectId, interval);
+  },
+
+  stopPolling: (projectId: string) => {
+    const interval = pollingIntervals.get(projectId);
+    if (interval) {
+      clearInterval(interval);
+      pollingIntervals.delete(projectId);
+    }
+  },
+
+  // ── Toasts ──
 
   addToast: (message, type) => {
     const id = Math.random().toString(36).substr(2, 9);

@@ -168,3 +168,62 @@ export const imageOptions = {
     return `/api/projects/${projectId}/image-file/${filename}?token=${token}`;
   },
 };
+
+// ── Pipeline Engine API ──
+
+export const pipelineEngine = {
+  async start(projectId: string): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/start`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon pipeline niet starten'); }
+    return res.json();
+  },
+  async pause(projectId: string): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/pause`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon pipeline niet pauzeren'); }
+    return res.json();
+  },
+  async resume(projectId: string): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/resume`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon pipeline niet hervatten'); }
+    return res.json();
+  },
+  async approve(projectId: string, stepNumber: number): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/approve/${stepNumber}`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon stap niet goedkeuren'); }
+    return res.json();
+  },
+  async feedback(projectId: string, stepNumber: number, feedback: string): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/feedback/${stepNumber}`, {
+      method: 'POST', body: JSON.stringify({ feedback }),
+    });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon feedback niet versturen'); }
+    return res.json();
+  },
+  async skip(projectId: string, stepNumber: number): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/skip/${stepNumber}`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon stap niet overslaan'); }
+    return res.json();
+  },
+  async retry(projectId: string, stepNumber: number): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/retry/${stepNumber}`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon stap niet opnieuw starten'); }
+    return res.json();
+  },
+  async approveScene(projectId: string, sceneId: number, imagePath: string, clipOption: string): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/approve-scene`, {
+      method: 'POST', body: JSON.stringify({ sceneId, imagePath, clipOption }),
+    });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon scene niet goedkeuren'); }
+    return res.json();
+  },
+  async getStatus(projectId: string): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/status`);
+    if (!res.ok) throw new Error('Kon pipeline status niet ophalen');
+    return res.json();
+  },
+  async stop(projectId: string): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/stop`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon pipeline niet stoppen'); }
+    return res.json();
+  },
+};

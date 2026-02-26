@@ -6,15 +6,6 @@ import { imageOptions } from "../api";
 
 interface ImageReviewPanelProps { project: Project; step: Step; }
 
-const CLIP_OPTIONS = [
-  { id: "zoom_in", label: "Zoom In", icon: "Z+" },
-  { id: "zoom_out", label: "Zoom Out", icon: "Z-" },
-  { id: "rotate_left", label: "Pan Links", icon: "PL" },
-  { id: "rotate_right", label: "Pan Rechts", icon: "PR" },
-  { id: "static", label: "Statisch", icon: "ST" },
-  { id: "natural", label: "Natuurlijk", icon: "NA" },
-];
-
 export default function ImageReviewPanel({ project, step }: ImageReviewPanelProps) {
   const [scenes, setScenes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,7 +13,6 @@ export default function ImageReviewPanel({ project, step }: ImageReviewPanelProp
   const [collapsedScenes, setCollapsedScenes] = useState<Set<number>>(new Set());
   const [saving, setSaving] = useState(false);
   const selectImage = useStore((s) => s.selectImage);
-  const setClipOption = useStore((s) => s.setClipOption);
   const approveStep = useStore((s) => s.approveStep);
 
   useEffect(() => { loadImageOptions(); }, [project.id]);
@@ -56,7 +46,7 @@ export default function ImageReviewPanel({ project, step }: ImageReviewPanelProp
     try {
       const sels = project.selectedImages.map((s) => ({
         scene_id: parseInt(s.sceneId), chosen_option: s.chosenOption,
-        chosen_path: s.chosenPath || "", clip_option: s.clipOption || "natural",
+        chosen_path: s.chosenPath || "",
       }));
       await imageOptions.saveSelections(project.id, sels);
       approveStep(project.id, step.id);
@@ -124,15 +114,6 @@ export default function ImageReviewPanel({ project, step }: ImageReviewPanelProp
                         </button>
                       );
                     })}
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-zinc-500">Camera:</span>
-                    {CLIP_OPTIONS.map((c) => (
-                      <button key={c.id} onClick={() => setClipOption(project.id, sceneId, c.id)}
-                        className={`px-2 py-1 rounded text-xs transition-colors ${selClip === c.id ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}>
-                        {c.icon} {c.label}
-                      </button>
-                    ))}
                   </div>
                 </div>
               )}
