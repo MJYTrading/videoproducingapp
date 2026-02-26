@@ -1137,18 +1137,19 @@ export async function executeStep9(project: any, settings: any) {
   const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/video-scene-generator';
   const aspectRatio = project.output === 'youtube_short' ? 'portrait' : 'landscape';
 
-  console.log('[Step 9] ' + aiScenes.length + ' scenes genereren via image-to-video, 1 per keer via ' + n8nUrl);
+  console.log('[Step 9] ' + aiScenes.length + ' scenes genereren via image-to-video, PARALLEL via ' + n8nUrl);
 
   const results: any[] = [];
   let completed = 0;
   let failed = 0;
 
-  for (let i = 0; i < aiScenes.length; i++) {
-    const scene = aiScenes[i];
-    const sceneId = scene.id;
-    console.log('[Step 9] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') starten...');
+  // ── Alle webhooks tegelijk versturen ──
+  const sceneJobs: { sceneId: number; scene: any; statusPath: string; webhookOk: boolean }[] = [];
 
-    // Zoek de image selectie voor deze scene
+  await Promise.all(aiScenes.map(async (scene: any, i: number) => {
+    const sceneId = scene.id;
+    const sceneStatusPath = path.join(projPath, 'assets', 'scenes', 'scene' + sceneId + '-status.json');
+
     const selection = selections.find((s: any) => s.scene_id === sceneId || String(s.scene_id) === String(sceneId));
     const sourceImagePath = selection?.chosen_path || '';
 
@@ -1156,10 +1157,8 @@ export async function executeStep9(project: any, settings: any) {
       console.warn('[Step 9] Scene ' + sceneId + ': geen source image, overgeslagen');
       failed++;
       results.push({ scene_id: sceneId, status: 'failed', error: 'Geen source image geselecteerd' });
-      continue;
+      return;
     }
-
-    console.log('[Step 9] Scene ' + sceneId + ': image-to-video met ' + sourceImagePath);
 
     const payload = {
       project: project.name,
@@ -1170,11 +1169,12 @@ export async function executeStep9(project: any, settings: any) {
       output_dir: outputDir,
       elevate_api_key: settings.elevateApiKey,
       source_image_path: sourceImagePath,
+      genai_pro_api_key: settings.genaiProApiKey || '',
+      genai_pro_enabled: settings.genaiProEnabled || false,
     };
 
     try {
-      // Verwijder vorige status
-      try { await fs.unlink(statusPath); } catch {}
+      try { await fs.unlink(sceneStatusPath); } catch {}
 
       const response = await fetch(n8nUrl, {
         method: 'POST',
@@ -1187,29 +1187,44 @@ export async function executeStep9(project: any, settings: any) {
         throw new Error('Webhook mislukt (' + response.status + '): ' + body);
       }
 
-      const webhookResult = await response.json() as any;
-      console.log(`[Step 9] Scene ${sceneId} accepted: ${JSON.stringify(webhookResult)}`);
+      console.log('[Step 9] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') webhook verstuurd');
+      sceneJobs.push({ sceneId, scene, statusPath: sceneStatusPath, webhookOk: true });
+    } catch (err: any) {
+      console.error('[Step 9] Scene ' + sceneId + ' webhook error: ' + err.message);
+      failed++;
+      results.push({ scene_id: sceneId, status: 'failed', error: err.message });
+    }
+  }));
 
-      // Poll voor deze ene scene (max 10 minuten)
-      const status = await pollForStatus(statusPath, 10000, 600000);
+  const activeJobs = sceneJobs.filter(j => j.webhookOk);
+  console.log('[Step 9] ' + activeJobs.length + '/' + aiScenes.length + ' webhooks verstuurd, parallel pollen...');
+
+  // ── Alle status files parallel pollen ──
+  await Promise.all(activeJobs.map(async (job) => {
+    try {
+      const status = await pollForStatus(job.statusPath, 10000, 600000);
 
       if (status.status === 'completed') {
         completed++;
-        results.push({ scene_id: sceneId, status: 'success', file_path: status.file_path });
-        console.log(`[Step 9] Scene ${sceneId} klaar! (${completed}/${aiScenes.length})`);
+        results.push({ scene_id: job.sceneId, status: 'success', file_path: status.file_path });
+        console.log('[Step 9] Scene ' + job.sceneId + ' klaar! (' + completed + '/' + aiScenes.length + ')');
       } else {
         failed++;
-        results.push({ scene_id: sceneId, status: 'failed', error: status.error || 'Unknown' });
-        console.log(`[Step 9] Scene ${sceneId} mislukt: ${status.error}`);
+        results.push({ scene_id: job.sceneId, status: 'failed', error: status.error || 'Unknown' });
+        console.log('[Step 9] Scene ' + job.sceneId + ' mislukt: ' + (status.error || 'Unknown'));
       }
     } catch (err: any) {
       failed++;
-      results.push({ scene_id: sceneId, status: 'failed', error: err.message });
-      console.log(`[Step 9] Scene ${sceneId} error: ${err.message}`);
+      results.push({ scene_id: job.sceneId, status: 'failed', error: err.message });
+      console.log('[Step 9] Scene ' + job.sceneId + ' poll error: ' + err.message);
     }
-  }
+  }));
 
-  console.log(`[Step 9] Klaar! ${completed}/${aiScenes.length} geslaagd, ${failed} mislukt`);
+  console.log('[Step 9] Klaar! ' + completed + '/' + aiScenes.length + ' geslaagd, ' + failed + ' mislukt');
+
+  if (completed === 0 && aiScenes.length > 0) {
+    throw new Error('Alle ' + aiScenes.length + ' video scenes mislukt.');
+  }
 
   return {
     skipped: false,
