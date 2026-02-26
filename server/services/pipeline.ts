@@ -282,10 +282,35 @@ ${clipInfo}
 
 Schrijf het volledige script. ALLEEN het script, geen extra uitleg.`;
 
-  const script = await llmSimplePrompt(
-    llmKeys, SCRIPT_SYSTEM, userPrompt,
-    { maxTokens: 16384, temperature: 0.8 }
-  );
+  const targetWordCount = wordCount;
+  const minWords = Math.floor(targetWordCount * 0.95);
+  const maxWords = Math.ceil(targetWordCount * 1.05);
+  const MAX_SCRIPT_ATTEMPTS = 3;
+
+  let script = '';
+  let actualWordCount = 0;
+
+  for (let attempt = 1; attempt <= MAX_SCRIPT_ATTEMPTS; attempt++) {
+    const attemptPrompt = attempt === 1 ? userPrompt
+      : userPrompt + `\n\nBELANGRIJK: De vorige versie had ${actualWordCount} woorden. Het MOET tussen ${minWords} en ${maxWords} woorden zijn (target: ${targetWordCount}). ${actualWordCount < minWords ? 'Schrijf LANGER en meer detail.' : 'Schrijf KORTER en bondiger.'}`;
+
+    script = await llmSimplePrompt(
+      llmKeys, SCRIPT_SYSTEM, attemptPrompt,
+      { maxTokens: 16384, temperature: 0.8 }
+    );
+
+    actualWordCount = script.split(/\s+/).length;
+
+    if (actualWordCount >= minWords && actualWordCount <= maxWords) {
+      break;
+    }
+
+    if (attempt < MAX_SCRIPT_ATTEMPTS) {
+      console.log(`[Script] Poging ${attempt}: ${actualWordCount} woorden (target ${minWords}-${maxWords}). Opnieuw...`);
+    } else {
+      console.log(`[Script] Poging ${attempt}: ${actualWordCount} woorden. Accepteren na ${MAX_SCRIPT_ATTEMPTS} pogingen.`);
+    }
+  }
 
   const scriptVoiceover = script.replace(/\[CLIP:.*?\]\n?/g, '').replace(/\n{3,}/g, '\n\n').trim();
 
@@ -293,12 +318,12 @@ Schrijf het volledige script. ALLEEN het script, geen extra uitleg.`;
   await writeText(scriptPath, script);
   await writeText(path.join(projPath, 'script', 'script-voiceover.txt'), scriptVoiceover);
 
-  const actualWordCount = script.split(/\s+/).length;
-
   return {
     script,
     scriptVoiceover,
     wordCount: actualWordCount,
+    targetWordCount,
+    withinRange: actualWordCount >= minWords && actualWordCount <= maxWords,
     sections,
     filePath: scriptPath,
   };
@@ -355,6 +380,7 @@ OUTPUT FORMAT (JSON, ALLEEN de JSON):
         "Variant 2: wide shot/episch perspectief met style prefix en suffix",
         "Variant 3: creatief/onverwacht perspectief met style prefix en suffix"
       ],
+      "video_prompt": "Beschrijving van beweging/actie voor image-to-video generatie (wat moet er BEWEGEN vanuit het stilstaande beeld)",
       "camera_movement": "beschrijving van camera beweging",
       "mood": "sfeer van de scene"
     }
@@ -365,7 +391,15 @@ BELANGRIJK voor visual_prompt_variants:
 - Alleen voor ai_video scenes (NIET voor clip of real_image)
 - Elke variant is een VOLLEDIGE prompt (inclusief stijl prefix/suffix)
 - visual_prompt bevat altijd variant 1 (voor backwards compatibility)
-- De 3 varianten tonen dezelfde scene-inhoud maar vanuit TOTAAL ANDER perspectief`;
+- De 3 varianten tonen dezelfde scene-inhoud maar vanuit TOTAAL ANDER perspectief
+
+BELANGRIJK voor video_prompt:
+- Dit is een APARTE prompt specifiek voor image-to-video generatie
+- Beschrijft welke BEWEGING en ACTIE er moet gebeuren vanuit het stilstaande beeld
+- Focus op: camera beweging (pan, zoom, dolly), karakter actie (lopen, gebaren), omgevingseffecten (wind, regen, licht)
+- Voorbeeld: "Slow camera push-in while the mannequin turns its head to the left, rain begins falling, streetlights flicker"
+- Moet kort en actiegericht zijn (1-2 zinnen)
+- Alleen voor ai_video scenes`;
 
 export async function executeStep6(project: any, llmKeys: { elevateApiKey?: string; anthropicApiKey?: string }) {
   const projPath = projectDir(project.name);
@@ -432,12 +466,13 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
       '- Maak scenes van 3-5 seconden elk',
       '- Splits scenes langer dan 8 seconden',
       '- [CLIP] markers worden type: "clip"',
-      '- Elke scene heeft: id, start, end, duration, text, type, asset_type, visual_prompt, camera_movement, mood',
+      '- Elke scene heeft: id, start, end, duration, text, type, asset_type, visual_prompt, video_prompt, camera_movement, mood',
       '- Geef ALLEEN een JSON object terug met een "scenes" array',
       '- Voor ai_video scenes: voeg visual_prompt_variants toe (array van 3 VERSCHILLENDE prompts)',
       '- visual_prompt = variant 1, visual_prompt_variants = [variant1, variant2, variant3]',
       '- Varianten moeten ECHT ANDERS zijn: close-up vs wide shot vs creatief perspectief',
       '- Clip en real_image scenes hebben GEEN visual_prompt_variants nodig',
+      '- Voor ai_video scenes: voeg video_prompt toe (korte beschrijving van beweging/actie voor image-to-video)',
     ].join('\n');
 
     return llmJsonPrompt<{ scenes: any[] }>(

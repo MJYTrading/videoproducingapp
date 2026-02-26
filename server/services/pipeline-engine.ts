@@ -706,17 +706,22 @@ export async function skipStep(projectId: string, stepNumber: number): Promise<{
 
 export async function retryStep(projectId: string, stepNumber: number): Promise<{ success: boolean }> {
   const state = activePipelines.get(projectId);
+  // Stap 65 en 9 zijn gekoppeld via scene streaming — altijd beide resetten
+  const linkedSteps = (stepNumber === 65 || stepNumber === 9) ? [65, 9] : [stepNumber];
 
-  await updateStepInDb(projectId, stepNumber, {
-    status: 'waiting', error: null, duration: null,
-  });
-  await addLog(projectId, 'info', stepNumber, 'App',
-    `${getStepName(stepNumber)} handmatig opnieuw gestart`);
-
+  for (const sn of linkedSteps) {
+    await updateStepInDb(projectId, sn, {
+      status: "waiting", error: null, duration: null,
+    });
+  }
+  await addLog(projectId, "info", stepNumber, "App",
+    `${getStepName(stepNumber)} handmatig opnieuw gestart${linkedSteps.length > 1 ? " (+ gekoppelde stap)" : ""}`);
   if (state) {
-    state.failedSteps.delete(stepNumber);
-    state.completedSteps.delete(stepNumber);
-    state.activeSteps.delete(stepNumber);
+    for (const sn of linkedSteps) {
+      state.failedSteps.delete(sn);
+      state.completedSteps.delete(sn);
+      state.activeSteps.delete(sn);
+    }
 
     if (state.status !== 'running') {
       state.status = 'running';

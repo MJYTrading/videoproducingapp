@@ -135,7 +135,7 @@ export default function NewProject() {
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => setName(e.target.value.replace(/\s/g, "_"))}
               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
               required
             />
@@ -227,17 +227,17 @@ export default function NewProject() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-2">Script Lengte</label>
-                <select
+                <input
+                  type="number"
                   value={scriptLength}
-                  onChange={(e) => setScriptLength(Number(e.target.value))}
+                  onChange={(e) => setScriptLength(Math.max(500, Number(e.target.value)))}
+                  min={500}
+                  max={20000}
+                  step={100}
+                  placeholder="Bijv. 5000"
                   className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                >
-                  <option value={2000}>2000 woorden</option>
-                  <option value={5000}>5000 woorden</option>
-                  <option value={8000}>8000 woorden</option>
-                  <option value={10000}>10000 woorden</option>
-                </select>
+                />
+                <p className="text-xs text-zinc-500 mt-1">Aantal woorden (500 - 20.000)</p>
               </div>
             </>
           )}

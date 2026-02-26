@@ -79,30 +79,30 @@ export default function ReviewPanel({ project, step }: ReviewPanelProps) {
             </div>
           </div>
         );
-
-      case 3:
-        const wordCount = metadata.wordCount || 5234;
-        const estimatedMin = metadata.estimatedDuration || Math.round(wordCount / 150);
+      case 3: {
+        const scriptResult = step.result || {};
+        const scriptText = scriptResult.script || "";
+        const wordCount = scriptResult.wordCount || scriptText.split(/\s+/).length || 0;
+        const estimatedMin = Math.round(wordCount / 150);
+        const previewText = scriptText.slice(0, 1500) || "Script wordt geladen...";
+        const targetWords = project.scriptLength || 5000;
         return (
           <div className="space-y-3">
-            <div className="text-zinc-300 leading-relaxed">
-              <p className="mb-2">
-                In the heart of Silicon Valley, a revolution was quietly brewing. Behind closed doors at a nondescript
-                office building, a team of engineers had discovered something that would change everything we thought
-                we knew about artificial intelligence...
-              </p>
-              <p className="text-zinc-500 italic">[Preview: eerste 300 woorden van {wordCount} woorden totaal]</p>
+            <div className="text-zinc-300 leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto bg-zinc-800 rounded-lg p-4 text-sm">
+              {previewText}
+              {scriptText.length > 1500 && (
+                <p className="text-zinc-500 italic mt-2">... [preview van eerste ~300 woorden]</p>
+              )}
             </div>
             <div className="flex items-center gap-4 text-sm">
               <span className="text-zinc-400">📊 {wordCount.toLocaleString()} woorden</span>
+              <span className="text-zinc-400">🎯 Target: {targetWords.toLocaleString()}</span>
               <span className="text-zinc-400">🎙️ ~{estimatedMin} min VO</span>
               <span className="text-zinc-400">🌐 {project.language}</span>
             </div>
-            <button className="text-blue-400 hover:text-blue-300 text-sm">
-              Volledig script bekijken →
-            </button>
           </div>
         );
+      }
 
       case 4:
         const duration = metadata.estimatedDuration || 765;
