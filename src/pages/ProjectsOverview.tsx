@@ -1,23 +1,51 @@
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, FileVideo } from 'lucide-react';
+import { Plus, FileVideo, ArrowUp, ArrowDown, X, Play } from 'lucide-react';
 import { useStore } from '../store';
 import { ProjectStatus } from '../types';
+import * as api from '../api';
 
 export default function ProjectsOverview() {
   const projects = useStore((state) => state.projects);
+  const [queueData, setQueueData] = useState<{ running: any; queued: any[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchQueue = async () => {
+    try {
+      const data = await api.queue.getQueue();
+      setQueueData(data);
+    } catch (err) {
+      console.error('Queue ophalen mislukt:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchQueue();
+    const interval = setInterval(fetchQueue, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const getStatusColor = (status: ProjectStatus) => {
     switch (status) {
-      case 'completed':
-        return 'bg-green-500/10 text-green-500 border-green-500/20';
-      case 'running':
-        return 'bg-blue-500/10 text-blue-500 border-blue-500/20';
-      case 'failed':
-        return 'bg-red-500/10 text-red-500 border-red-500/20';
-      case 'paused':
-        return 'bg-orange-500/10 text-orange-500 border-orange-500/20';
-      default:
-        return 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20';
+      case 'completed': return 'bg-green-500/10 text-green-500 border-green-500/20';
+      case 'running': return 'bg-blue-500/10 text-blue-500 border-blue-500/20';
+      case 'failed': return 'bg-red-500/10 text-red-500 border-red-500/20';
+      case 'paused': return 'bg-orange-500/10 text-orange-500 border-orange-500/20';
+      case 'queued': return 'bg-purple-500/10 text-purple-500 border-purple-500/20';
+      default: return 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20';
+    }
+  };
+
+  const getStatusLabel = (status: ProjectStatus) => {
+    switch (status) {
+      case 'queued': return 'In wachtrij';
+      case 'running': return 'Actief';
+      case 'completed': return 'Voltooid';
+      case 'failed': return 'Mislukt';
+      case 'paused': return 'Gepauzeerd';
+      case 'review': return 'Review';
+      case 'config': return 'Configuratie';
+      default: return status;
     }
   };
 
@@ -25,6 +53,46 @@ export default function ProjectsOverview() {
     const completed = steps.filter((s) => s.status === 'completed').length;
     return Math.round((completed / steps.length) * 100);
   };
+
+  const handlePriority = async (projectId: string, currentPriority: number, direction: 'up' | 'down') => {
+    const newPriority = direction === 'up' ? currentPriority + 1 : Math.max(0, currentPriority - 1);
+    setLoading(true);
+    try {
+      await api.queue.setPriority(projectId, newPriority);
+      await fetchQueue();
+      useStore.getState().fetchProjects();
+    } catch (err) {
+      console.error('Prioriteit aanpassen mislukt:', err);
+    }
+    setLoading(false);
+  };
+
+  const handleDequeue = async (projectId: string) => {
+    setLoading(true);
+    try {
+      await api.queue.dequeue(projectId);
+      await fetchQueue();
+      useStore.getState().fetchProjects();
+    } catch (err) {
+      console.error('Dequeue mislukt:', err);
+    }
+    setLoading(false);
+  };
+
+  const handleStartNext = async () => {
+    setLoading(true);
+    try {
+      await api.queue.startNext();
+      await fetchQueue();
+      useStore.getState().fetchProjects();
+    } catch (err) {
+      console.error('Start volgende mislukt:', err);
+    }
+    setLoading(false);
+  };
+
+  const queuedProjects = queueData?.queued || [];
+  const runningProject = queueData?.running;
 
   return (
     <div className="p-8">
@@ -38,6 +106,88 @@ export default function ProjectsOverview() {
           Nieuw Project
         </Link>
       </div>
+
+      {/* Wachtrij sectie */}
+      {(runningProject || queuedProjects.length > 0) && (
+        <div className="mb-8 bg-zinc-800 rounded-lg border border-zinc-700 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold">Wachtrij</h2>
+            {queuedProjects.length > 0 && !runningProject && (
+              <button
+                onClick={handleStartNext}
+                disabled={loading}
+                className="flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 px-4 py-2 rounded-lg transition-colors text-sm"
+              >
+                <Play className="w-4 h-4" />
+                Start Wachtrij
+              </button>
+            )}
+          </div>
+
+          {runningProject && (
+            <div className="mb-4">
+              <p className="text-sm text-zinc-400 mb-2">Nu actief:</p>
+              <Link
+                to={`/project/${runningProject.id}`}
+                className="flex items-center gap-3 bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 hover:bg-blue-500/20 transition-colors"
+              >
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                <span className="font-medium">{runningProject.name}</span>
+                <span className="text-sm text-zinc-400">{runningProject.title}</span>
+              </Link>
+            </div>
+          )}
+
+          {queuedProjects.length > 0 && (
+            <div>
+              <p className="text-sm text-zinc-400 mb-2">In de wachtrij ({queuedProjects.length}):</p>
+              <div className="space-y-2">
+                {queuedProjects.map((qp: any, index: number) => (
+                  <div key={qp.id} className="flex items-center gap-3 bg-zinc-700/50 rounded-lg p-3">
+                    <span className="text-zinc-500 font-mono text-sm w-6">#{index + 1}</span>
+                    <Link
+                      to={`/project/${qp.id}`}
+                      className="flex-1 hover:text-blue-400 transition-colors"
+                    >
+                      <span className="font-medium">{qp.name}</span>
+                      <span className="text-sm text-zinc-400 ml-2">{qp.title}</span>
+                    </Link>
+                    <span className="text-xs text-purple-400 bg-purple-500/10 px-2 py-1 rounded">
+                      Prioriteit: {qp.priority}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handlePriority(qp.id, qp.priority, 'up')}
+                        disabled={loading}
+                        className="p-1 hover:bg-zinc-600 rounded disabled:opacity-50"
+                        title="Prioriteit verhogen"
+                      >
+                        <ArrowUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handlePriority(qp.id, qp.priority, 'down')}
+                        disabled={loading || qp.priority === 0}
+                        className="p-1 hover:bg-zinc-600 rounded disabled:opacity-50"
+                        title="Prioriteit verlagen"
+                      >
+                        <ArrowDown className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDequeue(qp.id)}
+                        disabled={loading}
+                        className="p-1 hover:bg-red-600/20 text-red-400 rounded disabled:opacity-50"
+                        title="Uit wachtrij halen"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {projects.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-[60vh] text-center">
@@ -80,13 +230,19 @@ export default function ProjectsOverview() {
                     </p>
                   </div>
                   <span
-                    className={`px-2 py-1 text-xs font-medium rounded border ${getStatusColor(
-                      project.status
-                    )}`}
+                    className={`px-2 py-1 text-xs font-medium rounded border ${getStatusColor(project.status)}`}
                   >
-                    {project.status}
+                    {getStatusLabel(project.status)}
                   </span>
                 </div>
+
+                {project.priority !== undefined && project.priority > 0 && (
+                  <div className="mb-2">
+                    <span className="text-xs text-purple-400 bg-purple-500/10 px-2 py-1 rounded">
+                      Prioriteit: {project.priority}
+                    </span>
+                  </div>
+                )}
 
                 <div className="mt-4">
                   <div className="flex justify-between text-sm text-zinc-400 mb-2">

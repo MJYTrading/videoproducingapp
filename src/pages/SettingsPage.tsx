@@ -195,6 +195,46 @@ export default function SettingsPage() {
           </section>
 
           <section>
+            <h2 className="text-xl font-semibold mb-4">GenAIPro (Video Fallback)</h2>
+            <div className="space-y-4">
+              <ConnectionField
+                id="genaipro"
+                label="GenAIPro API Key"
+                description="Fallback video generatie als Elevate rate limit bereikt"
+                field="genaiProApiKey"
+                value={localSettings.genaiProApiKey || ''}
+                type="password"
+              />
+              <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold">GenAIPro Ingeschakeld</h3>
+                    <p className="text-sm text-zinc-400">Schakel in om GenAIPro als fallback te gebruiken bij Elevate fouten</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const newVal = !(localSettings.genaiProEnabled);
+                      setLocalSettings({ ...localSettings, genaiProEnabled: newVal });
+                      updateSettings({ genaiProEnabled: newVal });
+                    }}
+                    className={
+                      'relative w-12 h-6 rounded-full transition-colors ' +
+                      (localSettings.genaiProEnabled ? 'bg-green-600' : 'bg-zinc-700')
+                    }
+                  >
+                    <div
+                      className={
+                        'absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ' +
+                        (localSettings.genaiProEnabled ? 'translate-x-6' : '')
+                      }
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-xl font-semibold mb-4">Default Instellingen</h2>
             <div className="bg-zinc-900 rounded-lg p-6 space-y-4 border border-zinc-800">
               <div>

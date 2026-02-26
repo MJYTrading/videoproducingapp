@@ -39,9 +39,6 @@ model Settings {
   defaultColorGrading String  @default("cinematic_dark")
   youtubeTranscriptApiKey String @default("")
   anthropicApiKey      String  @default("")
-  // GenAIPro integratie
-  genaiProApiKey       String  @default("")
-  genaiProEnabled      Boolean @default(false)
 }
 
 model Project {
@@ -79,13 +76,6 @@ model Project {
   completedAt         DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
-  // Nieuwe velden: aspect ratio + wachtrij
-  aspectRatio         String    @default("landscape")
-  priority            Int       @default(0)
-  queuePosition       Int?
-  // Google Drive kanaal
-  channelId           String?
-  channel             Channel?  @relation(fields: [channelId], references: [id])
   steps               Step[]
   logs                LogEntry[]
 }
@@ -119,14 +109,4 @@ model LogEntry {
   message   String
   projectId String
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-}
-
-model Channel {
-  id            String    @id @default(cuid())
-  name          String    @unique
-  driveFolderId String    @default("")
-  description   String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  projects      Project[]
 }

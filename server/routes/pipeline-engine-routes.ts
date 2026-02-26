@@ -24,7 +24,9 @@ import {
   retryStep,
   getPipelineStatus,
   stopPipeline,
+  startNextQueuedProject,
 } from '../services/pipeline-engine.js';
+import prisma from '../db.js';
 
 const router = Router();
 
@@ -143,6 +145,68 @@ router.post('/:id/stop', async (req: Request, res: Response) => {
   try {
     stopPipeline(req.params.id);
     res.json({ status: 'stopped', success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Wachtrij routes ──
+
+// Wachtrij overzicht ophalen
+router.get('/queue', async (_req: Request, res: Response) => {
+  try {
+    const queued = await prisma.project.findMany({
+      where: { status: 'queued' },
+      orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
+      select: { id: true, name: true, title: true, priority: true, createdAt: true, visualStyle: true },
+    });
+    const running = await prisma.project.findFirst({
+      where: { status: 'running' },
+      select: { id: true, name: true, title: true, startedAt: true, visualStyle: true },
+    });
+    res.json({ running, queued });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Prioriteit aanpassen
+router.patch('/queue/:id/priority', async (req: Request, res: Response) => {
+  try {
+    const { priority } = req.body;
+    if (priority === undefined) return res.status(400).json({ error: 'priority is verplicht' });
+    const project = await prisma.project.update({
+      where: { id: req.params.id },
+      data: { priority: Math.max(0, Math.min(10, parseInt(priority))) },
+    });
+    res.json({ id: project.id, name: project.name, priority: project.priority });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Project uit wachtrij halen (terug naar config)
+router.post('/queue/:id/dequeue', async (req: Request, res: Response) => {
+  try {
+    const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!project || project.status !== 'queued') {
+      return res.status(400).json({ error: 'Project staat niet in de wachtrij' });
+    }
+    await prisma.project.update({
+      where: { id: req.params.id },
+      data: { status: 'config' },
+    });
+    res.json({ success: true, message: 'Project uit wachtrij gehaald' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Forceer start volgende project uit wachtrij
+router.post('/queue/start-next', async (_req: Request, res: Response) => {
+  try {
+    await startNextQueuedProject();
+    res.json({ success: true, message: 'Volgende project wordt gestart' });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

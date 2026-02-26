@@ -1,4 +1,4 @@
-export type ProjectStatus = 'config' | 'running' | 'completed' | 'failed' | 'paused' | 'review';
+export type ProjectStatus = 'config' | 'running' | 'completed' | 'failed' | 'paused' | 'review' | 'queued';
 
 export type StepStatus = 'waiting' | 'running' | 'completed' | 'failed' | 'skipped' | 'review';
 
@@ -114,6 +114,10 @@ export interface Project {
   startedAt?: string;
   completedAt?: string;
   createdAt: string;
+  aspectRatio?: string;
+  priority?: number;
+  queuePosition?: number;
+  channelId?: string;
 }
 
 export interface Settings {
@@ -132,6 +136,8 @@ export interface Settings {
   defaultColorGrading: string;
   youtubeTranscriptApiKey: string;
   anthropicApiKey: string;
+  genaiProApiKey: string;
+  genaiProEnabled: boolean;
 }
 
 export interface ConnectionStatus {

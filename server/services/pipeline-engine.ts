@@ -403,6 +403,8 @@ async function runPipeline(projectId: string) {
         const totalDuration = project.startedAt ? Math.round((Date.now() - new Date(project.startedAt).getTime()) / 60000) : 0;
         await notifyDiscord(`🎉 **Pipeline voltooid!** Project: **${project.name}** — totale duur: ${totalDuration} minuten`);
         activePipelines.delete(projectId);
+        // Wachtrij: start volgende project
+        startNextQueuedProject().catch(err => console.error("[Queue] Error:", err.message));
         return;
       }
 
@@ -512,12 +514,28 @@ async function runPipeline(projectId: string) {
 
 // ── Public API ──
 
-export async function startPipeline(projectId: string): Promise<{ success: boolean; error?: string }> {
+export async function startPipeline(projectId: string, fromQueue: boolean = false): Promise<{ success: boolean; error?: string }> {
   // Check of er al een pipeline draait voor dit project
   if (activePipelines.has(projectId)) {
     const existing = activePipelines.get(projectId)!;
     if (existing.status === 'running') {
       return { success: false, error: 'Pipeline draait al voor dit project' };
+    }
+  }
+
+  // Check of er een ANDERE pipeline draait -> queue dit project
+  if (!fromQueue) {
+    for (const [otherId, otherState] of activePipelines.entries()) {
+      if (otherId !== projectId && otherState.status === 'running') {
+        await prisma.project.update({
+          where: { id: projectId },
+          data: { status: 'queued' },
+        });
+        const queuedProject = await prisma.project.findUnique({ where: { id: projectId } });
+        await addLog(projectId, 'info', 0, 'Queue',
+          'Project in wachtrij gezet (er draait al een andere pipeline)');
+        return { success: true };
+      }
     }
   }
 
@@ -568,6 +586,8 @@ export async function startPipeline(projectId: string): Promise<{ success: boole
     await notifyDiscord(`💥 **Pipeline CRASH** voor project **${project.name}**: ${err.message}`);
     await updateProjectStatus(projectId, 'failed');
     activePipelines.delete(projectId);
+    // Wachtrij: start volgende project na crash
+    startNextQueuedProject().catch(err2 => console.error("[Queue] Error na crash:", err2.message));
   });
 
   return { success: true };
@@ -814,7 +834,7 @@ export async function runSceneStreaming(projectId: string, state: PipelineState)
   }
 
   const isAutoMode = project.imageSelectionMode !== 'manual';
-  const aspectRatio = project.output === 'youtube_short' ? 'portrait' : 'landscape';
+  const aspectRatio = project.aspectRatio || (project.output === 'youtube_short' ? 'portrait' : 'landscape');
   const n8nImageUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/image-options-generator';
   const n8nVideoUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/video-scene-generator';
   const imageOptionsDir = path.join(projPath, 'assets', 'image-options') + '/';
@@ -862,6 +882,9 @@ export async function runSceneStreaming(projectId: string, state: PipelineState)
       output_dir: scenesOutputDir,
       elevate_api_key: settings.elevateApiKey,
       source_image_path: imagePath,
+      // GenAIPro fallback velden
+      genai_pro_api_key: settings.genaiProApiKey || '',
+      genai_pro_enabled: settings.genaiProEnabled || false,
     };
 
     const response = await fetch(n8nVideoUrl, {
@@ -1148,3 +1171,43 @@ export async function runSceneStreaming(projectId: string, state: PipelineState)
 
   return { imagesCompleted, imagesFailed, videosCompleted, videosFailed, totalScenes };
 }
+
+// ── Wachtrij: start volgende queued project na completion/failure ──
+
+async function startNextQueuedProject(): Promise<void> {
+  try {
+    // Check of er al een pipeline draait
+    if (activePipelines.size > 0) {
+      console.log('[Queue] Er draait al een pipeline, wachtrij wacht.');
+      return;
+    }
+
+    // Zoek het queued project met de hoogste prioriteit (hoogste getal eerst)
+    // Bij gelijke prioriteit: oudste eerst (FIFO)
+    const nextProject = await prisma.project.findFirst({
+      where: { status: 'queued' },
+      orderBy: [
+        { priority: 'desc' },
+        { createdAt: 'asc' },
+      ],
+    });
+
+    if (!nextProject) {
+      console.log('[Queue] Geen projecten in de wachtrij.');
+      return;
+    }
+
+    console.log(`[Queue] Volgende project starten: ${nextProject.name} (prioriteit: ${nextProject.priority})`);
+    await addLog(nextProject.id, 'info', 0, 'Queue', 
+      `Project automatisch gestart vanuit wachtrij (prioriteit: ${nextProject.priority})`);
+    await notifyDiscord(`📋 **Wachtrij:** Project **${nextProject.name}** wordt nu automatisch gestart (prioriteit: ${nextProject.priority})`);
+    
+    // Start de pipeline (dit zet status naar 'running')
+    await startPipeline(nextProject.id, true);
+  } catch (error: any) {
+    console.error('[Queue] Fout bij starten volgende project:', error.message);
+  }
+}
+
+// Exporteer voor gebruik in routes
+export { startNextQueuedProject };

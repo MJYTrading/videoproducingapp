@@ -12,6 +12,7 @@ interface Store {
   loading: boolean;
   initialized: boolean;
   initialize: () => Promise<void>;
+  fetchProjects: () => Promise<void>;
   addProject: (project: Omit<Project, 'id' | 'status' | 'steps' | 'logs' | 'createdAt'>) => Promise<Project>;
   getProject: (id: string) => Project | undefined;
   updateProject: (id: string, updates: Partial<Project>) => Promise<void>;
@@ -52,6 +53,8 @@ export const useStore = create<Store>((set, get) => ({
     defaultColorGrading: 'cinematic_dark',
     youtubeTranscriptApiKey: '',
     anthropicApiKey: '',
+    genaiProApiKey: '',
+    genaiProEnabled: false,
   },
   toasts: [],
   loading: false,
@@ -75,6 +78,15 @@ export const useStore = create<Store>((set, get) => ({
     } catch (error) {
       console.error('Failed to initialize store:', error);
       set({ loading: false, initialized: true });
+    }
+  },
+
+  fetchProjects: async () => {
+    try {
+      const projectsData = await api.projects.getAll();
+      set({ projects: projectsData });
+    } catch (error) {
+      console.error('Failed to fetch projects:', error);
     }
   },
 

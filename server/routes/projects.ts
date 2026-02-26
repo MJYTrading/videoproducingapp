@@ -90,6 +90,9 @@ router.post('/', async (req: Request, res: Response) => {
         colorGrading: data.colorGrading || 'Geen',
         subtitles: data.subtitles ?? true,
         output: data.output || 'YouTube 1080p',
+        aspectRatio: data.aspectRatio || 'landscape',
+        priority: data.priority || 0,
+        channelId: data.channelId || null,
         status: 'config',
         steps: {
           create: DEFAULT_STEPS.map((s) => ({
@@ -117,6 +120,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
       'imageSelectionMode', 'imagesPerScene', 'transitionMode',
       'uniformTransition', 'useClips', 'stockImages', 'colorGrading',
       'subtitles', 'output', 'status', 'startedAt', 'completedAt',
+      'aspectRatio', 'priority', 'queuePosition', 'channelId',
     ];
     for (const field of directFields) {
       if (data[field] !== undefined) updateData[field] = data[field];

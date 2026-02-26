@@ -26,6 +26,7 @@ router.patch('/', async (req: Request, res: Response) => {
       'openClawHooksToken', 'defaultVoice', 'defaultVisualStyle',
       'defaultLanguage', 'defaultScriptLength', 'defaultSubtitles',
       'defaultColorGrading', 'youtubeTranscriptApiKey', 'anthropicApiKey',
+      'genaiProApiKey', 'genaiProEnabled',
     ];
     for (const field of allowedFields) {
       if (data[field] !== undefined) updateData[field] = data[field];

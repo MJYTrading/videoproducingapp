@@ -40,6 +40,7 @@ export default function NewProject() {
   const [colorGrading, setColorGrading] = useState('cinematic_dark');
   const [subtitles, setSubtitles] = useState(true);
   const [output, setOutput] = useState('youtube-1080p');
+  const [aspectRatio, setAspectRatio] = useState('landscape');
   const [checkpoints, setCheckpoints] = useState<number[]>([3, 4, 6, 9]);
 
   const selectedVoice = VOICES.find((v) => v.id === voice);
@@ -113,6 +114,7 @@ export default function NewProject() {
       colorGrading: (selectedColorGrade?.name || 'Geen') as any,
       subtitles,
       output: (selectedOutput?.name || 'YouTube 1080p') as any,
+      aspectRatio,
     });
 
     navigate(`/project/${project.id}`);
@@ -388,6 +390,18 @@ export default function NewProject() {
                   {format.name} — {format.resolution} ({format.aspectRatio})
                 </option>
               ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Aspect Ratio (Video Generatie)</label>
+            <select
+              value={aspectRatio}
+              onChange={(e) => setAspectRatio(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
+            >
+              <option value="landscape">Landscape (16:9)</option>
+              <option value="portrait">Portrait (9:16)</option>
             </select>
           </div>
         </section>

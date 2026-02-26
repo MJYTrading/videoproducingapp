@@ -7,6 +7,7 @@ import ProjectsOverview from './pages/ProjectsOverview';
 import NewProject from './pages/NewProject';
 import ProjectDetail from './pages/ProjectDetail';
 import SettingsPage from './pages/SettingsPage';
+import StylePresetsPage from './pages/StylePresetsPage';
 import LoginPage from './pages/LoginPage';
 
 function AppContent() {
@@ -35,6 +36,7 @@ function AppContent() {
           <Route path="project/new" element={<NewProject />} />
           <Route path="project/:id" element={<ProjectDetail />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="styles" element={<StylePresetsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

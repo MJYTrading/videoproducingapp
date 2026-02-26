@@ -227,3 +227,59 @@ export const pipelineEngine = {
     return res.json();
   },
 };
+
+// ── Queue API ──
+
+export const queue = {
+  async getQueue(): Promise<any> {
+    const res = await apiFetch('/pipeline/queue');
+    if (!res.ok) throw new Error('Kon wachtrij niet ophalen');
+    return res.json();
+  },
+  async setPriority(projectId: string, priority: number): Promise<any> {
+    const res = await apiFetch(`/pipeline/queue/${projectId}/priority`, {
+      method: 'PATCH', body: JSON.stringify({ priority }),
+    });
+    if (!res.ok) throw new Error('Kon prioriteit niet aanpassen');
+    return res.json();
+  },
+  async dequeue(projectId: string): Promise<any> {
+    const res = await apiFetch(`/pipeline/queue/${projectId}/dequeue`, { method: 'POST' });
+    if (!res.ok) throw new Error('Kon project niet uit wachtrij halen');
+    return res.json();
+  },
+  async startNext(): Promise<any> {
+    const res = await apiFetch('/pipeline/queue/start-next', { method: 'POST' });
+    if (!res.ok) throw new Error('Kon volgende project niet starten');
+    return res.json();
+  },
+};
+
+// ── Styles API ──
+
+export const styles = {
+  async getAll(): Promise<any[]> {
+    const res = await apiFetch('/styles');
+    if (!res.ok) throw new Error('Kon styles niet ophalen');
+    return res.json();
+  },
+  async get(id: string): Promise<any> {
+    const res = await apiFetch('/styles/' + id);
+    if (!res.ok) throw new Error('Style niet gevonden');
+    return res.json();
+  },
+  async create(data: any): Promise<any> {
+    const res = await apiFetch('/styles', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon style niet aanmaken'); }
+    return res.json();
+  },
+  async update(id: string, data: any): Promise<any> {
+    const res = await apiFetch('/styles/' + id, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon style niet updaten'); }
+    return res.json();
+  },
+  async remove(id: string): Promise<void> {
+    const res = await apiFetch('/styles/' + id, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Kon style niet verwijderen');
+  },
+};
