@@ -160,6 +160,25 @@ function getStepName(stepNumber: number): string {
   return map[stepNumber] || `Stap ${stepNumber}`;
 }
 
+
+// ── Discord notificaties ──
+
+async function notifyDiscord(message: string) {
+  try {
+    const settings = await getSettings();
+    const webhookUrl = settings.discordWebhookUrl || 'https://discord.com/api/webhooks/1475105880906272963/uukU80sqN-yx7Gv6SrDgBPiYMGxRi5__xssnUHA7Bcxfw87Sw2HOdjBvxjbC48d7YUzm';
+    if (!webhookUrl) return;
+    const userId = settings.discordUserId || '1154154714699665418';
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: `<@${userId}> ${message}` }),
+    });
+  } catch (err) {
+    console.error('Discord melding mislukt:', err);
+  }
+}
+
 // ── Stap uitvoeren met retry + timeout ──
 
 async function executeStepWithRetry(
@@ -248,6 +267,7 @@ async function executeStepWithRetry(
         });
         await addLog(projectId, 'error', stepNumber, source,
           `${stepName} mislukt na ${attempt + 1} poging(en): ${errorMsg}`);
+        await notifyDiscord(`❌ **${stepName}** mislukt na ${attempt + 1} poging(en): ${errorMsg}`);
         return { success: false, error: errorMsg };
       }
       // Nog retries over
@@ -380,6 +400,8 @@ async function runPipeline(projectId: string) {
           data: { completedAt: new Date() },
         });
         await addLog(projectId, 'info', 13, 'App', '🎉 Pipeline voltooid! Video is klaar.');
+        const totalDuration = project.startedAt ? Math.round((Date.now() - new Date(project.startedAt).getTime()) / 60000) : 0;
+        await notifyDiscord(`🎉 **Pipeline voltooid!** Project: **${project.name}** — totale duur: ${totalDuration} minuten`);
         activePipelines.delete(projectId);
         return;
       }
@@ -392,6 +414,7 @@ async function runPipeline(projectId: string) {
           .map(([num, err]) => `${getStepName(num)}: ${err}`).join('; ');
         await addLog(projectId, 'error', 0, 'App',
           `Pipeline gestopt — mislukte stappen: ${failedNames}`);
+        await notifyDiscord(`❌ **Pipeline gestopt** voor project: **${project.name}** — mislukte stappen: ${failedNames}`);
         return;
       }
 
@@ -457,6 +480,7 @@ async function runPipeline(projectId: string) {
               await updateProjectStatus(projectId, 'review');
               await addLog(projectId, 'info', stepNum, 'App',
                 `Pipeline gepauzeerd — wacht op review voor ${getStepName(stepNum)}`);
+              await notifyDiscord(`⏸️ **Wacht op review** — project: **${(await getProjectData(projectId)).name}**, stap: **${getStepName(stepNum)}**. Open de app om goed te keuren.`);
               // Stap is 'review' status, NIET completed
               // completedSteps wordt pas bijgewerkt na approve
             } else {
@@ -535,11 +559,13 @@ export async function startPipeline(projectId: string): Promise<{ success: boole
     data: { startedAt: project.startedAt || new Date() },
   });
   await addLog(projectId, 'info', 0, 'App', 'Pipeline gestart');
+  await notifyDiscord(`🚀 **Pipeline gestart** voor project: **${project.name}** (hervatten vanaf stap ${completedSteps.size > 0 ? Array.from(completedSteps).pop() : 0})`);
 
   // Start de pipeline loop op de achtergrond (niet await!)
   runPipeline(projectId).catch(async (err) => {
     console.error(`[Pipeline] Onverwachte fout voor project ${projectId}:`, err);
     await addLog(projectId, 'error', 0, 'App', `Pipeline crashte: ${err.message}`);
+    await notifyDiscord(`💥 **Pipeline CRASH** voor project **${project.name}**: ${err.message}`);
     await updateProjectStatus(projectId, 'failed');
     activePipelines.delete(projectId);
   });
