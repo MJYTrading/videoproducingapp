@@ -666,3 +666,294 @@ export async function executeStep5(project: any, settings: any) {
     totalDurationWithClips: status.total_duration_with_clips || status.duration || 0,
   };
 }
+
+
+// ── Stap 7: Assets zoeken (afbeeldingen + Ken Burns) via N8N ──
+
+export async function executeStep7(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
+  const statusPath = path.join(projPath, 'assets', 'assets-status.json');
+
+  let scenePrompts: any;
+  try {
+    scenePrompts = await readJson(scenePromptsPath);
+  } catch {
+    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 6 uit.');
+  }
+
+  const realImageScenes = (scenePrompts.scenes || []).filter(
+    (s: any) => s.asset_type === 'real_image'
+  );
+
+  if (realImageScenes.length === 0) {
+    console.log('[Step 7] Geen real_image scenes gevonden — stap overgeslagen');
+    return {
+      skipped: true,
+      reason: 'Geen scenes met asset_type "real_image" in scene-prompts.json',
+      totalScenes: scenePrompts.scenes?.length || 0,
+      realImageScenes: 0,
+    };
+  }
+
+  const assets = realImageScenes.map((scene: any) => ({
+    scene_id: scene.id,
+    search_query: buildSearchQuery(scene),
+    search_query_fallback: buildFallbackQuery(scene),
+    sources: ['google', 'pexels', 'wikimedia'],
+    min_width: 1920,
+    ken_burns_type: pickKenBurnsType(scene),
+    duration: scene.duration || 5,
+  }));
+
+  try { await fs.unlink(statusPath); } catch {}
+
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/asset-downloader';
+
+  const payload = {
+    project: project.name,
+    output_dir: path.join(projPath, 'assets', 'images') + '/',
+    scenes_dir: path.join(projPath, 'assets', 'scenes') + '/',
+    pexels_api_key: settings.pexelsApiKey || 'dCnXQyimW0Ds7Vw7OjvB2xDxAfeqQbhkOZpD9ZcS3lDbBtuIFVk7om43',
+    output_format: project.output === 'youtube_short' ? 'portrait' : 'landscape',
+    assets,
+  };
+
+  console.log(`[Step 7] ${assets.length} assets sturen naar ${n8nUrl}...`);
+
+  const response = await fetch(n8nUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+  }
+
+  const webhookResult = await response.json();
+  console.log('[Step 7] N8N response: ' + JSON.stringify(webhookResult));
+
+  console.log('[Step 7] Wachten op status: ' + statusPath);
+  const status = await pollForStatus(statusPath, 5000, 600000);
+
+  console.log(`[Step 7] Assets klaar! ${status.assets_found || 0}/${status.total || 0} gevonden`);
+
+  return {
+    skipped: false,
+    assetsFound: status.assets_found || 0,
+    assetsFailed: status.assets_failed || 0,
+    total: status.total || 0,
+    fromGoogle: status.from_google || 0,
+    fromPexels: status.from_pexels || 0,
+    fromWikimedia: status.from_wikimedia || 0,
+    failedScenes: status.failed_scenes || '',
+    results: status.results || [],
+  };
+}
+
+function buildSearchQuery(scene: any): string {
+  const text = scene.text || scene.visual_prompt || '';
+  const words = text.split(/\s+/).slice(0, 8).join(' ');
+  return words.length > 10 ? words : text.slice(0, 80);
+}
+
+function buildFallbackQuery(scene: any): string {
+  const prompt = scene.visual_prompt || scene.text || '';
+  const words = prompt.split(/\s+/).slice(0, 4).join(' ');
+  return words || 'historical photo';
+}
+
+function pickKenBurnsType(scene: any): string {
+  const text = ((scene.text || '') + ' ' + (scene.visual_prompt || '')).toLowerCase();
+  if (text.match(/portrait|person|face|man|woman|leader|king|president|mugshot/)) return 'zoom_in';
+  if (text.match(/landscape|city|skyline|aerial|panorama|view|mountain|ocean/)) return Math.random() > 0.5 ? 'pan_left_right' : 'zoom_out';
+  if (text.match(/building|temple|church|castle|bridge|monument|tower|statue/)) return 'zoom_in';
+  if (text.match(/map|document|letter|newspaper|chart|diagram/)) return 'zoom_in_pan';
+  if (text.match(/group|crowd|army|battle|event|ceremony|gathering/)) return 'pan_left_right';
+  const types = ['zoom_in', 'zoom_out', 'pan_left_right'];
+  return types[Math.floor(Math.random() * types.length)];
+}
+
+
+// ── Stap 8: YouTube clips ophalen via N8N ──
+
+export async function executeStep8(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const statusPath = path.join(projPath, 'assets', 'clips-status.json');
+
+  if (!project.useClips) {
+    console.log('[Step 8] Clips niet ingeschakeld — stap overgeslagen');
+    return { skipped: true, reason: 'YouTube clips zijn niet ingeschakeld voor dit project' };
+  }
+
+  let clips: any[] = [];
+  const clipPositionsPath = path.join(projPath, 'audio', 'clip-positions.json');
+  try {
+    const clipData = await readJson<any>(clipPositionsPath);
+    clips = clipData.clips || clipData || [];
+    if (!Array.isArray(clips)) clips = [];
+  } catch {
+    console.log('[Step 8] clip-positions.json niet gevonden, check scene-prompts.json...');
+    try {
+      const scenePrompts = await readJson<any>(path.join(projPath, 'assets', 'scene-prompts.json'));
+      const clipScenes = (scenePrompts.scenes || []).filter((s: any) => s.type === 'clip');
+      clips = clipScenes.map((s: any, i: number) => ({
+        clip_id: i + 1,
+        url: s.clip_url || '',
+        start: s.clip_start || '00:00',
+        end: s.clip_end || '00:10',
+      })).filter((c: any) => c.url);
+    } catch {}
+  }
+
+  if (clips.length === 0) {
+    console.log('[Step 8] Geen clips gevonden — stap overgeslagen');
+    return { skipped: true, reason: 'Geen clips gevonden in clip-positions.json of scene-prompts.json' };
+  }
+
+  clips = clips.map((c: any, i: number) => ({
+    clip_id: c.clip_id || i + 1,
+    url: c.url || c.source_url || '',
+    start: c.start || c.source_start || '00:00',
+    end: c.end || c.source_end || '00:10',
+  }));
+
+  try { await fs.unlink(statusPath); } catch {}
+
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/clip-downloader';
+
+  const payload = {
+    project: project.name,
+    output_dir: path.join(projPath, 'assets', 'clips') + '/',
+    output_format: project.output === 'youtube_short' ? 'portrait' : 'landscape',
+    clips,
+  };
+
+  console.log(`[Step 8] ${clips.length} clips sturen naar ${n8nUrl}...`);
+
+  const response = await fetch(n8nUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+  }
+
+  const webhookResult = await response.json();
+  console.log('[Step 8] N8N response: ' + JSON.stringify(webhookResult));
+
+  console.log('[Step 8] Wachten op status: ' + statusPath);
+  const status = await pollForStatus(statusPath, 5000, 600000);
+
+  console.log(`[Step 8] Clips klaar! ${status.clips_downloaded || 0}/${status.total_clips || 0} gedownload`);
+
+  return {
+    skipped: false,
+    clipsDownloaded: status.clips_downloaded || 0,
+    clipsFailed: status.clips_failed || 0,
+    totalClips: status.total_clips || 0,
+    results: status.results || [],
+  };
+}
+
+
+// ── Stap 9: Video scenes genereren (VEO 3) via N8N ──
+
+export async function executeStep9(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
+  const statusPath = path.join(projPath, 'assets', 'scenes-status.json');
+  const outputDir = path.join(projPath, 'assets', 'scenes') + '/';
+
+  let scenePrompts: any;
+  try {
+    scenePrompts = await readJson(scenePromptsPath);
+  } catch {
+    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 6 uit.');
+  }
+
+  const aiScenes = (scenePrompts.scenes || []).filter(
+    (s: any) => s.asset_type === 'ai_video' || s.type === 'ai_video'
+  );
+
+  if (aiScenes.length === 0) {
+    console.log('[Step 9] Geen ai_video scenes gevonden — stap overgeslagen');
+    return { skipped: true, reason: 'Geen scenes met asset_type "ai_video" in scene-prompts.json' };
+  }
+
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/video-scene-generator';
+  const aspectRatio = project.output === 'youtube_short' ? 'portrait' : 'landscape';
+
+  console.log(`[Step 9] ${aiScenes.length} scenes genereren, 1 per keer via ${n8nUrl}`);
+
+  const results: any[] = [];
+  let completed = 0;
+  let failed = 0;
+
+  for (let i = 0; i < aiScenes.length; i++) {
+    const scene = aiScenes[i];
+    const sceneId = scene.id;
+    console.log(`[Step 9] Scene ${sceneId} (${i + 1}/${aiScenes.length}) starten...`);
+
+    const payload = {
+      project: project.name,
+      scene_id: sceneId,
+      visual_prompt: scene.visual_prompt,
+      duration: scene.duration || 5,
+      aspect_ratio: aspectRatio,
+      output_dir: outputDir,
+      elevate_api_key: settings.elevateApiKey,
+    };
+
+    try {
+      // Verwijder vorige status
+      try { await fs.unlink(statusPath); } catch {}
+
+      const response = await fetch(n8nUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error('Webhook mislukt (' + response.status + '): ' + body);
+      }
+
+      const webhookResult = await response.json() as any;
+      console.log(`[Step 9] Scene ${sceneId} accepted: ${JSON.stringify(webhookResult)}`);
+
+      // Poll voor deze ene scene (max 10 minuten)
+      const status = await pollForStatus(statusPath, 10000, 600000);
+
+      if (status.status === 'completed') {
+        completed++;
+        results.push({ scene_id: sceneId, status: 'success', file_path: status.file_path });
+        console.log(`[Step 9] Scene ${sceneId} klaar! (${completed}/${aiScenes.length})`);
+      } else {
+        failed++;
+        results.push({ scene_id: sceneId, status: 'failed', error: status.error || 'Unknown' });
+        console.log(`[Step 9] Scene ${sceneId} mislukt: ${status.error}`);
+      }
+    } catch (err: any) {
+      failed++;
+      results.push({ scene_id: sceneId, status: 'failed', error: err.message });
+      console.log(`[Step 9] Scene ${sceneId} error: ${err.message}`);
+    }
+  }
+
+  console.log(`[Step 9] Klaar! ${completed}/${aiScenes.length} geslaagd, ${failed} mislukt`);
+
+  return {
+    skipped: false,
+    scenesCompleted: completed,
+    scenesFailed: failed,
+    totalScenes: aiScenes.length,
+    results,
+  };
+}

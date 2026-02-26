@@ -6,7 +6,7 @@
 
 import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
-import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6 } from '../services/pipeline.js';
+import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6, executeStep7, executeStep8, executeStep9 } from '../services/pipeline.js';
 
 const router = Router();
 
@@ -45,8 +45,8 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
     });
 
     const stepNames: Record<number, string> = {
-      0: 'Config validatie', 1: 'Transcripts ophalen', 2: 'Style profile maken', 4: 'Voiceover genereren', 5: 'Timestamps genereren',
-      3: 'Script schrijven', 6: 'Scene prompts genereren',
+      0: 'Config validatie', 1: 'Transcripts ophalen', 2: 'Style profile maken',
+      3: 'Script schrijven', 4: 'Voiceover genereren', 5: 'Timestamps genereren', 6: 'Scene prompts genereren', 7: 'Assets zoeken', 8: 'YouTube clips ophalen', 9: 'Video scenes genereren',
     };
     const source = stepNumber <= 1 || stepNumber === 12 ? 'App' : [4, 5, 7, 8, 9, 10, 11, 13].includes(stepNumber) ? 'N8N' : 'Elevate AI';
 
@@ -108,6 +108,45 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
           const promptsResult = await executeStep6(projectData, { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey });
           result = promptsResult;
           metadata = { sceneCount: promptsResult.totalScenes };
+          break;
+        }
+        case 7: {
+          const assetsResult = await executeStep7(projectData, settings);
+          result = assetsResult;
+          if (assetsResult.skipped) {
+            metadata = { skipped: true, reason: assetsResult.reason };
+            await prisma.logEntry.create({
+              data: { level: 'info', step: 7, source: 'N8N', message: `Stap 7 overgeslagen: ${assetsResult.reason}`, projectId: id },
+            });
+          } else {
+            metadata = { assetsFound: assetsResult.assetsFound, assetsFailed: assetsResult.assetsFailed };
+          }
+          break;
+        }
+        case 8: {
+          const clipsResult = await executeStep8(projectData, settings);
+          result = clipsResult;
+          if (clipsResult.skipped) {
+            metadata = { skipped: true, reason: clipsResult.reason };
+            await prisma.logEntry.create({
+              data: { level: 'info', step: 8, source: 'N8N', message: `Stap 8 overgeslagen: ${clipsResult.reason}`, projectId: id },
+            });
+          } else {
+            metadata = { clipsDownloaded: clipsResult.clipsDownloaded, clipsFailed: clipsResult.clipsFailed };
+          }
+          break;
+        }
+        case 9: {
+          const scenesResult = await executeStep9(projectData, settings);
+          result = scenesResult;
+          if (scenesResult.skipped) {
+            metadata = { skipped: true, reason: scenesResult.reason };
+            await prisma.logEntry.create({
+              data: { level: 'info', step: 9, source: 'N8N', message: `Stap 9 overgeslagen: ${scenesResult.reason}`, projectId: id },
+            });
+          } else {
+            metadata = { scenesCompleted: scenesResult.scenesCompleted, scenesFailed: scenesResult.scenesFailed };
+          }
           break;
         }
         default:
