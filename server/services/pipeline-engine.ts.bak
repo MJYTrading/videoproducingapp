@@ -1086,95 +1086,54 @@ export async function runSceneStreaming(projectId: string, state: PipelineState)
 
       const scene = aiScenes[i];
       const sceneId = scene.id;
+      const statusPath = path.join(projPath, 'assets', 'image-options', `scene${sceneId}-status.json`);
+
       const prompts = scene.visual_prompt_variants.slice(0, 3);
+      const imagePayload = {
+        project: project.name,
+        scene_id: sceneId,
+        visual_prompts: prompts,
+        aspect_ratio: aspectRatio,
+        output_dir: imageOptionsDir,
+        elevate_api_key: settings.elevateApiKey,
+        genai_pro_api_key: settings.genaiProApiKey || "",
+        genai_pro_images_enabled: settings.genaiProImagesEnabled || false,
+        status_path: statusPath,
+      };
 
-      // Fire 3 parallel webhook calls (1 per prompt/option)
-      const optionStatusPaths: string[] = [];
-      const webhookPromises: Promise<void>[] = [];
+      try { await fs.unlink(statusPath); } catch {}
 
-      for (let opt = 0; opt < prompts.length; opt++) {
-        const optNum = opt + 1;
-        const optStatusPath = path.join(projPath, 'assets', 'image-options', `scene${sceneId}_option${optNum}-status.json`);
-        optionStatusPaths.push(optStatusPath);
-
-        try { await fs.unlink(optStatusPath); } catch {}
-
-        const optPayload = {
-          project: project.name,
-          scene_id: sceneId,
-          visual_prompts: [prompts[opt]],
-          aspect_ratio: aspectRatio,
-          output_dir: imageOptionsDir,
-          elevate_api_key: settings.elevateApiKey,
-          genai_pro_api_key: settings.genaiProApiKey || "",
-          genai_pro_images_enabled: settings.genaiProImagesEnabled || false,
-          status_path: optStatusPath,
-        };
-
-        webhookPromises.push(
-          fetch(n8nImageUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(optPayload),
-          }).then(res => {
-            if (!res.ok) throw new Error(`Image webhook option ${optNum} mislukt: ${res.status}`);
-          })
-        );
-      }
-
-      // Send all webhook calls in parallel
       try {
-        await Promise.all(webhookPromises);
-        await addLog(projectId, 'info', 65, 'N8N',
-          `Scene ${sceneId}: ${prompts.length} image opties parallel gestart`);
-      } catch (err: any) {
-        imagesFailed++;
-        await addLog(projectId, 'warn', 65, 'N8N', `Scene ${sceneId} webhooks mislukt: ${err.message}`);
-        continue; // Skip polling, ga naar volgende scene
-      }
+        const imgResponse = await fetch(n8nImageUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(imagePayload),
+        });
 
-      // Poll all status files in parallel (max 4 min)
-      try {
-        const pollStart = Date.now();
-        const completed = new Set<number>();
-        const failed = new Set<number>();
+        if (!imgResponse.ok) throw new Error(`Image webhook mislukt: ${imgResponse.status}`);
 
-        while (Date.now() - pollStart < 240_000) {
+        // Poll (max 3 min)
+        const imgStart = Date.now();
+        let imageStatus: any = null;
+        while (Date.now() - imgStart < 180_000) {
           if (state.status !== 'running') break;
-
-          for (let opt = 0; opt < optionStatusPaths.length; opt++) {
-            if (completed.has(opt) || failed.has(opt)) continue;
-            try {
-              const raw = await fs.readFile(optionStatusPaths[opt], 'utf-8');
-              const st = JSON.parse(raw);
-              if (st.status === 'completed') completed.add(opt);
-              if (st.status === 'failed') failed.add(opt);
-            } catch {}
+          try {
+            const raw = await fs.readFile(statusPath, 'utf-8');
+            imageStatus = JSON.parse(raw);
+            if (imageStatus.status === 'completed') break;
+            if (imageStatus.status === 'failed') throw new Error(imageStatus.error || 'Image mislukt');
+          } catch (e: any) {
+            if (!e.message?.includes('ENOENT') && !e.message?.includes('Unexpected')) throw e;
           }
-
-          if (completed.size + failed.size >= prompts.length) break;
-          await new Promise(r => setTimeout(r, 3000));
+          await new Promise(r => setTimeout(r, 5000));
         }
 
-        if (completed.size > 0) {
+        if (imageStatus?.status === 'completed') {
           imagesCompleted++;
-          // Write combined status for this scene
-          const combinedStatusPath = path.join(projPath, 'assets', 'image-options', `scene${sceneId}-status.json`);
-          const options = prompts.map((_, idx) => ({
-            option: idx + 1,
-            path: `${imageOptionsDir}scene${sceneId}_option${idx + 1}.jpg`,
-            name: `Optie ${idx + 1}`,
-            status: completed.has(idx) ? 'completed' : 'failed',
-          }));
-          await fs.writeFile(combinedStatusPath, JSON.stringify({
-            status: 'completed',
-            scene_id: sceneId,
-            options,
-          }));
           await addLog(projectId, 'info', 65, 'N8N',
-            `Scene ${sceneId} images klaar: ${completed.size}/${prompts.length} gelukt (${imagesCompleted}/${totalScenes})`);
+            `Scene ${sceneId} images klaar (${imagesCompleted}/${totalScenes})`);
         } else {
-          throw new Error(`Alle ${prompts.length} image opties mislukt voor scene ${sceneId}`);
+          throw new Error(`Image timeout voor scene ${sceneId}`);
         }
 
       } catch (err: any) {

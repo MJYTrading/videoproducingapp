@@ -232,6 +232,32 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
+              <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800 mt-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold">GenAIPro voor Images</h3>
+                    <p className="text-sm text-zinc-400">Gebruik GenAIPro als fallback voor AI image generatie (kost credits)</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const newVal = !(localSettings.genaiProImagesEnabled);
+                      setLocalSettings({ ...localSettings, genaiProImagesEnabled: newVal });
+                      updateSettings({ genaiProImagesEnabled: newVal });
+                    }}
+                    className={
+                      'relative w-12 h-6 rounded-full transition-colors ' +
+                      (localSettings.genaiProImagesEnabled ? 'bg-green-600' : 'bg-zinc-700')
+                    }
+                  >
+                    <div
+                      className={
+                        'absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ' +
+                        (localSettings.genaiProImagesEnabled ? 'translate-x-6' : '')
+                      }
+                    />
+                  </button>
+                </div>
+              </div>
           </section>
 
           <section>

@@ -42,6 +42,7 @@ model Settings {
   // GenAIPro integratie
   genaiProApiKey       String  @default("")
   genaiProEnabled      Boolean @default(false)
+  genaiProImagesEnabled Boolean @default(false)
 }
 
 model Project {
