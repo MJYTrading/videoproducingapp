@@ -58,6 +58,7 @@ upload_dir "$PROJECT_PATH/assets/images" "scenes" "*.png"
 upload_dir "$PROJECT_PATH/assets/clips" "clips" "*.mp4"
 upload_dir "$PROJECT_PATH" "final" "final_video.*"
 upload_dir "$PROJECT_PATH" "final" "final.*"
+upload_dir "$PROJECT_PATH/final" "final" "*.mp4"
 
 PARENT_PATH="$DRIVE_ROOT/$CHANNEL"
 FOLDER_ID=$(rclone lsjson "gdrive:$PARENT_PATH" --dirs-only 2>/dev/null | python3 -c "
