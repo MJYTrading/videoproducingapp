@@ -6,7 +6,7 @@
 
 import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
-import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6, executeStep7, executeStep8, executeStep9 } from '../services/pipeline.js';
+import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6, executeStep7, executeStep8, executeStep9, executeStep10, executeStep11, executeStep12, executeStep13 } from '../services/pipeline.js';
 
 const router = Router();
 
@@ -147,6 +147,34 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
           } else {
             metadata = { scenesCompleted: scenesResult.scenesCompleted, scenesFailed: scenesResult.scenesFailed };
           }
+          break;
+        }
+        case 10: {
+          const editResult = await executeStep10(projectData, settings);
+          result = editResult;
+          metadata = { duration: editResult.duration, segments: editResult.segments, fileSizeMb: editResult.fileSizeMb };
+          break;
+        }
+        case 11: {
+          const gradeResult = await executeStep11(projectData, settings);
+          result = gradeResult;
+          metadata = { colorGrade: gradeResult.colorGrade, fileSizeMb: gradeResult.fileSizeMb };
+          break;
+        }
+        case 12: {
+          const subResult = await executeStep12(projectData, settings);
+          result = subResult;
+          if (subResult.skipped) {
+            metadata = { skipped: true, reason: subResult.reason };
+          } else {
+            metadata = { subtitlesCount: subResult.subtitlesCount, fileSizeMb: subResult.fileSizeMb };
+          }
+          break;
+        }
+        case 13: {
+          const exportResult = await executeStep13(projectData, settings);
+          result = exportResult;
+          metadata = { duration: exportResult.duration, fileSizeMb: exportResult.fileSizeMb, format: exportResult.format };
           break;
         }
         default:

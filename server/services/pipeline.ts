@@ -957,3 +957,188 @@ export async function executeStep9(project: any, settings: any) {
     results,
   };
 }
+
+// ============================================================
+// STAP 10: VIDEO EDITING
+// ============================================================
+
+export async function executeStep10(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const statusPath = path.join(projPath, 'edit', 'edit-status.json');
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/video-editor';
+
+  const payload = {
+    project: project.name,
+    project_dir: projPath,
+    color_grade: project.colorGrade || settings.colorGrade || 'none',
+    subtitles: project.subtitles !== false,
+    output_format: project.output === 'youtube_short' ? 'youtube_short' : 'youtube_1080p',
+  };
+
+  console.log(`[Step 10] Video editing starten via ${n8nUrl}...`);
+
+  try { await fs.unlink(statusPath); } catch {}
+  await fs.mkdir(path.join(projPath, 'edit', 'draft'), { recursive: true });
+  await fs.mkdir(path.join(projPath, 'edit', 'trimmed'), { recursive: true });
+
+  const response = await fetch(n8nUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+  }
+
+  console.log('[Step 10] Wachten op edit-status.json...');
+  const status = await pollForStatus(statusPath, 15000, 3600000);
+
+  console.log(`[Step 10] Editing klaar! Duur: ${status.duration}s, Grootte: ${status.file_size_mb} MB`);
+
+  return {
+    outputFile: status.output_file,
+    duration: status.duration,
+    fileSizeMb: status.file_size_mb,
+    segments: status.segments,
+    missingScenes: status.missing_scenes,
+  };
+}
+
+// ============================================================
+// STAP 11: COLOR GRADING
+// ============================================================
+
+export async function executeStep11(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const statusPath = path.join(projPath, 'edit', 'colorgrade-status.json');
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/color-grader';
+
+  const payload = {
+    project: project.name,
+    project_dir: projPath,
+    color_grade: project.colorGrade || settings.colorGrade || 'none',
+  };
+
+  console.log(`[Step 11] Color grading (${payload.color_grade}) via ${n8nUrl}...`);
+
+  try { await fs.unlink(statusPath); } catch {}
+
+  const response = await fetch(n8nUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+  }
+
+  console.log('[Step 11] Wachten op colorgrade-status.json...');
+  const status = await pollForStatus(statusPath, 10000, 1800000);
+
+  console.log(`[Step 11] Color grading klaar! Grade: ${status.color_grade}`);
+
+  return {
+    outputFile: status.output_file,
+    colorGrade: status.color_grade,
+    duration: status.duration,
+    fileSizeMb: status.file_size_mb,
+  };
+}
+
+// ============================================================
+// STAP 12: SUBTITLES
+// ============================================================
+
+export async function executeStep12(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const statusPath = path.join(projPath, 'edit', 'subtitles-status.json');
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/subtitle-burner';
+
+  const payload = {
+    project: project.name,
+    project_dir: projPath,
+    subtitles: project.subtitles !== false,
+    subtitle_font_size: 22,
+  };
+
+  if (!payload.subtitles) {
+    console.log('[Step 12] Subtitles uitgeschakeld — stap overgeslagen');
+    return { skipped: true, reason: 'Subtitles uitgeschakeld in project config' };
+  }
+
+  console.log(`[Step 12] Subtitles branden via ${n8nUrl}...`);
+
+  try { await fs.unlink(statusPath); } catch {}
+
+  const response = await fetch(n8nUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+  }
+
+  console.log('[Step 12] Wachten op subtitles-status.json...');
+  const status = await pollForStatus(statusPath, 10000, 1800000);
+
+  console.log(`[Step 12] Subtitles klaar! ${status.subtitles_count} zinnen gebrand`);
+
+  return {
+    outputFile: status.output_file,
+    subtitlesCount: status.subtitles_count,
+    srtFile: status.srt_file,
+    duration: status.duration,
+    fileSizeMb: status.file_size_mb,
+  };
+}
+
+// ============================================================
+// STAP 13: FINAL EXPORT
+// ============================================================
+
+export async function executeStep13(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const statusPath = path.join(projPath, 'edit', 'export-status.json');
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/final-exporter';
+
+  const payload = {
+    project: project.name,
+    project_dir: projPath,
+    subtitles: project.subtitles !== false,
+    output_format: project.output === 'youtube_short' ? 'youtube_short' : 'youtube_1080p',
+  };
+
+  console.log(`[Step 13] Final export via ${n8nUrl}...`);
+
+  try { await fs.unlink(statusPath); } catch {}
+
+  const response = await fetch(n8nUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+  }
+
+  console.log('[Step 13] Wachten op export-status.json...');
+  const status = await pollForStatus(statusPath, 10000, 1800000);
+
+  console.log(`[Step 13] Export klaar! ${status.duration}s, ${status.file_size_mb} MB`);
+
+  return {
+    outputFile: status.output_file,
+    duration: status.duration,
+    fileSizeMb: status.file_size_mb,
+    format: status.format,
+  };
+}
