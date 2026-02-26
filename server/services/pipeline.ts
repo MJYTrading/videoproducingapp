@@ -704,6 +704,11 @@ export async function executeStep6b(project: any, settings: any) {
     console.log('[Step 6b] Auto mode: ' + autoSelections.length + ' images automatisch geselecteerd');
   }
 
+  // Als geen enkele scene gelukt is, throw error zodat de stap niet op completed komt
+  if (completed === 0 && aiScenes.length > 0) {
+    throw new Error('Alle ' + aiScenes.length + ' scenes mislukt. Geen images gegenereerd.');
+  }
+
   return {
     totalScenes: aiScenes.length,
     scenesCompleted: completed,
