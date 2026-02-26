@@ -61,8 +61,7 @@ const STEP_CONFIG: Record<number, {
   0:  { dependsOn: [],         timeout: 30_000,     maxRetries: 1, retryDelays: [0] },
   1:  { dependsOn: [0],        timeout: 120_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   2:  { dependsOn: [1],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  3:  { dependsOn: [2],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
-        isCheckpoint: true },
+  3:  { dependsOn: [2],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   4:  { dependsOn: [3],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   5:  { dependsOn: [4],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   6:  { dependsOn: [5],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
@@ -240,7 +239,8 @@ async function executeStepWithRetry(
       const duration = Math.round((Date.now() - startedAt.getTime()) / 1000);
 
       // Check of dit een checkpoint is
-      const isCheckpoint = config.isCheckpoint ||
+      const projectCheckpoints: number[] = project.checkpoints || [];
+      const isCheckpoint = projectCheckpoints.includes(stepNumber) ||
         (config.checkpointCondition === 'manual_image_mode' && project.imageSelectionMode === 'manual');
 
       const newStatus = isCheckpoint ? 'review' : 'completed';

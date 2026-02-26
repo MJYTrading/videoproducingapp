@@ -275,7 +275,8 @@ ${JSON.stringify(styleProfile, null, 2)}
 ONDERWERP: ${project.title}
 ${project.description ? `BESCHRIJVING: ${project.description}` : ''}
 TAAL: ${project.language === 'NL' ? 'Nederlands' : 'Engels'}
-TOTAAL WOORDENAANTAL: ${wordCount} woorden
+TOTAAL WOORDENAANTAL: EXACT ${wordCount} woorden (ABSOLUUT MINIMUM: ${Math.floor(wordCount * 0.9)} woorden, ABSOLUUT MAXIMUM: ${Math.ceil(wordCount * 1.1)} woorden)
+BELANGRIJK: Tel je woorden. Het script MOET minstens ${Math.floor(wordCount * 0.9)} woorden bevatten. Schrijf gedetailleerd en uitgebreid.
 AANTAL SECTIES: ${sections} (uit style profile)
 WOORDEN PER SECTIE: ~${wordsPerSection}
 ${clipInfo}
@@ -283,9 +284,9 @@ ${clipInfo}
 Schrijf het volledige script. ALLEEN het script, geen extra uitleg.`;
 
   const targetWordCount = wordCount;
-  const minWords = Math.floor(targetWordCount * 0.95);
-  const maxWords = Math.ceil(targetWordCount * 1.05);
-  const MAX_SCRIPT_ATTEMPTS = 3;
+  const minWords = Math.floor(targetWordCount * 0.90);
+  const maxWords = Math.ceil(targetWordCount * 1.10);
+  const MAX_SCRIPT_ATTEMPTS = 5;
 
   let script = '';
   let actualWordCount = 0;
@@ -309,6 +310,9 @@ Schrijf het volledige script. ALLEEN het script, geen extra uitleg.`;
       console.log(`[Script] Poging ${attempt}: ${actualWordCount} woorden (target ${minWords}-${maxWords}). Opnieuw...`);
     } else {
       console.log(`[Script] Poging ${attempt}: ${actualWordCount} woorden. Accepteren na ${MAX_SCRIPT_ATTEMPTS} pogingen.`);
+      if (actualWordCount < minWords) {
+        throw new Error(`Script te kort: ${actualWordCount} woorden (minimum: ${minWords}). Na ${MAX_SCRIPT_ATTEMPTS} pogingen niet binnen range.`);
+      }
     }
   }
 

@@ -3,13 +3,22 @@ interface CheckpointsSectionProps {
   onChange: (checkpoints: number[]) => void;
 }
 
-const CHECKPOINT_STEPS = [
+
+interface CheckpointStep {
+  id: number;
+  name: string;
+  recommended?: boolean;
+  displayLabel?: string;
+}
+
+const CHECKPOINT_STEPS: CheckpointStep[] = [
   { id: 1, name: 'Transcripts ophalen' },
   { id: 2, name: 'Style profile maken' },
   { id: 3, name: 'Script schrijven', recommended: true },
   { id: 4, name: 'Voiceover genereren', recommended: true },
   { id: 5, name: 'Timestamps genereren' },
   { id: 6, name: 'Scene prompts genereren', recommended: true },
+  { id: 65, name: 'Scene images genereren', displayLabel: '6b' },
   { id: 7, name: 'Assets zoeken' },
   { id: 8, name: 'YouTube clips ophalen' },
   { id: 9, name: 'Video scenes genereren', recommended: true },
@@ -66,7 +75,7 @@ export default function CheckpointsSection({ checkpoints, onChange }: Checkpoint
               className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-2 focus:ring-blue-600 focus:ring-offset-0 cursor-pointer"
             />
             <span className="flex-1 text-sm">
-              {step.id}. {step.name}
+              {step.displayLabel || step.id}. {step.name}
             </span>
             {step.recommended && (
               <span className="text-xs text-blue-400">← aanbevolen</span>

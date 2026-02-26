@@ -4,6 +4,24 @@ import { Project, Step, StepStatus } from '../types';
 import { useStore } from '../store';
 import ReviewPanel from './ReviewPanel';
 import ImageReviewPanel from './ImageReviewPanel';
+const STEP_DISPLAY: Record<number, { label: string; sortOrder: number }> = {
+  0: { label: '0', sortOrder: 0 },
+  1: { label: '1', sortOrder: 1 },
+  2: { label: '2', sortOrder: 2 },
+  3: { label: '3', sortOrder: 3 },
+  4: { label: '4', sortOrder: 4 },
+  5: { label: '5', sortOrder: 5 },
+  6: { label: '6', sortOrder: 6 },
+  65: { label: '6b', sortOrder: 6.5 },
+  7: { label: '7', sortOrder: 7 },
+  8: { label: '8', sortOrder: 8 },
+  9: { label: '9', sortOrder: 9 },
+  10: { label: '10', sortOrder: 10 },
+  11: { label: '11', sortOrder: 11 },
+  12: { label: '12', sortOrder: 12 },
+  13: { label: '13', sortOrder: 13 },
+};
+
 
 interface PipelineTabProps {
   project: Project;
@@ -279,7 +297,7 @@ export default function PipelineTab({ project }: PipelineTabProps) {
       {reviewStep && reviewStep.id === 65 && <ImageReviewPanel project={project} step={reviewStep} />}
       {reviewStep && reviewStep.id !== 65 && <ReviewPanel project={project} step={reviewStep} />}
 
-      {project.steps.map((step) => (
+      {[...project.steps].sort((a, b) => (STEP_DISPLAY[a.id]?.sortOrder ?? a.id) - (STEP_DISPLAY[b.id]?.sortOrder ?? b.id)).map((step) => (
         <div key={step.id}>
           <div
             className={`bg-zinc-900 rounded-lg p-4 border ${getStepBorderClass(
@@ -295,7 +313,7 @@ export default function PipelineTab({ project }: PipelineTabProps) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1">
                   <span className="text-zinc-500 font-mono text-sm">
-                    {step.id.toString().padStart(2, '0')}
+                    {(STEP_DISPLAY[step.id]?.label || step.id.toString()).padStart(2, '0')}
                   </span>
                   <span className="font-medium">{step.name}</span>
                   {step.retryCount && step.retryCount > 0 && (
