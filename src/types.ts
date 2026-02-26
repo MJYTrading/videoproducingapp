@@ -139,6 +139,7 @@ export interface Settings {
   anthropicApiKey: string;
   genaiProApiKey: string;
   genaiProEnabled: boolean;
+  genaiProImagesEnabled: boolean;
 }
 
 export interface ConnectionStatus {

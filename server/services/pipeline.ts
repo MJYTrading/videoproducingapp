@@ -705,7 +705,7 @@ export async function executeStep6b(project: any, settings: any) {
   }
 
   // Als geen enkele scene gelukt is, throw error zodat de stap niet op completed komt
-  if (completed === 0 && aiScenes.length > 0) {
+  if (failed > 0) {
     throw new Error('Alle ' + aiScenes.length + ' scenes mislukt. Geen images gegenereerd.');
   }
 
@@ -1222,8 +1222,8 @@ export async function executeStep9(project: any, settings: any) {
 
   console.log('[Step 9] Klaar! ' + completed + '/' + aiScenes.length + ' geslaagd, ' + failed + ' mislukt');
 
-  if (completed === 0 && aiScenes.length > 0) {
-    throw new Error('Alle ' + aiScenes.length + ' video scenes mislukt.');
+  if (failed > 0) {
+    throw new Error(failed + ' van ' + aiScenes.length + ' video scenes mislukt.');
   }
 
   return {

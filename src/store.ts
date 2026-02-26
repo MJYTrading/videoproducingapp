@@ -55,6 +55,7 @@ export const useStore = create<Store>((set, get) => ({
     anthropicApiKey: '',
     genaiProApiKey: '',
     genaiProEnabled: false,
+    genaiProImagesEnabled: false,
   },
   toasts: [],
   loading: false,

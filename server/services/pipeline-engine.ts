@@ -855,17 +855,24 @@ export async function runSceneStreaming(projectId: string, state: PipelineState)
   await addLog(projectId, 'info', 65, 'N8N',
     `Scene streaming gestart: ${totalScenes} scenes, mode: ${isAutoMode ? 'auto' : 'manual'}`);
 
-  // Track welke video's we al gestart hebben (voor parallel video generatie)
+  // Track parallelle taken
   const activeVideoPromises: Map<number, Promise<void>> = new Map();
-  const MAX_CONCURRENT_VIDEOS = 2; // Max 2 video's tegelijk (rate limits)
+  const activeImagePromises: Map<number, Promise<void>> = new Map();
+  const MAX_CONCURRENT_VIDEOS = 50;
+  const MAX_CONCURRENT_IMAGES = 50;
 
   // Selecties voor manual mode
   const allSelections: any[] = [];
 
-  // ── Helper: wacht tot er plek is voor een nieuwe video ──
+  // ── Helper: wacht tot er plek is ──
   async function waitForVideoSlot() {
     while (activeVideoPromises.size >= MAX_CONCURRENT_VIDEOS) {
       await Promise.race([...activeVideoPromises.values()]);
+    }
+  }
+  async function waitForImageSlot() {
+    while (activeImagePromises.size >= MAX_CONCURRENT_IMAGES) {
+      await Promise.race([...activeImagePromises.values()]);
     }
   }
 
@@ -937,21 +944,21 @@ export async function runSceneStreaming(projectId: string, state: PipelineState)
     throw new Error(`Timeout: video scene ${sceneId} niet klaar binnen ${timeoutMs / 1000}s`);
   }
 
-  // ══ AUTO MODE: image → video streaming per scene ══
+  // ══ AUTO MODE: image → video PARALLEL per scene ══
   if (isAutoMode) {
     // Markeer stap 9 ook als running
     await updateStepInDb(projectId, 9, { status: 'running', startedAt: new Date(), error: null });
     await addLog(projectId, 'info', 9, 'N8N',
-      `Video generatie gestart (streaming, max ${MAX_CONCURRENT_VIDEOS} tegelijk)`);
+      `Video generatie gestart (parallel, max ${MAX_CONCURRENT_IMAGES} images + ${MAX_CONCURRENT_VIDEOS} videos tegelijk)`);
 
-    for (let i = 0; i < aiScenes.length; i++) {
-      if (state.status !== 'running') break;
+    // ── Helper: verwerk 1 scene (image → video) ──
+    async function processScene(scene: any) {
+      if (state.status !== 'running') return;
 
-      const scene = aiScenes[i];
       const sceneId = scene.id;
       const statusPath = path.join(projPath, 'assets', 'image-options', `scene${sceneId}-status.json`);
 
-      // 1. Genereer 1 image
+      // 1. Genereer image
       const prompts = [scene.visual_prompt_variants[0] || scene.visual_prompt];
       const imagePayload = {
         project: project.name,
@@ -1040,11 +1047,113 @@ export async function runSceneStreaming(projectId: string, state: PipelineState)
       }
     }
 
-    // Wacht tot alle lopende video's klaar zijn
+    // ── Start alle scenes parallel (met image concurrency limiet) ──
+    const scenePromises: Promise<void>[] = [];
+    for (const scene of aiScenes) {
+      if (state.status !== 'running') break;
+      await waitForImageSlot();
+      const sceneId = scene.id;
+      const p = processScene(scene).finally(() => {
+        activeImagePromises.delete(sceneId);
+      });
+      activeImagePromises.set(sceneId, p);
+      scenePromises.push(p);
+    }
+
+    // Wacht tot alle images + video's klaar zijn
+    await Promise.all(scenePromises);
     if (activeVideoPromises.size > 0) {
       await addLog(projectId, 'info', 9, 'N8N',
         `Wachten op laatste ${activeVideoPromises.size} video(s)...`);
       await Promise.all([...activeVideoPromises.values()]);
+    }
+
+    // ── Retry gefaalde scenes (max 2 retries) ──
+    const MAX_SCENE_RETRIES = 2;
+    for (let retry = 1; retry <= MAX_SCENE_RETRIES; retry++) {
+      if (state.status !== 'running') break;
+
+      // Check welke scenes nog geen completed video hebben
+      const failedScenes: { scene: any; existingImagePath: string | null }[] = [];
+      for (const scene of aiScenes) {
+        const sceneId = scene.id;
+        const videoStatusPath = path.join(projPath, 'assets', 'scenes', `scene${sceneId}-status.json`);
+        try {
+          const raw = await fs.readFile(videoStatusPath, 'utf-8');
+          const st = JSON.parse(raw);
+          if (st.status === 'completed') continue;
+        } catch {}
+
+        // Check of er al een geslaagde image is voor deze scene
+        let existingImagePath: string | null = null;
+        const sel = allSelections.find((s: any) => s.scene_id === sceneId);
+        if (sel?.chosen_path) {
+          try {
+            await fs.access(sel.chosen_path);
+            existingImagePath = sel.chosen_path;
+          } catch {}
+        }
+
+        failedScenes.push({ scene, existingImagePath });
+      }
+
+      if (failedScenes.length === 0) break;
+
+      const needsImage = failedScenes.filter(f => !f.existingImagePath).length;
+      const videoOnly = failedScenes.filter(f => f.existingImagePath).length;
+      await addLog(projectId, 'info', 9, 'N8N',
+        `Retry ${retry}/${MAX_SCENE_RETRIES}: ${failedScenes.length} scene(s) opnieuw (${videoOnly} video-only, ${needsImage} image+video)...`);
+
+      // Retry gefaalde scenes parallel
+      const retryPromises: Promise<void>[] = [];
+      for (const { scene, existingImagePath } of failedScenes) {
+        if (state.status !== 'running') break;
+        const sceneId = scene.id;
+
+        if (existingImagePath) {
+          // Image bestaat al → alleen video opnieuw starten
+          await waitForVideoSlot();
+          const videoPromise = generateVideo(
+            sceneId, existingImagePath, scene.visual_prompt, scene.duration
+          ).catch(err => {
+            videosFailed++;
+            addLog(projectId, 'warn', 9, 'N8N', `Scene ${sceneId} video retry mislukt: ${err.message}`);
+          }).finally(() => {
+            activeVideoPromises.delete(sceneId);
+          });
+          activeVideoPromises.set(sceneId, videoPromise);
+          retryPromises.push(videoPromise);
+        } else {
+          // Geen image → hele scene opnieuw (image + video)
+          await waitForImageSlot();
+          const p = processScene(scene).finally(() => {
+            activeImagePromises.delete(sceneId);
+          });
+          activeImagePromises.set(sceneId, p);
+          retryPromises.push(p);
+        }
+      }
+
+      await Promise.all(retryPromises);
+      if (activeVideoPromises.size > 0) {
+        await addLog(projectId, 'info', 9, 'N8N',
+          `Retry ${retry}: wachten op laatste ${activeVideoPromises.size} video(s)...`);
+        await Promise.all([...activeVideoPromises.values()]);
+      }
+    }
+
+    // ── Finale telling: check alle scene status files ──
+    let finalCompleted = 0;
+    let finalFailed = 0;
+    for (const scene of aiScenes) {
+      const sceneId = scene.id;
+      const videoStatusPath = path.join(projPath, 'assets', 'scenes', `scene${sceneId}-status.json`);
+      try {
+        const raw = await fs.readFile(videoStatusPath, 'utf-8');
+        const st = JSON.parse(raw);
+        if (st.status === 'completed') { finalCompleted++; continue; }
+      } catch {}
+      finalFailed++;
     }
 
     // Schrijf image-selections.json
@@ -1065,19 +1174,23 @@ export async function runSceneStreaming(projectId: string, state: PipelineState)
     await updateStepInDb(projectId, 65, {
       status: 'completed',
       duration: img65Duration,
-      result: JSON.stringify({ imagesCompleted, imagesFailed, totalScenes, autoSelected: true }),
+      result: JSON.stringify({ imagesCompleted, imagesFailed: totalScenes - imagesCompleted, totalScenes, autoSelected: true }),
     });
 
-    // Markeer stap 9 als klaar
+    // Markeer stap 9: ALLEEN completed als ALLE scenes klaar zijn
     await updateStepInDb(projectId, 9, {
-      status: videosCompleted > 0 ? 'completed' : 'failed',
-      duration: img65Duration, // Totale streaming tijd
-      result: JSON.stringify({ videosCompleted, videosFailed, totalScenes }),
-      error: videosFailed > 0 ? `${videosFailed} scene(s) mislukt` : null,
+      status: finalFailed === 0 ? 'completed' : 'failed',
+      duration: img65Duration,
+      result: JSON.stringify({ videosCompleted: finalCompleted, videosFailed: finalFailed, totalScenes }),
+      error: finalFailed > 0 ? `${finalFailed} van ${totalScenes} scene(s) mislukt na ${MAX_SCENE_RETRIES} retries` : null,
     });
+
+    // Update totalen voor return value
+    videosCompleted = finalCompleted;
+    videosFailed = finalFailed;
 
     await addLog(projectId, 'info', 9, 'N8N',
-      `Scene streaming klaar! Images: ${imagesCompleted}/${totalScenes}, Videos: ${videosCompleted}/${totalScenes}`);
+      `Scene streaming klaar! Images: ${allSelections.length}/${totalScenes}, Videos: ${finalCompleted}/${totalScenes}${finalFailed > 0 ? ` (${finalFailed} mislukt na retries)` : ''}`);
 
   // ══ MANUAL MODE: alle images eerst, dan wacht op goedkeuring per scene ══
   } else {
