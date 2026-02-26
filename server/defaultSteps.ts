@@ -14,4 +14,5 @@ export const DEFAULT_STEPS = [
   { stepNumber: 11, name: 'Color grading',             executor: 'N8N' },
   { stepNumber: 12, name: 'Subtitles',                 executor: 'App' },
   { stepNumber: 13, name: 'Final export',              executor: 'N8N' },
+  { stepNumber: 14, name: 'Google Drive upload',      executor: 'App' },
 ];

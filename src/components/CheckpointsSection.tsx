@@ -26,6 +26,7 @@ const CHECKPOINT_STEPS: CheckpointStep[] = [
   { id: 11, name: 'Color grading' },
   { id: 12, name: 'Subtitles' },
   { id: 13, name: 'Final export' },
+  { id: 14, name: 'Google Drive upload' },
 ];
 
 export default function CheckpointsSection({ checkpoints, onChange }: CheckpointsSectionProps) {

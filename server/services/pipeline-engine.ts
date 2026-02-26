@@ -79,6 +79,7 @@ const STEP_CONFIG: Record<number, {
   12: { dependsOn: [10],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000],
         canSkip: (p) => !p.subtitles },
   13: { dependsOn: [10, 11, 12], timeout: 1_800_000, maxRetries: 2, retryDelays: [10_000, 30_000] },
+  14: { dependsOn: [13],       timeout: 600_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
 };
 
 // Stap volgorde voor display (stepNumber waarden)
@@ -154,7 +155,7 @@ function getStepName(stepNumber: number): string {
     3: 'Script schrijven', 4: 'Voiceover genereren', 5: 'Timestamps genereren',
     6: 'Scene prompts genereren', 65: 'Scene images genereren',
     7: 'Assets zoeken', 8: 'YouTube clips ophalen', 9: 'Video scenes genereren',
-    10: 'Video editing', 11: 'Color grading', 12: 'Subtitles', 13: 'Final export',
+    10: 'Video editing', 11: 'Color grading', 12: 'Subtitles', 13: 'Final export', 14: 'Google Drive upload',
   };
   return map[stepNumber] || `Stap ${stepNumber}`;
 }
