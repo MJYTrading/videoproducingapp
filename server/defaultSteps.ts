@@ -6,6 +6,7 @@ export const DEFAULT_STEPS = [
   { stepNumber: 4,  name: 'Voiceover genereren',       executor: 'N8N' },
   { stepNumber: 5,  name: 'Timestamps genereren',      executor: 'N8N' },
   { stepNumber: 6,  name: 'Scene prompts genereren',   executor: 'Elevate AI' },
+  { stepNumber: 65, name: 'Scene images genereren',    executor: 'N8N' },
   { stepNumber: 7,  name: 'Assets zoeken',             executor: 'N8N' },
   { stepNumber: 8,  name: 'YouTube clips ophalen',     executor: 'N8N' },
   { stepNumber: 9,  name: 'Video scenes genereren',    executor: 'N8N' },

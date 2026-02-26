@@ -6,7 +6,7 @@
 
 import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
-import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6, executeStep7, executeStep8, executeStep9, executeStep10, executeStep11, executeStep12, executeStep13 } from '../services/pipeline.js';
+import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6, executeStep6b, executeStep7, executeStep8, executeStep9, executeStep10, executeStep11, executeStep12, executeStep13 } from '../services/pipeline.js';
 
 const router = Router();
 
@@ -46,9 +46,9 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
 
     const stepNames: Record<number, string> = {
       0: 'Config validatie', 1: 'Transcripts ophalen', 2: 'Style profile maken',
-      3: 'Script schrijven', 4: 'Voiceover genereren', 5: 'Timestamps genereren', 6: 'Scene prompts genereren', 7: 'Assets zoeken', 8: 'YouTube clips ophalen', 9: 'Video scenes genereren',
+      3: 'Script schrijven', 4: 'Voiceover genereren', 5: 'Timestamps genereren', 6: 'Scene prompts genereren', 65: 'Scene images genereren', 7: 'Assets zoeken', 8: 'YouTube clips ophalen', 9: 'Video scenes genereren',
     };
-    const source = stepNumber <= 1 || stepNumber === 12 ? 'App' : [4, 5, 7, 8, 9, 10, 11, 13].includes(stepNumber) ? 'N8N' : 'Elevate AI';
+    const source = stepNumber <= 1 || stepNumber === 12 ? 'App' : [4, 5, 7, 8, 9, 10, 11, 13, 65].includes(stepNumber) ? 'N8N' : 'Elevate AI';
 
     await prisma.logEntry.create({
       data: { level: 'info', step: stepNumber, source, message: `${stepNames[stepNumber] || `Stap ${stepNumber}`} gestart...`, projectId: id },
@@ -108,6 +108,16 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
           const promptsResult = await executeStep6(projectData, { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey });
           result = promptsResult;
           metadata = { sceneCount: promptsResult.totalScenes };
+          break;
+        }
+        case 65: {
+          const imgResult = await executeStep6b(projectData, settings);
+          result = imgResult;
+          if (imgResult.skipped) {
+            metadata = { skipped: true, reason: imgResult.reason };
+          } else {
+            metadata = { scenesCompleted: imgResult.scenesCompleted, scenesFailed: imgResult.scenesFailed };
+          }
           break;
         }
         case 7: {
@@ -235,6 +245,108 @@ router.get('/:id/step-result/:stepNumber', async (req: Request, res: Response) =
     });
   } catch (error: any) {
     res.status(500).json({ error: 'Kon stap resultaat niet ophalen' });
+  }
+});
+
+// ── Image Selection Routes ──
+
+// Haal image opties op voor alle scenes
+router.get('/:id/image-options', async (req: Request, res: Response) => {
+  try {
+    const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!project) return res.status(404).json({ error: 'Project niet gevonden' });
+
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const optionsPath = path.join('/root/.openclaw/workspace/projects', project.name, 'assets', 'image-options.json');
+
+    try {
+      const data = await fs.readFile(optionsPath, 'utf-8');
+      res.json(JSON.parse(data));
+    } catch {
+      res.json({ scenes: [], total_scenes: 0, completed: 0, failed: 0 });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: 'Kon image opties niet ophalen' });
+  }
+});
+
+// Sla image selecties op (gebruiker kiest 1 image per scene + clip optie)
+router.post('/:id/image-selections', async (req: Request, res: Response) => {
+  try {
+    const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!project) return res.status(404).json({ error: 'Project niet gevonden' });
+
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const selectionsPath = path.join('/root/.openclaw/workspace/projects', project.name, 'assets', 'image-selections.json');
+
+    const selections = req.body.selections || [];
+    await fs.mkdir(path.dirname(selectionsPath), { recursive: true });
+    await fs.writeFile(selectionsPath, JSON.stringify({
+      project: project.name,
+      saved_at: new Date().toISOString(),
+      total_selections: selections.length,
+      selections,
+    }, null, 2), 'utf-8');
+
+    // Update ook het project record
+    await prisma.project.update({
+      where: { id: req.params.id },
+      data: { selectedImages: JSON.stringify(selections) },
+    });
+
+    res.json({ success: true, saved: selections.length });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Kon selecties niet opslaan: ' + error.message });
+  }
+});
+
+// Haal opgeslagen selecties op
+router.get('/:id/image-selections', async (req: Request, res: Response) => {
+  try {
+    const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!project) return res.status(404).json({ error: 'Project niet gevonden' });
+
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const selectionsPath = path.join('/root/.openclaw/workspace/projects', project.name, 'assets', 'image-selections.json');
+
+    try {
+      const data = await fs.readFile(selectionsPath, 'utf-8');
+      res.json(JSON.parse(data));
+    } catch {
+      res.json({ selections: [], total_selections: 0 });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: 'Kon selecties niet ophalen' });
+  }
+});
+
+// Serve image bestanden vanuit de workspace (voor thumbnails in de UI)
+router.get('/:id/image-file/*', async (req: Request, res: Response) => {
+  try {
+    const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!project) return res.status(404).json({ error: 'Project niet gevonden' });
+
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const relativePath = req.params[0]; // alles na /image-file/
+    const fullPath = path.join('/root/.openclaw/workspace/projects', project.name, 'assets', 'image-options', relativePath);
+
+    // Beveiligingscheck: pad mag niet buiten project dir gaan
+    if (!fullPath.startsWith(path.join('/root/.openclaw/workspace/projects', project.name))) {
+      return res.status(403).json({ error: 'Toegang geweigerd' });
+    }
+
+    try {
+      await fs.access(fullPath);
+      res.sendFile(fullPath);
+    } catch {
+      res.status(404).json({ error: 'Bestand niet gevonden' });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: 'Kon bestand niet laden' });
   }
 });
 

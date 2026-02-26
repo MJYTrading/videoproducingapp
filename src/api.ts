@@ -143,3 +143,28 @@ export const pipeline = {
     return res.json();
   },
 };
+
+export const imageOptions = {
+  async getOptions(projectId: string): Promise<any> {
+    const res = await apiFetch(`/projects/${projectId}/image-options`);
+    if (!res.ok) throw new Error('Kon image opties niet ophalen');
+    return res.json();
+  },
+  async getSelections(projectId: string): Promise<any> {
+    const res = await apiFetch(`/projects/${projectId}/image-selections`);
+    if (!res.ok) throw new Error('Kon selecties niet ophalen');
+    return res.json();
+  },
+  async saveSelections(projectId: string, selections: any[]): Promise<any> {
+    const res = await apiFetch(`/projects/${projectId}/image-selections`, {
+      method: 'POST',
+      body: JSON.stringify({ selections }),
+    });
+    if (!res.ok) throw new Error('Kon selecties niet opslaan');
+    return res.json();
+  },
+  getImageUrl(projectId: string, filename: string): string {
+    const token = localStorage.getItem('token') || '';
+    return `/api/projects/${projectId}/image-file/${filename}?token=${token}`;
+  },
+};

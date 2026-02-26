@@ -331,6 +331,12 @@ JE TAAK:
 - Scenes langer dan 8 seconden moeten gesplitst worden
 - Markeer scenes die echte afbeeldingen nodig hebben met asset_type: "real_image"
 - Markeer [CLIP] scenes met type: "clip"
+- Voor elke ai_video scene: maak 3 VERSCHILLENDE visuele prompt varianten
+  - Variant 1: Close-up / intiem perspectief
+  - Variant 2: Wide shot / episch overzicht
+  - Variant 3: Creatief / onverwacht perspectief (overhead, laag, door object heen, etc.)
+  - Elke variant moet de stijl prefix en suffix bevatten
+  - De varianten moeten ECHT ANDERS zijn qua compositie en camerahoek, niet alleen kleine kleurverschillen
 
 OUTPUT FORMAT (JSON, ALLEEN de JSON):
 {
@@ -343,12 +349,23 @@ OUTPUT FORMAT (JSON, ALLEEN de JSON):
       "text": "De gesproken tekst voor deze scene",
       "type": "ai_video",
       "asset_type": "ai_video",
-      "visual_prompt": "Volledige prompt met style prefix en suffix",
+      "visual_prompt": "Hoofdprompt (variant 1) met style prefix en suffix",
+      "visual_prompt_variants": [
+        "Variant 1: close-up/intiem perspectief met style prefix en suffix",
+        "Variant 2: wide shot/episch perspectief met style prefix en suffix",
+        "Variant 3: creatief/onverwacht perspectief met style prefix en suffix"
+      ],
       "camera_movement": "beschrijving van camera beweging",
       "mood": "sfeer van de scene"
     }
   ]
-}`;
+}
+
+BELANGRIJK voor visual_prompt_variants:
+- Alleen voor ai_video scenes (NIET voor clip of real_image)
+- Elke variant is een VOLLEDIGE prompt (inclusief stijl prefix/suffix)
+- visual_prompt bevat altijd variant 1 (voor backwards compatibility)
+- De 3 varianten tonen dezelfde scene-inhoud maar vanuit TOTAAL ANDER perspectief`;
 
 export async function executeStep6(project: any, llmKeys: { elevateApiKey?: string; anthropicApiKey?: string }) {
   const projPath = projectDir(project.name);
@@ -417,11 +434,15 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
       '- [CLIP] markers worden type: "clip"',
       '- Elke scene heeft: id, start, end, duration, text, type, asset_type, visual_prompt, camera_movement, mood',
       '- Geef ALLEEN een JSON object terug met een "scenes" array',
+      '- Voor ai_video scenes: voeg visual_prompt_variants toe (array van 3 VERSCHILLENDE prompts)',
+      '- visual_prompt = variant 1, visual_prompt_variants = [variant1, variant2, variant3]',
+      '- Varianten moeten ECHT ANDERS zijn: close-up vs wide shot vs creatief perspectief',
+      '- Clip en real_image scenes hebben GEEN visual_prompt_variants nodig',
     ].join('\n');
 
     return llmJsonPrompt<{ scenes: any[] }>(
       llmKeys, PROMPTS_SYSTEM, batchPrompt,
-      { maxTokens: 8192, temperature: 0.7 }
+      { maxTokens: 12000, temperature: 0.7 }
     ).then(result => {
       console.log(`[Step 6] Batch ${i + 1}: ${(result.scenes || []).length} scenes`);
       return { index: i, scenes: result.scenes || [] };
@@ -479,6 +500,138 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
     avgDuration: Math.round(avgDuration * 10) / 10, filePath: outputPath,
     typeCounts: { ai_video: aiVideoScenes, clip: clipScenes, real_image: realImageScenes },
     preview: allScenes.slice(0, 3),
+  };
+}
+
+
+// ── Stap 6b: Scene images genereren (via N8N) ──
+
+export async function executeStep6b(project: any, settings: any) {
+  const projPath = projectDir(project.name);
+  const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
+  const imageOptionsDir = path.join(projPath, 'assets', 'image-options') + '/';
+  const selectionsPath = path.join(projPath, 'assets', 'image-selections.json');
+
+  let scenePrompts: any;
+  try {
+    scenePrompts = await readJson(scenePromptsPath);
+  } catch {
+    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 6 uit.');
+  }
+
+  // Filter alleen ai_video scenes die visual_prompt_variants hebben
+  const aiScenes = (scenePrompts.scenes || []).filter(
+    (s: any) => (s.asset_type === 'ai_video' || s.type === 'ai_video') && s.visual_prompt_variants && s.visual_prompt_variants.length >= 3
+  );
+
+  if (aiScenes.length === 0) {
+    console.log('[Step 6b] Geen ai_video scenes met prompt varianten gevonden');
+    return { skipped: true, reason: 'Geen scenes met visual_prompt_variants in scene-prompts.json' };
+  }
+
+  // Check of imageSelectionMode manual is
+  if (project.imageSelectionMode !== 'manual') {
+    console.log('[Step 6b] Image selectie staat op auto — stap overgeslagen');
+    return { skipped: true, reason: 'Image selectie mode is auto, geen handmatige selectie nodig' };
+  }
+
+  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/image-options-generator';
+  const aspectRatio = project.output === 'youtube_short' ? 'portrait' : 'landscape';
+
+  console.log('[Step 6b] ' + aiScenes.length + ' scenes, 3 images per scene genereren via ' + n8nUrl);
+
+  const allOptions: any[] = [];
+  let completed = 0;
+  let failed = 0;
+
+  for (let i = 0; i < aiScenes.length; i++) {
+    const scene = aiScenes[i];
+    const sceneId = scene.id;
+    const statusPath = path.join(projPath, 'assets', 'image-options', 'scene' + sceneId + '-status.json');
+
+    console.log('[Step 6b] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') starten...');
+
+    const payload = {
+      project: project.name,
+      scene_id: sceneId,
+      visual_prompts: scene.visual_prompt_variants.slice(0, 3),
+      aspect_ratio: aspectRatio,
+      output_dir: imageOptionsDir,
+      elevate_api_key: settings.elevateApiKey,
+      status_path: statusPath,
+    };
+
+    try {
+      // Verwijder vorige status
+      try { await fs.unlink(statusPath); } catch {}
+
+      const response = await fetch(n8nUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error('Webhook mislukt (' + response.status + '): ' + body);
+      }
+
+      console.log('[Step 6b] Scene ' + sceneId + ' webhook verstuurd, wachten op images...');
+
+      // Poll voor deze scene (max 3 minuten — images zijn snel)
+      const status = await pollForStatus(statusPath, 5000, 180000);
+
+      if (status.status === 'completed') {
+        completed++;
+        allOptions.push({
+          scene_id: sceneId,
+          text: scene.text || '',
+          visual_prompt: scene.visual_prompt,
+          options: status.options || [],
+        });
+        console.log('[Step 6b] Scene ' + sceneId + ' klaar! (' + completed + '/' + aiScenes.length + ')');
+      } else {
+        failed++;
+        allOptions.push({
+          scene_id: sceneId,
+          text: scene.text || '',
+          visual_prompt: scene.visual_prompt,
+          options: [],
+          error: status.error || 'Unknown',
+        });
+        console.warn('[Step 6b] Scene ' + sceneId + ' mislukt: ' + (status.error || 'Unknown'));
+      }
+    } catch (err: any) {
+      failed++;
+      allOptions.push({
+        scene_id: sceneId,
+        text: scene.text || '',
+        visual_prompt: scene.visual_prompt,
+        options: [],
+        error: err.message,
+      });
+      console.error('[Step 6b] Scene ' + sceneId + ' error: ' + err.message);
+    }
+  }
+
+  // Schrijf alle opties naar image-options.json
+  const imageOptionsPath = path.join(projPath, 'assets', 'image-options.json');
+  await writeJson(imageOptionsPath, {
+    project: project.name,
+    total_scenes: aiScenes.length,
+    completed,
+    failed,
+    generated_at: new Date().toISOString(),
+    scenes: allOptions,
+  });
+
+  console.log('[Step 6b] Klaar! ' + completed + ' scenes gelukt, ' + failed + ' mislukt');
+
+  return {
+    totalScenes: aiScenes.length,
+    scenesCompleted: completed,
+    scenesFailed: failed,
+    filePath: imageOptionsPath,
   };
 }
 

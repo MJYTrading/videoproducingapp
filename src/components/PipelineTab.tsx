@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, RotateCcw, SkipForward, Bot, CheckCircle, X } f
 import { Project, Step, StepStatus } from '../types';
 import { useStore } from '../store';
 import ReviewPanel from './ReviewPanel';
+import ImageReviewPanel from './ImageReviewPanel';
 
 interface PipelineTabProps {
   project: Project;
@@ -275,7 +276,8 @@ export default function PipelineTab({ project }: PipelineTabProps) {
     <div className="space-y-3">
       {getStatusBanner()}
 
-      {reviewStep && <ReviewPanel project={project} step={reviewStep} />}
+      {reviewStep && reviewStep.id === 65 && <ImageReviewPanel project={project} step={reviewStep} />}
+      {reviewStep && reviewStep.id !== 65 && <ReviewPanel project={project} step={reviewStep} />}
 
       {project.steps.map((step) => (
         <div key={step.id}>

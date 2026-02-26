@@ -29,7 +29,8 @@ interface Store {
   forceContinue: (projectId: string) => void;
   submitFeedback: (projectId: string, stepNumber: number, feedback: string) => void;
   approveStep: (projectId: string, stepNumber: number) => void;
-  selectImage: (projectId: string, sceneId: string, optionNumber: number) => void;
+  selectImage: (projectId: string, sceneId: string, optionNumber: number, chosenPath?: string, clipOption?: string) => void;
+  setClipOption: (projectId: string, sceneId: string, clipOption: string) => void;
   confirmImageSelection: (projectId: string) => void;
   setSceneTransition: (projectId: string, sceneId: string, transitionId: string) => void;
   addToast: (message: string, type: 'success' | 'error' | 'info' | 'ai') => void;
@@ -263,15 +264,34 @@ export const useStore = create<Store>((set, get) => ({
     setTimeout(() => get().startPipeline(projectId), 100);
   },
 
-  selectImage: (projectId, sceneId, optionNumber) => {
+  selectImage: (projectId, sceneId, optionNumber, chosenPath, clipOption) => {
     const project = get().getProject(projectId);
     if (!project) return;
     const existingSelections = project.selectedImages.filter((s) => s.sceneId !== sceneId);
-    get().updateProject(projectId, { selectedImages: [...existingSelections, { sceneId, chosenOption: optionNumber }] });
+    const existing = project.selectedImages.find((s) => s.sceneId === sceneId);
+    get().updateProject(projectId, {
+      selectedImages: [...existingSelections, {
+        sceneId,
+        chosenOption: optionNumber,
+        chosenPath: chosenPath || existing?.chosenPath,
+        clipOption: (clipOption || existing?.clipOption || 'natural') as any,
+      }],
+    });
+  },
+
+  setClipOption: (projectId: string, sceneId: string, clipOption: string) => {
+    const project = get().getProject(projectId);
+    if (!project) return;
+    const existing = project.selectedImages.find((s) => s.sceneId === sceneId);
+    if (!existing) return;
+    const otherSelections = project.selectedImages.filter((s) => s.sceneId !== sceneId);
+    get().updateProject(projectId, {
+      selectedImages: [...otherSelections, { ...existing, clipOption: clipOption as any }],
+    });
   },
 
   confirmImageSelection: (projectId) => {
-    get().updateStepStatus(projectId, 9, 'completed');
+    get().updateStepStatus(projectId, 65, 'completed');
     get().updateProject(projectId, { status: 'running' });
     get().addLogEntry(projectId, 'info', 9, 'App', 'Afbeeldingen geselecteerd, video generatie start');
     get().addToast('Afbeeldingen geselecteerd — video generatie start', 'success');

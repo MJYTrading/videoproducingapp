@@ -26,6 +26,8 @@ export interface MontageClip {
 export interface ImageSelection {
   sceneId: string;
   chosenOption: number;
+  chosenPath?: string;
+  clipOption?: 'zoom_in' | 'zoom_out' | 'rotate_left' | 'rotate_right' | 'static' | 'natural';
 }
 
 export interface SceneTransition {
