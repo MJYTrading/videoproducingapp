@@ -1304,6 +1304,12 @@ export async function executeStep11(project: any, settings: any) {
 
   console.log(`[Step 11] Color grading (${payload.color_grade}) via ${n8nUrl}...`);
 
+  // Skip als geen color grading nodig
+  if (payload.color_grade === 'none' || !payload.color_grade) {
+    console.log('[Step 11] Geen color grading nodig, skip...');
+    return { outputFile: null, colorGrade: 'none', duration: 0, fileSizeMb: 0 };
+  }
+
   try { await fs.unlink(statusPath); } catch {}
 
   const response = await fetch(n8nUrl, {
