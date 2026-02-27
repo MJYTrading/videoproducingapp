@@ -553,7 +553,22 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
     lastScene.duration = Math.round((lastScene.end - lastScene.start) * 100) / 100;
   }
 
-  console.log(`[Step 6] ${scenes.length} scenes gesplitst (gem. ${(audioDuration / scenes.length).toFixed(1)}s per scene)`);
+  // Fix scene durations: sluit pauzes in zodat video sync met audio
+  // Elke scene duurt tot de start van de volgende scene
+  for (let i = 0; i < scenes.length - 1; i++) {
+    const nextStart = scenes[i + 1].start;
+    scenes[i].end = nextStart;
+    scenes[i].duration = Math.round((nextStart - scenes[i].start) * 100) / 100;
+  }
+  // Laatste scene: duur tot einde audio
+  if (scenes.length > 0) {
+    const lastScene = scenes[scenes.length - 1];
+    lastScene.end = Math.round(audioDuration * 100) / 100;
+    lastScene.duration = Math.round((lastScene.end - lastScene.start) * 100) / 100;
+  }
+
+  const totalSceneDur = scenes.reduce((sum, s) => sum + s.duration, 0);
+  console.log(`[Step 6] ${scenes.length} scenes gesplitst, totale duur: ${totalSceneDur.toFixed(1)}s (audio: ${audioDuration}s)`);
 
   // ────────────────────────────────────────────────────────
   // STAP B: Batch scenes per ~200-250 woorden script
@@ -1584,7 +1599,9 @@ export async function executeStep13(project: any, settings: any) {
     }
 
     try {
-      const dur = scene.duration || 5;
+      // Compenseer crossfade: elke clip 0.5s langer zodat totaal klopt
+      const baseDur = scene.duration || 5;
+      const dur = crossfadeDuration > 0 ? baseDur + crossfadeDuration : baseDur;
       execSync(
         'ffmpeg -y -i "' + videoPath + '"' +
         ' -t ' + dur +
