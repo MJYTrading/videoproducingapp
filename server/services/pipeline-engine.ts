@@ -365,7 +365,7 @@ function getReadySteps(state: PipelineState, project: any): number[] {
 
   // Special: stap 65 en 9 worden door runSceneStreaming afgehandeld
   // Ze komen NIET in de ready list — de orchestrator start ze apart
-  const STREAMING_STEPS = new Set([65, 14]); // 65=images streaming, 14=video scenes
+  const STREAMING_STEPS = new Set<number>(); // Streaming disabled — stap 13+14 draaien als normale stappen // 65=images streaming, 14=video scenes
 
   for (const stepNum of STEP_ORDER) {
     // Scene streaming stappen skippen — worden apart afgehandeld
@@ -398,7 +398,7 @@ function getReadySteps(state: PipelineState, project: any): number[] {
       !state.completedSteps.has(65) && !state.completedSteps.has(14) &&
       !state.skippedSteps.has(65) && !state.skippedSteps.has(14) &&
       !state.activeSteps.has(65) && !state.activeSteps.has(14)) {
-    ready.push(65); // Marker: 65 in ready = start scene streaming
+    // Streaming disabled — 13+14 worden normaal afgehandeld
   }
 
   return ready;
