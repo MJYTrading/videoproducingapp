@@ -1840,3 +1840,145 @@ export async function executeStep14(project: any, settings: any) {
     errors: status.errors,
   };
 }
+
+// ══════════════════════════════════════════════════
+// STAP 2: RESEARCH JSON (Perplexity Deep Research)
+// ══════════════════════════════════════════════════
+
+import { PerplexityService } from './perplexity.js';
+
+export async function executeStepResearch(project: any, settings: any): Promise<any> {
+  const projPath = projectDir(project.name);
+  const researchDir = path.join(projPath, 'research');
+  await ensureDir(researchDir);
+
+  if (!settings.perplexityApiKey) {
+    throw new Error('Perplexity API key niet geconfigureerd in Settings');
+  }
+
+  // 1. Haal research template op (project override → kanaal baseline → default)
+  let researchTemplate: any = null;
+
+  // Check kanaal baseline
+  if (project.channelId) {
+    const prismaImport = await import('../db.js');
+    const prismaClient = prismaImport.default;
+    const channel = await prismaClient.channel.findUnique({ where: { id: project.channelId } });
+    if (channel?.baseResearchTemplate) {
+      try { researchTemplate = JSON.parse(channel.baseResearchTemplate); } catch {}
+    }
+  }
+
+  // Fallback: default template uit database
+  if (!researchTemplate) {
+    const prismaImport = await import('../db.js');
+    const prismaClient = prismaImport.default;
+    const videoType = project.videoType || 'ai';
+    const defaultTemplate = await prismaClient.researchTemplate.findFirst({
+      where: { videoType, isDefault: true },
+    });
+    if (defaultTemplate?.template) {
+      try { researchTemplate = JSON.parse(defaultTemplate.template); } catch {}
+    }
+  }
+
+  // Ultieme fallback: basis template
+  if (!researchTemplate) {
+    researchTemplate = {
+      topic: "",
+      summary: "",
+      key_facts: [],
+      timeline: [],
+      key_figures: [],
+      sources: []
+    };
+  }
+
+  // 2. Bouw referentie video info (als beschikbaar)
+  let referenceVideoInfo = '';
+  const config = typeof project.config === 'string' ? JSON.parse(project.config) : project.config;
+  if (config?.referenceVideos && config.referenceVideos.length > 0) {
+    referenceVideoInfo = `Referentie video URLs: ${config.referenceVideos.filter((v: string) => v).join(', ')}`;
+  }
+
+  // 3. Perplexity research uitvoeren
+  const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
+
+  const result = await perplexity.executeResearch({
+    title: project.title,
+    description: project.description || '',
+    researchTemplate,
+    referenceVideoInfo,
+  });
+
+  // 4. Opslaan als research.json
+  await writeJson(path.join(researchDir, 'research.json'), result);
+
+  console.log(`[Pipeline] Stap 2: Research JSON opgeslagen voor ${project.name}`);
+
+  return { success: true, researchFile: 'research/research.json' };
+}
+
+// ══════════════════════════════════════════════════
+// STAP 4: TRENDING CLIPS RESEARCH (Perplexity)
+// ══════════════════════════════════════════════════
+
+export async function executeStepTrendingClips(project: any, settings: any): Promise<any> {
+  const projPath = projectDir(project.name);
+  const researchDir = path.join(projPath, 'research');
+  await ensureDir(researchDir);
+
+  if (!settings.perplexityApiKey) {
+    throw new Error('Perplexity API key niet geconfigureerd in Settings');
+  }
+
+  // 1. Bepaal max clip duur
+  let maxClipDuration = 15; // default
+  if (project.channelId) {
+    const prismaImport = await import('../db.js');
+    const prismaClient = prismaImport.default;
+    const channel = await prismaClient.channel.findUnique({ where: { id: project.channelId } });
+    if (channel?.maxClipDurationSeconds) {
+      maxClipDuration = channel.maxClipDurationSeconds;
+    }
+  }
+
+  // 2. Haal eerder gebruikte clips op (uit kanaal)
+  let usedClips: { url: string; timesUsed: number }[] = [];
+  if (project.channelId) {
+    const prismaImport = await import('../db.js');
+    const prismaClient = prismaImport.default;
+    const channel = await prismaClient.channel.findUnique({ where: { id: project.channelId } });
+    if (channel?.usedClips) {
+      try { usedClips = JSON.parse(channel.usedClips); } catch {}
+    }
+  }
+
+  // 3. Haal research.json op (als beschikbaar, van stap 2)
+  let researchData: any = null;
+  try {
+    researchData = await readJson(path.join(researchDir, 'research.json'));
+  } catch {
+    // research.json niet beschikbaar — geen probleem
+    console.log('[Pipeline] Stap 4: Geen research.json gevonden, doorgaan zonder');
+  }
+
+  // 4. Perplexity clips research
+  const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
+
+  const result = await perplexity.executeTrendingClipsResearch({
+    title: project.title,
+    description: project.description || '',
+    researchData,
+    usedClips,
+    maxClipDuration,
+    videoType: project.videoType || 'ai',
+  });
+
+  // 5. Opslaan als clips-research.json
+  await writeJson(path.join(researchDir, 'clips-research.json'), result);
+
+  console.log(`[Pipeline] Stap 4: ${result.total_clips_found || result.clips?.length || 0} clips gevonden voor ${project.name}`);
+
+  return { success: true, clipsFile: 'research/clips-research.json', totalClips: result.total_clips_found || result.clips?.length || 0 };
+}

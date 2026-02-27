@@ -14,6 +14,7 @@
 
 import prisma from '../db.js';
 import {
+  executeStepResearch, executeStepTrendingClips,
   executeStep0, executeStep1, executeStep2, executeStep3,
   executeStep4, executeStep5, executeStep6, executeStep6b,
   executeStep7, executeStep8, executeStep9, executeStep10,
@@ -25,9 +26,9 @@ import {
 const STEP_EXECUTOR_MAP: Record<number, string> = {
   0: 'auto-complete',   // Ideation - direct completed bij start
   1: 'executeStep0',   // Project Formulier (was stap 0)
-  2: 'skip',           // Research JSON - niet ready
+  2: 'executeStepResearch',  // Research JSON - Perplexity Deep Research
   3: 'executeStep1',   // Transcripts (was stap 1)
-  4: 'skip',           // Trending Clips Research - niet ready
+  4: 'executeStepTrendingClips',  // Trending Clips - Perplexity
   5: 'executeStep2',   // Style Profile (was stap 2)
   6: 'executeStep3',   // Script (was stap 3)
   7: 'executeStep4',   // Voice Over (was stap 4)
@@ -331,9 +332,9 @@ async function executeStepFunction(
   switch (stepNumber) {
     // Stap 0: Ideation → direct completed bij start
     // Stap 1: Project Formulier → direct completed bij start
-    case 2: return executeStep2(project, llmKeys);                              // Research JSON → Style Profile logic (Perplexity)
+    case 2: return executeStepResearch(project, settings);                         // Research JSON → Perplexity Deep Research
     case 3: return executeStep1(project, settings.youtubeTranscriptApiKey);     // Transcripts → oude stap 1
-    case 4: return executeStep2(project, llmKeys);                              // Trending Clips Research → Perplexity research
+    case 4: return executeStepTrendingClips(project, settings);                    // Trending Clips → Perplexity
     case 5: return executeStep2(project, llmKeys);                              // Style Profile → oude stap 2
     case 6: return executeStep3(project, llmKeys);                              // Script Schrijven → oude stap 3
     case 7: return executeStep4(project, settings);                             // Voice Over → oude stap 4
