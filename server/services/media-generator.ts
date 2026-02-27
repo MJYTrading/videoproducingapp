@@ -381,28 +381,48 @@ export async function generateImages(
       return null;
     }
 
-    const MAX_RETRIES = 3;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    // Check of image al bestaat op disk
+    const existingFiles = await fs.readdir(outputDir).catch(() => []);
+    const existingImage = existingFiles.find((f: string) => f.startsWith(`scene${sceneId}-option1`));
+    if (existingImage) {
+      const localPath = path.join(outputDir, existingImage);
+      results.push({ sceneId, provider: 'cached', imageUrl: '', localPath, prompt } as any);
+      if (onProgress) onProgress(results.length, scenes.length, sceneId);
+      console.log(`[Images] Scene ${sceneId} al aanwezig, overgeslagen (${results.length}/${scenes.length})`);
+      return;
+    }
+
+    // Prompt varianten om doorheen te cyclen
+    const variants = [prompt, ...(scene.visual_prompt_variants || []).filter((v: string) => v !== prompt)];
+    const MAX_ROUNDS = 3; // 3 rondes door alle varianten = nooit opgeven
+    
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      const currentPrompt = variants[round % variants.length] || prompt;
+      const isAltPrompt = round > 0;
+      
+      if (isAltPrompt) {
+        console.log(`[Images] Scene ${sceneId}: ronde ${round + 1}, variant ${(round % variants.length) + 1}...`);
+      }
+
       try {
         let imageUrl: string;
         let provider: 'elevate' | 'genaipro';
 
-        // Elevate primair, GenAIPro als fallback
         if (useElevate) {
           try {
-            const task = await elevateCreateMedia(settings.elevateApiKey, 'image', prompt, { aspectRatio: 'landscape' });
+            const task = await elevateCreateMedia(settings.elevateApiKey, 'image', currentPrompt, { aspectRatio: 'landscape' });
             const status = await elevatePollStatus(settings.elevateApiKey, task.id, 'image');
             imageUrl = status.resultUrl;
             provider = 'elevate';
           } catch (elevateErr: any) {
             if (!useGenAIPro) throw elevateErr;
-            console.warn(`[Images] Scene ${sceneId} Elevate mislukt, fallback naar GenAIPro: ${elevateErr.message}`);
-            const genResult = await genaiProCreateImage(settings.genaiProApiKey, prompt, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
+            console.warn(`[Images] Scene ${sceneId} Elevate mislukt, fallback GenAIPro: ${elevateErr.message}`);
+            const genResult = await genaiProCreateImage(settings.genaiProApiKey, currentPrompt, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
             imageUrl = genResult.file_urls?.[0] || (genResult as any).fileUrls?.[0];
             provider = 'genaipro';
           }
         } else if (useGenAIPro) {
-          const genResult = await genaiProCreateImage(settings.genaiProApiKey, prompt, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
+          const genResult = await genaiProCreateImage(settings.genaiProApiKey, currentPrompt, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
           imageUrl = genResult.file_urls?.[0] || (genResult as any).fileUrls?.[0];
           provider = 'genaipro';
         } else {
@@ -415,69 +435,20 @@ export async function generateImages(
         const localPath = path.join(outputDir, `scene${sceneId}-option1${ext}`);
         await downloadFile(imageUrl, localPath);
 
-        const imgResult: ImageResult = { sceneId, provider, imageUrl, localPath, prompt };
+        const imgResult: ImageResult = { sceneId, provider, imageUrl, localPath, prompt: currentPrompt };
         results.push(imgResult);
-
         if (onProgress) onProgress(results.length, scenes.length, sceneId);
-        console.log(`[Images] Scene ${sceneId} klaar (${results.length}/${scenes.length}) via ${provider}`);
-        break; // Succes, stop retry loop
+        console.log(`[Images] Scene ${sceneId} klaar${isAltPrompt ? " (variant)" : ""} (${results.length}/${scenes.length}) via ${provider}`);
+        return; // Succes!
 
       } catch (err: any) {
-        if (attempt < MAX_RETRIES) {
-          const delay = attempt * 5;
-          console.warn(`[Images] Scene ${sceneId} poging ${attempt}/${MAX_RETRIES} mislukt: ${err.message} (retry in ${delay}s)`);
-          await new Promise(r => setTimeout(r, delay * 1000));
-        } else {
-          console.error(`[Images] Scene ${sceneId} definitief mislukt na ${MAX_RETRIES} pogingen: ${err.message}`);
-          
-          // Probeer met alternatieve prompt variant
-          const variants = scene.visual_prompt_variants || [];
-          const currentVariantIdx = variants.indexOf(prompt);
-          const nextVariant = variants[currentVariantIdx + 1] || variants[1] || variants[2];
-          
-          if (nextVariant && nextVariant !== prompt) {
-            console.log(`[Images] Scene ${sceneId}: probeer alternatieve prompt variant...`);
-            try {
-              let imageUrl: string;
-              let provider: 'elevate' | 'genaipro';
-
-              if (useElevate) {
-                try {
-                  const task = await elevateCreateMedia(settings.elevateApiKey, 'image', nextVariant, { aspectRatio: 'landscape' });
-                  const status = await elevatePollStatus(settings.elevateApiKey, task.id, 'image');
-                  imageUrl = status.resultUrl;
-                  provider = 'elevate';
-                } catch (elevateErr2: any) {
-                  if (!useGenAIPro) throw elevateErr2;
-                  const genResult = await genaiProCreateImage(settings.genaiProApiKey, nextVariant, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
-                  imageUrl = genResult.file_urls?.[0] || (genResult as any).fileUrls?.[0];
-                  provider = 'genaipro';
-                }
-              } else if (useGenAIPro) {
-                const genResult = await genaiProCreateImage(settings.genaiProApiKey, nextVariant, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
-                imageUrl = genResult.file_urls?.[0] || (genResult as any).fileUrls?.[0];
-                provider = 'genaipro';
-              } else {
-                throw new Error('Geen provider');
-              }
-
-              if (!imageUrl) throw new Error('Geen image URL');
-
-              const ext = imageUrl.includes('.png') ? '.png' : '.jpg';
-              const localPath = path.join(outputDir, `scene${sceneId}-option1${ext}`);
-              await downloadFile(imageUrl, localPath);
-
-              const imgResult: ImageResult = { sceneId, provider, imageUrl, localPath, prompt: nextVariant };
-              results.push(imgResult);
-              if (onProgress) onProgress(results.length, scenes.length, sceneId);
-              console.log(`[Images] Scene ${sceneId} klaar via alternatieve prompt (${results.length}/${scenes.length}) via ${provider}`);
-            } catch (altErr: any) {
-              console.error(`[Images] Scene ${sceneId} ook met alternatieve prompt mislukt: ${altErr.message}`);
-            }
-          }
-        }
+        const delay = Math.min(10 + round * 5, 30);
+        console.warn(`[Images] Scene ${sceneId} ronde ${round + 1}/${MAX_ROUNDS} mislukt: ${err.message} (retry in ${delay}s)`);
+        await new Promise(r => setTimeout(r, delay * 1000));
       }
     }
+    
+    console.error(`[Images] Scene ${sceneId} mislukt na ${MAX_ROUNDS} rondes met alle varianten`);
   });
 
   await withConcurrencyLimit(imgTasks, MAX_IMG_CONCURRENT);
@@ -507,15 +478,21 @@ export async function generateVideos(
   const elevateQueue: typeof scenes = [];
   const genaiQueue: typeof scenes = [];
 
-  if (useElevate) {
+  if (useElevate && useGenAIPro) {
+    // Beide: Elevate 1 tegelijk + GenAIPro parallel, wie eerst klaar is wint
     elevateQueue.push(...scenes);
-  } else if (useGenAIPro) {
     genaiQueue.push(...scenes);
   } else if (useElevate) {
     elevateQueue.push(...scenes);
+  } else if (useGenAIPro) {
+    genaiQueue.push(...scenes);
   } else {
     throw new Error('Geen video provider beschikbaar');
   }
+
+  // Track welke scenes al klaar zijn (voorkom dubbel werk)
+  const completedScenes = new Set<number>();
+  const inProgressScenes = new Set<number>();
 
   // GenAIPro: alle scenes parallel
   const MAX_VID_CONCURRENT = 10;
@@ -525,6 +502,23 @@ export async function generateVideos(
     const selection = imageSelections.find((s: any) =>
       s.scene_id === sceneId || String(s.scene_id) === String(sceneId)
     );
+
+    // Check of video al bestaat
+    const existingVideo = path.join(outputDir, `scene${sceneId}.mp4`);
+    try {
+      await fs.access(existingVideo);
+      results.push({ sceneId, provider: 'cached', videoUrl: '', localPath: existingVideo, prompt, duration: scene.duration || 5 } as any);
+      if (onProgress) onProgress(results.length, scenes.length, sceneId);
+      console.log(`[Videos] Scene ${sceneId} al aanwezig, overgeslagen (${results.length}/${scenes.length})`);
+      return;
+    } catch {}
+
+    // Skip als andere provider al klaar of bezig is
+    if (completedScenes.has(sceneId) || inProgressScenes.has(sceneId)) {
+      if (completedScenes.has(sceneId)) console.log(`[Videos] Scene ${sceneId} al klaar, overgeslagen`);
+      return;
+    }
+    inProgressScenes.add(sceneId);
 
     try {
       let videoUrl: string;
@@ -547,6 +541,7 @@ export async function generateVideos(
       results.push(videoResult);
 
       if (onProgress) onProgress(results.length, scenes.length, sceneId);
+      completedScenes.add(sceneId);
       console.log(`[Videos] Scene ${sceneId} klaar via GenAIPro (${results.length}/${scenes.length})`);
     } catch (err: any) {
       console.error(`[Videos] Scene ${sceneId} GenAIPro mislukt: ${err.message}`);
@@ -565,6 +560,23 @@ export async function generateVideos(
       const selection = imageSelections.find((s: any) =>
         s.scene_id === sceneId || String(s.scene_id) === String(sceneId)
       );
+
+      // Check of video al bestaat
+      const existingVid = path.join(outputDir, `scene${sceneId}.mp4`);
+      try {
+        await fs.access(existingVid);
+        results.push({ sceneId, provider: 'cached', videoUrl: '', localPath: existingVid, prompt, duration: scene.duration || 5 } as any);
+        if (onProgress) onProgress(results.length, scenes.length, sceneId);
+        console.log(`[Videos] Scene ${sceneId} al aanwezig, overgeslagen (${results.length}/${scenes.length})`);
+        continue;
+      } catch {}
+
+      // Skip als andere provider al klaar of bezig is
+      if (completedScenes.has(sceneId) || inProgressScenes.has(sceneId)) {
+        if (completedScenes.has(sceneId)) console.log(`[Videos] Scene ${sceneId} al klaar, overgeslagen`);
+        continue;
+      }
+      inProgressScenes.add(sceneId);
 
       try {
         if (!selection?.chosen_path) {
@@ -592,6 +604,7 @@ export async function generateVideos(
         results.push(result);
 
         if (onProgress) onProgress(results.length, scenes.length, sceneId);
+        completedScenes.add(sceneId);
         console.log(`[Videos] Scene ${sceneId} klaar via Elevate (${results.length}/${scenes.length})`);
       } catch (err: any) {
         console.error(`[Videos] Scene ${sceneId} Elevate mislukt: ${err.message}`);
