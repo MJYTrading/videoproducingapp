@@ -490,6 +490,21 @@ export async function generateVideos(
     throw new Error('Geen video provider beschikbaar');
   }
 
+  // Varieer video prompt per retry ronde
+  const varyVideoPrompt = (originalPrompt: string, round: number): string => {
+    const variations = [
+      '', // ronde 1: origineel
+      'Smooth slow motion. ',
+      'Subtle camera movement. ',
+      'Gentle zoom in. ',
+      'Slow cinematic pan. ',
+    ];
+    const prefix = variations[round % variations.length] || '';
+    // Kort de prompt in als die te lang is (soms weigeren APIs lange prompts)
+    const trimmed = originalPrompt.length > 400 ? originalPrompt.slice(0, 400) : originalPrompt;
+    return prefix + trimmed;
+  };
+
   // Track welke scenes al klaar zijn (voorkom dubbel werk)
   const completedScenes = new Set<number>();
   const inProgressScenes = new Set<number>();
@@ -618,6 +633,100 @@ export async function generateVideos(
     elevatePromise,
   ]);
 
-  console.log(`[Videos] Klaar! ${results.length}/${scenes.length} scenes succesvol`);
+  // Check welke scenes nog missen en retry
+  const MAX_VIDEO_ROUNDS = 5;
+  let round = 1;
+  
+  while (round < MAX_VIDEO_ROUNDS) {
+    // Zoek scenes zonder video op disk
+    const missingScenes: typeof scenes = [];
+    for (const scene of scenes) {
+      const vidPath = path.join(outputDir, `scene${scene.id}.mp4`);
+      try {
+        await fs.access(vidPath);
+      } catch {
+        // Check of scene een image heeft (nodig voor video)
+        const selection = imageSelections.find((s: any) =>
+          s.scene_id === scene.id || String(s.scene_id) === String(scene.id)
+        );
+        if (selection?.chosen_path) {
+          missingScenes.push(scene);
+        }
+      }
+    }
+
+    if (missingScenes.length === 0) {
+      console.log(`[Videos] Alle scenes met images hebben een video!`);
+      break;
+    }
+
+    round++;
+    const delay = round * 10;
+    console.log(`[Videos] ${missingScenes.length} scenes missen nog een video, retry ronde ${round}/${MAX_VIDEO_ROUNDS} (wacht ${delay}s)...`);
+    await new Promise(r => setTimeout(r, delay * 1000));
+
+    // Reset inProgress voor missende scenes
+    for (const scene of missingScenes) {
+      inProgressScenes.delete(scene.id);
+      completedScenes.delete(scene.id);
+    }
+
+    // Retry met GenAIPro parallel
+    const retryTasks: (() => Promise<void>)[] = missingScenes.map((scene) => async () => {
+      const sceneId = scene.id;
+      const originalPrompt = scene.video_prompt || scene.visual_prompt || scene.prompt;
+      const prompt = varyVideoPrompt(originalPrompt, round);
+      const selection = imageSelections.find((s: any) =>
+        s.scene_id === sceneId || String(s.scene_id) === String(sceneId)
+      );
+
+      if (!selection?.chosen_path) return;
+      if (completedScenes.has(sceneId)) return;
+      inProgressScenes.add(sceneId);
+
+      try {
+        let videoUrl: string | undefined;
+        let provider: 'elevate' | 'genaipro' = 'genaipro';
+
+        if (useGenAIPro) {
+          const apiResult = await genaiProFrameToVideo(settings.genaiProApiKey, selection.chosen_path, prompt);
+          videoUrl = Array.isArray(apiResult) ? apiResult[0]?.file_url : (apiResult.file_url || apiResult.fileUrl);
+        } else if (useElevate) {
+          const imgBuffer = await fs.readFile(selection.chosen_path);
+          const ext = selection.chosen_path.endsWith('.png') ? 'png' : 'jpeg';
+          const sourceImage = `data:image/${ext};base64,${imgBuffer.toString('base64')}`;
+          const task = await elevateCreateMedia(settings.elevateApiKey, 'video', prompt, { aspectRatio: 'landscape', sourceImage });
+          const status = await elevatePollStatus(settings.elevateApiKey, task.id, 'video', 600_000);
+          videoUrl = status.resultUrl;
+          provider = 'elevate';
+        }
+
+        if (!videoUrl) throw new Error('Geen video URL');
+
+        const localPath = path.join(outputDir, `scene${sceneId}.mp4`);
+        await downloadFile(videoUrl, localPath);
+
+        results.push({ sceneId, provider, videoUrl, localPath, prompt, duration: scene.duration || 5 } as any);
+        completedScenes.add(sceneId);
+        if (onProgress) onProgress(results.length, scenes.length, sceneId);
+        console.log(`[Videos] Scene ${sceneId} klaar via retry ronde ${round} (${results.length}/${scenes.length})`);
+      } catch (err: any) {
+        console.warn(`[Videos] Scene ${sceneId} retry ronde ${round} mislukt: ${err.message}`);
+      }
+    });
+
+    await withConcurrencyLimit(retryTasks, MAX_VID_CONCURRENT);
+  }
+
+  // Tel definitieve resultaten op disk
+  let finalCount = 0;
+  for (const scene of scenes) {
+    try {
+      await fs.access(path.join(outputDir, `scene${scene.id}.mp4`));
+      finalCount++;
+    } catch {}
+  }
+
+  console.log(`[Videos] Klaar! ${finalCount}/${scenes.length} scenes succesvol (${MAX_VIDEO_ROUNDS} rondes)`);
   return results;
 }
