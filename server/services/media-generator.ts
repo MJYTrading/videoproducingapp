@@ -579,6 +579,23 @@ export async function generateVideos(
     throw new Error('Geen video provider beschikbaar');
   }
 
+  // Helper: vind het echte pad voor een scene image (png of jpg)
+  const findImagePath = async (chosenPath: string): Promise<string> => {
+    try {
+      await fs.access(chosenPath);
+      return chosenPath;
+    } catch {}
+    // Probeer alternatieve extensie
+    const alt = chosenPath.endsWith('.png') 
+      ? chosenPath.replace('.png', '.jpg') 
+      : chosenPath.replace('.jpg', '.png');
+    try {
+      await fs.access(alt);
+      return alt;
+    } catch {}
+    throw new Error(`Image niet gevonden: ${chosenPath} of ${alt}`);
+  };
+
   // Varieer video prompt per retry ronde
   const varyVideoPrompt = (originalPrompt: string, round: number): string => {
     const variations = [
@@ -632,7 +649,8 @@ export async function generateVideos(
         return;
       }
 
-      const apiResult = await genaiProFrameToVideo(settings.genaiProApiKey, selection.chosen_path, prompt);
+      const imgPath = await findImagePath(selection.chosen_path);
+      const apiResult = await genaiProFrameToVideo(settings.genaiProApiKey, imgPath, prompt);
       videoUrl = Array.isArray(apiResult) ? apiResult[0]?.file_url : (apiResult.file_url || apiResult.fileUrl);
 
       const localPath = path.join(outputDir, `scene${sceneId}.mp4`);
@@ -688,7 +706,8 @@ export async function generateVideos(
           continue;
         }
 
-        const imgBuffer = await fs.readFile(selection.chosen_path);
+        const elevImgPath = await findImagePath(selection.chosen_path);
+        const imgBuffer = await fs.readFile(elevImgPath);
         // Detecteer echt MIME type op basis van magic bytes, niet extensie
         const isPng = imgBuffer[0] === 0x89 && imgBuffer[1] === 0x50;
         const ext = isPng ? 'png' : 'jpeg';
@@ -780,7 +799,8 @@ export async function generateVideos(
       inProgressScenes.add(sceneId);
 
       try {
-        const apiResult = await genaiProFrameToVideo(settings.genaiProApiKey, selection.chosen_path, prompt);
+        const retryImgPath = await findImagePath(selection.chosen_path);
+        const apiResult = await genaiProFrameToVideo(settings.genaiProApiKey, retryImgPath, prompt);
         const videoUrl = Array.isArray(apiResult) ? apiResult[0]?.file_url : (apiResult.file_url || apiResult.fileUrl);
 
         if (!videoUrl) throw new Error('Geen video URL');
@@ -816,7 +836,8 @@ export async function generateVideos(
         try {
           console.log(`[Videos] Scene ${sceneId} Elevate sequentieel retry...`);
           const imgBuffer = await fs.readFile(sel.chosen_path);
-          const selBuffer = await fs.readFile(sel.chosen_path);
+          const selImgPath = await findImagePath(sel.chosen_path);
+          const selBuffer = await fs.readFile(selImgPath);
           const ext = (selBuffer[0] === 0x89 && selBuffer[1] === 0x50) ? 'png' : 'jpeg';
           const sourceImage = `data:image/${ext};base64,${imgBuffer.toString('base64')}`;
           const task = await elevateCreateMedia(settings.elevateApiKey, 'video', vPrompt, { aspectRatio: 'landscape', sourceImage });
