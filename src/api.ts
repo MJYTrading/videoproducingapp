@@ -333,3 +333,43 @@ export const voices = {
     return res.json();
   },
 };
+
+// ── Ideation API ──
+
+export const ideation = {
+  async brainstorm(channelId: string): Promise<any> {
+    const res = await apiFetch('/ideation/brainstorm', { method: 'POST', body: JSON.stringify({ channelId }) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Brainstorm mislukt'); }
+    return res.json();
+  },
+  async getIdeas(channelId?: string): Promise<any[]> {
+    const query = channelId ? `?channelId=${channelId}` : '';
+    const res = await apiFetch(`/ideation/ideas${query}`);
+    if (!res.ok) throw new Error('Kon ideeën niet ophalen');
+    return res.json();
+  },
+  async saveIdea(data: any): Promise<any> {
+    const res = await apiFetch('/ideation/ideas', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Opslaan mislukt'); }
+    return res.json();
+  },
+  async updateIdea(id: string, data: any): Promise<any> {
+    const res = await apiFetch(`/ideation/ideas/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Bijwerken mislukt'); }
+    return res.json();
+  },
+  async deleteIdea(id: string): Promise<void> {
+    const res = await apiFetch(`/ideation/ideas/${id}`, { method: 'DELETE' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Verwijderen mislukt'); }
+  },
+  async convertToProject(ideaId: string): Promise<any> {
+    const res = await apiFetch(`/ideation/convert/${ideaId}`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Conversie mislukt'); }
+    return res.json();
+  },
+  async getSimilarChannels(channelId: string): Promise<any> {
+    const res = await apiFetch(`/ideation/similar-channels/${channelId}`);
+    if (!res.ok) throw new Error('Kon vergelijkbare kanalen niet ophalen');
+    return res.json();
+  },
+};

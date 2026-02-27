@@ -11,6 +11,7 @@ import pipelineEngineRoutes from './routes/pipeline-engine-routes.js';
 import stylesRoutes from './routes/styles.js';
 import channelRoutes from './routes/channels.js';
 import voiceRoutes from './routes/voices.js';
+import ideationRoutes from './routes/ideation.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,6 +37,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/styles', stylesRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/voices', voiceRoutes);
+app.use('/api/ideation', ideationRoutes);
 
 const frontendPath = path.join(__dirname, '..', 'dist-frontend');
 app.use(express.static(frontendPath));

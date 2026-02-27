@@ -1,11 +1,12 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Film, FolderOpen, PlusCircle, Settings, LogOut, Palette, Tv, Mic, Sparkles } from 'lucide-react';
+import { Film, FolderOpen, PlusCircle, Settings, LogOut, Palette, Tv, Mic, Sparkles, Lightbulb } from 'lucide-react';
 import Toast from './Toast';
 import { auth } from '../api';
 
 const NAV_ITEMS = [
   { path: '/', icon: FolderOpen, label: 'Projecten', exact: true },
   { path: '/project/new', icon: PlusCircle, label: 'Nieuw Project' },
+  { path: '/ideation', icon: Lightbulb, label: 'Ideation' },
   { type: 'divider' as const },
   { path: '/styles', icon: Palette, label: 'Styles' },
   { path: '/channels', icon: Tv, label: 'Kanalen' },

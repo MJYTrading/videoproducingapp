@@ -10,6 +10,7 @@ import SettingsPage from './pages/SettingsPage';
 import StylePresetsPage from './pages/StylePresetsPage';
 import ChannelsPage from './pages/ChannelsPage';
 import VoicesPage from './pages/VoicesPage';
+import IdeationPage from './pages/IdeationPage';
 import LoginPage from './pages/LoginPage';
 
 function AppContent() {
@@ -41,6 +42,7 @@ function AppContent() {
           <Route path="styles" element={<StylePresetsPage />} />
           <Route path="channels" element={<ChannelsPage />} />
           <Route path="voices" element={<VoicesPage />} />
+          <Route path="ideation" element={<IdeationPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
