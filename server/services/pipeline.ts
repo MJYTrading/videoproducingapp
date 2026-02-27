@@ -2155,3 +2155,33 @@ import { executeDirectorsCut } from './directors-cut.js';
 export async function executeStepDirectorsCut(project: any, settings: any, llmKeys: any): Promise<any> {
   return executeDirectorsCut({ project, settings, llmKeys });
 }
+
+// ══════════════════════════════════════════════════
+// STAP 21: SOUND EFFECTS
+// ══════════════════════════════════════════════════
+
+import { executeSoundEffects } from './sound-effects.js';
+
+export async function executeStepSoundEffects(project: any, settings: any): Promise<any> {
+  return executeSoundEffects(project, settings);
+}
+
+// ══════════════════════════════════════════════════
+// STAP 22: VIDEO EFFECTS / SPECIAL EDITS
+// ══════════════════════════════════════════════════
+
+import { executeVideoEffects } from './video-effects.js';
+
+export async function executeStepVideoEffects(project: any, settings: any): Promise<any> {
+  return executeVideoEffects(project, settings);
+}
+
+// ══════════════════════════════════════════════════
+// STAP 23: FINAL ASSEMBLY
+// ══════════════════════════════════════════════════
+
+import { executeFinalAssembly } from './final-assembly.js';
+
+export async function executeStepFinalAssembly(project: any, settings: any): Promise<any> {
+  return executeFinalAssembly(project, settings);
+}

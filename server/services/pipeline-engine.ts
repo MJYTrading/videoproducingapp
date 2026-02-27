@@ -15,6 +15,7 @@
 import prisma from '../db.js';
 import {
   executeStepResearch, executeStepTrendingClips, executeStepScriptOrchestrator, executeStepDirectorsCut,
+  executeStepSoundEffects, executeStepVideoEffects, executeStepFinalAssembly,
   executeStep0, executeStep1, executeStep2, executeStep3,
   executeStep4, executeStep5, executeStep6, executeStep6b,
   executeStep7, executeStep8, executeStep9, executeStep10,
@@ -45,9 +46,9 @@ const STEP_EXECUTOR_MAP: Record<number, string> = {
   18: 'executeStep11',           // Color Grading
   19: 'executeStep12',           // Subtitles
   20: 'skip',                    // Overlay - niet ready
-  21: 'skip',                    // Sound Effects - niet ready
-  22: 'skip',                    // Video Effects - niet ready
-  23: 'executeStep13',           // Final Export
+  21: 'executeStepSoundEffects', // Sound Effects - ffmpeg + SFX Library
+  22: 'executeStepVideoEffects', // Video Effects - Python moviepy
+  23: 'executeStepFinalAssembly', // Final Assembly - directors-cut based
   24: 'skip',                    // Thumbnail - niet ready
   25: 'executeStep14',           // Drive Upload
 };
@@ -356,9 +357,9 @@ async function executeStepFunction(
     case 18: return executeStep11(project, settings);                              // Color Grading
     case 19: return executeStep12(project, settings);                              // Subtitles
     case 20: throw new Error('Overlay nog niet geïmplementeerd');                  // Overlay (TODO)
-    case 21: return executeStep10(project, settings);                              // Sound Effects
-    case 22: return executeStep10(project, settings);                              // Video Effects
-    case 23: return executeStep13(project, settings);                              // Final Export
+    case 21: return executeStepSoundEffects(project, settings);                    // Sound Effects
+    case 22: return executeStepVideoEffects(project, settings);                    // Video Effects
+    case 23: return executeStepFinalAssembly(project, settings);                   // Final Assembly
     case 24: throw new Error('Thumbnail nog niet geïmplementeerd');                // Thumbnail (TODO)
     case 25: return executeStep14(project, settings);                              // Drive Upload
     default: throw new Error(`Stap ${stepNumber} niet geïmplementeerd`);
