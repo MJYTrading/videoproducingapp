@@ -32,6 +32,34 @@ interface VideoResult {
   duration: number;
 }
 
+// ── Concurrency Limiter ──
+
+async function withConcurrencyLimit<T>(
+  tasks: (() => Promise<T>)[],
+  maxConcurrent: number
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let index = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = index++;
+      if (i >= tasks.length) break;
+      try {
+        results[i] = await tasks[i]();
+      } catch (err: any) {
+        results[i] = undefined as any;
+      }
+    }
+  }
+
+  const workers = Array(Math.min(maxConcurrent, tasks.length))
+    .fill(null)
+    .map(() => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 // ── Elevate API ──
 
 const ELEVATE_BASE = 'https://public-api.elevate.uno';
@@ -341,9 +369,10 @@ export async function generateImages(
   const useGenAIPro = settings.genaiProEnabled && settings.genaiProImagesEnabled && settings.genaiProApiKey;
   const useElevate = !!settings.elevateApiKey;
 
-  console.log(`[Images] ${scenes.length} scenes, provider: ${useGenAIPro ? 'GenAIPro (parallel)' : 'Elevate (sequential)'}`);
+  console.log(`[Images] ${scenes.length} scenes, primair: ${useElevate ? 'Elevate' : 'GenAIPro'}, fallback: ${useElevate && useGenAIPro ? 'GenAIPro' : 'geen'}`);
 
-  const promises = scenes.map(async (scene) => {
+  const MAX_IMG_CONCURRENT = 20;
+  const imgTasks: (() => Promise<void>)[] = scenes.map((scene) => async () => {
     const sceneId = scene.id;
     const prompt = scene.visual_prompt_variants?.[0] || scene.visual_prompt || scene.prompt;
 
@@ -352,41 +381,106 @@ export async function generateImages(
       return null;
     }
 
-    try {
-      let imageUrl: string;
-      let provider: 'elevate' | 'genaipro';
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        let imageUrl: string;
+        let provider: 'elevate' | 'genaipro';
 
-      if (useGenAIPro) {
-        const result = await genaiProCreateImage(settings.genaiProApiKey, prompt, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
-        imageUrl = result.file_urls?.[0] || (result as any).fileUrls?.[0];
-        provider = 'genaipro';
-      } else if (useElevate) {
-        const task = await elevateCreateMedia(settings.elevateApiKey, 'image', prompt, { aspectRatio: 'landscape' });
-        const status = await elevatePollStatus(settings.elevateApiKey, task.id, 'image');
-        imageUrl = status.resultUrl;
-        provider = 'elevate';
-      } else {
-        throw new Error('Geen image provider beschikbaar');
+        // Elevate primair, GenAIPro als fallback
+        if (useElevate) {
+          try {
+            const task = await elevateCreateMedia(settings.elevateApiKey, 'image', prompt, { aspectRatio: 'landscape' });
+            const status = await elevatePollStatus(settings.elevateApiKey, task.id, 'image');
+            imageUrl = status.resultUrl;
+            provider = 'elevate';
+          } catch (elevateErr: any) {
+            if (!useGenAIPro) throw elevateErr;
+            console.warn(`[Images] Scene ${sceneId} Elevate mislukt, fallback naar GenAIPro: ${elevateErr.message}`);
+            const genResult = await genaiProCreateImage(settings.genaiProApiKey, prompt, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
+            imageUrl = genResult.file_urls?.[0] || (genResult as any).fileUrls?.[0];
+            provider = 'genaipro';
+          }
+        } else if (useGenAIPro) {
+          const genResult = await genaiProCreateImage(settings.genaiProApiKey, prompt, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
+          imageUrl = genResult.file_urls?.[0] || (genResult as any).fileUrls?.[0];
+          provider = 'genaipro';
+        } else {
+          throw new Error('Geen image provider beschikbaar');
+        }
+
+        if (!imageUrl) throw new Error('Geen image URL in response');
+
+        const ext = imageUrl.includes('.png') ? '.png' : '.jpg';
+        const localPath = path.join(outputDir, `scene${sceneId}-option1${ext}`);
+        await downloadFile(imageUrl, localPath);
+
+        const imgResult: ImageResult = { sceneId, provider, imageUrl, localPath, prompt };
+        results.push(imgResult);
+
+        if (onProgress) onProgress(results.length, scenes.length, sceneId);
+        console.log(`[Images] Scene ${sceneId} klaar (${results.length}/${scenes.length}) via ${provider}`);
+        break; // Succes, stop retry loop
+
+      } catch (err: any) {
+        if (attempt < MAX_RETRIES) {
+          const delay = attempt * 5;
+          console.warn(`[Images] Scene ${sceneId} poging ${attempt}/${MAX_RETRIES} mislukt: ${err.message} (retry in ${delay}s)`);
+          await new Promise(r => setTimeout(r, delay * 1000));
+        } else {
+          console.error(`[Images] Scene ${sceneId} definitief mislukt na ${MAX_RETRIES} pogingen: ${err.message}`);
+          
+          // Probeer met alternatieve prompt variant
+          const variants = scene.visual_prompt_variants || [];
+          const currentVariantIdx = variants.indexOf(prompt);
+          const nextVariant = variants[currentVariantIdx + 1] || variants[1] || variants[2];
+          
+          if (nextVariant && nextVariant !== prompt) {
+            console.log(`[Images] Scene ${sceneId}: probeer alternatieve prompt variant...`);
+            try {
+              let imageUrl: string;
+              let provider: 'elevate' | 'genaipro';
+
+              if (useElevate) {
+                try {
+                  const task = await elevateCreateMedia(settings.elevateApiKey, 'image', nextVariant, { aspectRatio: 'landscape' });
+                  const status = await elevatePollStatus(settings.elevateApiKey, task.id, 'image');
+                  imageUrl = status.resultUrl;
+                  provider = 'elevate';
+                } catch (elevateErr2: any) {
+                  if (!useGenAIPro) throw elevateErr2;
+                  const genResult = await genaiProCreateImage(settings.genaiProApiKey, nextVariant, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
+                  imageUrl = genResult.file_urls?.[0] || (genResult as any).fileUrls?.[0];
+                  provider = 'genaipro';
+                }
+              } else if (useGenAIPro) {
+                const genResult = await genaiProCreateImage(settings.genaiProApiKey, nextVariant, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
+                imageUrl = genResult.file_urls?.[0] || (genResult as any).fileUrls?.[0];
+                provider = 'genaipro';
+              } else {
+                throw new Error('Geen provider');
+              }
+
+              if (!imageUrl) throw new Error('Geen image URL');
+
+              const ext = imageUrl.includes('.png') ? '.png' : '.jpg';
+              const localPath = path.join(outputDir, `scene${sceneId}-option1${ext}`);
+              await downloadFile(imageUrl, localPath);
+
+              const imgResult: ImageResult = { sceneId, provider, imageUrl, localPath, prompt: nextVariant };
+              results.push(imgResult);
+              if (onProgress) onProgress(results.length, scenes.length, sceneId);
+              console.log(`[Images] Scene ${sceneId} klaar via alternatieve prompt (${results.length}/${scenes.length}) via ${provider}`);
+            } catch (altErr: any) {
+              console.error(`[Images] Scene ${sceneId} ook met alternatieve prompt mislukt: ${altErr.message}`);
+            }
+          }
+        }
       }
-
-      const ext = imageUrl.includes('.png') ? '.png' : '.jpg';
-      const localPath = path.join(outputDir, `scene${sceneId}-option1${ext}`);
-      await downloadFile(imageUrl, localPath);
-
-      const result: ImageResult = { sceneId, provider, imageUrl, localPath, prompt };
-      results.push(result);
-
-      if (onProgress) onProgress(results.length, scenes.length, sceneId);
-      console.log(`[Images] Scene ${sceneId} klaar (${results.length}/${scenes.length}) via ${provider}`);
-
-      return result;
-    } catch (err: any) {
-      console.error(`[Images] Scene ${sceneId} mislukt: ${err.message}`);
-      return null;
     }
   });
 
-  await Promise.all(promises);
+  await withConcurrencyLimit(imgTasks, MAX_IMG_CONCURRENT);
   return results;
 }
 
@@ -413,9 +507,8 @@ export async function generateVideos(
   const elevateQueue: typeof scenes = [];
   const genaiQueue: typeof scenes = [];
 
-  if (useGenAIPro && useElevate) {
-    elevateQueue.push(scenes[0]);
-    genaiQueue.push(...scenes.slice(1));
+  if (useElevate) {
+    elevateQueue.push(...scenes);
   } else if (useGenAIPro) {
     genaiQueue.push(...scenes);
   } else if (useElevate) {
@@ -425,7 +518,8 @@ export async function generateVideos(
   }
 
   // GenAIPro: alle scenes parallel
-  const genaiPromises = genaiQueue.map(async (scene) => {
+  const MAX_VID_CONCURRENT = 10;
+  const genaiTasks: (() => Promise<void>)[] = genaiQueue.map((scene) => async () => {
     const sceneId = scene.id;
     const prompt = scene.video_prompt || scene.visual_prompt || scene.prompt;
     const selection = imageSelections.find((s: any) =>
@@ -440,17 +534,17 @@ export async function generateVideos(
         return;
       }
 
-      const result = await genaiProFrameToVideo(settings.genaiProApiKey, selection.chosen_path, prompt);
-      videoUrl = Array.isArray(result) ? result[0]?.file_url : (result.file_url || result.fileUrl);
+      const apiResult = await genaiProFrameToVideo(settings.genaiProApiKey, selection.chosen_path, prompt);
+      videoUrl = Array.isArray(apiResult) ? apiResult[0]?.file_url : (apiResult.file_url || apiResult.fileUrl);
 
       const localPath = path.join(outputDir, `scene${sceneId}.mp4`);
       await downloadFile(videoUrl, localPath);
 
-      const result: VideoResult = {
+      const videoResult: VideoResult = {
         sceneId, provider: 'genaipro', videoUrl, localPath, prompt,
         duration: scene.duration || 5,
       };
-      results.push(result);
+      results.push(videoResult);
 
       if (onProgress) onProgress(results.length, scenes.length, sceneId);
       console.log(`[Videos] Scene ${sceneId} klaar via GenAIPro (${results.length}/${scenes.length})`);
@@ -505,7 +599,11 @@ export async function generateVideos(
     }
   })();
 
-  await Promise.all([...genaiPromises, elevatePromise]);
+  // GenAIPro met concurrency limit + Elevate sequentieel parallel
+  await Promise.all([
+    withConcurrencyLimit(genaiTasks, MAX_VID_CONCURRENT),
+    elevatePromise,
+  ]);
 
   console.log(`[Videos] Klaar! ${results.length}/${scenes.length} scenes succesvol`);
   return results;

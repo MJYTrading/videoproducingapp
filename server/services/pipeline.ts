@@ -430,198 +430,283 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
   const projPath = projectDir(project.name);
 
   // 1. Laad script
-  let scriptText: string;
-  try {
-    scriptText = await readText(path.join(projPath, 'script', 'script.txt'));
-  } catch {
-    throw new Error('Script niet gevonden. Voer eerst stap 3 uit.');
-  }
+  const scriptPath = path.join(projPath, 'script', 'script-voiceover.txt');
+  const scriptText = await readText(scriptPath);
+  if (!scriptText?.trim()) throw new Error('script-voiceover.txt is leeg of niet gevonden');
 
-  // 2. Laad timestamps (woord-level timing van AssemblyAI)
+  // 2. Laad style preset
+  const allStyles2 = await readJson<any[]>(STYLES_PATH);
+  const stylePreset = allStyles2.find((s: any) => s.id === project.visualStyle) || {};
+  const genre = project.genre || '';
+  const mood = project.mood || '';
+
+  // 3. Laad timestamps (woord-level timing van AssemblyAI)
   let timestamps: any = null;
   let audioDuration = 0;
   let wordTimestamps: any[] = [];
+
   try {
     timestamps = await readJson(path.join(projPath, 'audio', 'timestamps.json'));
     audioDuration = timestamps.duration || timestamps.audio_duration || 0;
     wordTimestamps = timestamps.words || timestamps.word_timestamps || [];
-    console.log(`[Step 6] Timestamps geladen: ${audioDuration}s, ${wordTimestamps.length} woorden`);
   } catch {
-    console.warn('[Step 6] Geen timestamps gevonden — scene timing wordt geschat');
+    console.warn('[Step 6] Geen timestamps gevonden');
   }
 
-  // 3. Laad style preset
-  const stylePreset = await loadStylePreset(project.visualStyle || '3d-render');
-
-  let genre = '', mood = '';
-  try {
-    const config = await readJson(path.join(projPath, 'config.json'));
-    genre = config.visual?.genre || '';
-    mood = config.visual?.mood || '';
-  } catch {}
-  if (!genre) {
-    try {
-      const profile = await readJson(path.join(projPath, 'script', 'style-profile.json'));
-      genre = profile.genre || '';
-      mood = profile.mood || '';
-    } catch {}
+  if (wordTimestamps.length === 0) {
+    throw new Error('Geen word-level timestamps beschikbaar. Voer eerst stap 9 (Timestamps) uit.');
   }
 
-  // 4. Bereken verwacht aantal scenes
-  const targetSceneDuration = 5; // seconden per scene
-  const estimatedSceneCount = audioDuration > 0
-    ? Math.ceil(audioDuration / targetSceneDuration)
-    : Math.ceil(scriptText.split(/\s+/).length / 15); // ~15 woorden = ~5 sec spraak
-  
-  console.log(`[Step 6] Audio: ${audioDuration}s → verwacht ~${estimatedSceneCount} scenes`);
+  console.log(`[Step 6] Audio: ${audioDuration}s, ${wordTimestamps.length} woorden`);
 
-  // 5. Splits script in batches MET timestamp info
-  const rawSections = scriptText.split(/\n\n+/);
-  const sections: Array<{ text: string; startTime: number; endTime: number; wordCount: number }> = [];
-  let currentChunk = '';
-  let chunkStartTime = 0;
-  let chunkEndTime = 0;
-  let wordsProcessed = 0;
+  // ────────────────────────────────────────────────────────
+  // STAP A: Deterministische scene splitsing (3-5 seconden)
+  // ────────────────────────────────────────────────────────
+  const scenes: Array<{
+    id: number;
+    start: number;
+    end: number;
+    duration: number;
+    text: string;
+  }> = [];
 
-  for (const section of rawSections) {
-    const sectionWords = section.split(/\s+/).length;
-    
-    if (currentChunk && (currentChunk + ' ' + section).split(/\s+/).length > 350) {
-      sections.push({
-        text: currentChunk.trim(),
-        startTime: chunkStartTime,
-        endTime: chunkEndTime,
-        wordCount: currentChunk.trim().split(/\s+/).length,
+  let currentWords: any[] = [];
+  let sceneStart = 0;
+  let sceneId = 1;
+
+  const SCENE_MIN = 3.0;
+  const SCENE_MAX = 6.0;
+  const SCENE_TARGET = 5.0;
+
+  // Normaliseer word timestamps (ms → sec als nodig)
+  const words = wordTimestamps.map((w: any) => ({
+    text: w.text || w.word || '',
+    start: (w.start || w.start_time || 0) > 1000 ? (w.start || w.start_time || 0) / 1000 : (w.start || w.start_time || 0),
+    end: (w.end || w.end_time || 0) > 1000 ? (w.end || w.end_time || 0) / 1000 : (w.end || w.end_time || 0),
+    confidence: w.confidence || 1,
+  }));
+
+  sceneStart = words[0]?.start || 0;
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    currentWords.push(word);
+
+    const sceneEnd = word.end;
+    const sceneDuration = sceneEnd - sceneStart;
+    const isLastWord = i === words.length - 1;
+
+    let shouldBreak = false;
+
+    if (isLastWord) {
+      shouldBreak = true;
+    } else if (sceneDuration >= SCENE_MAX) {
+      shouldBreak = true;
+    } else if (sceneDuration >= SCENE_MIN) {
+      const wordText = word.text.trim();
+      const endsWithPeriod = /[.!?]$/.test(wordText);
+      const endsWithComma = /[,;:]$/.test(wordText);
+      const nextWord = words[i + 1];
+      const gap = nextWord ? nextWord.start - word.end : 0;
+      const hasNaturalPause = gap > 0.3;
+
+      if (endsWithPeriod) {
+        shouldBreak = true;
+      } else if (sceneDuration >= SCENE_TARGET && (endsWithComma || hasNaturalPause)) {
+        shouldBreak = true;
+      } else if (sceneDuration >= SCENE_TARGET + 1) {
+        const clauseBreaks = ['and', 'but', 'or', 'so', 'then', 'when', 'while', 'because', 'which', 'where', 'that'];
+        if (nextWord && clauseBreaks.includes(nextWord.text.toLowerCase())) {
+          shouldBreak = true;
+        }
+      }
+    }
+
+    if (shouldBreak && currentWords.length > 0) {
+      const sceneText = currentWords.map(w => w.text).join(' ');
+      const sceneEndTime = currentWords[currentWords.length - 1].end;
+      const duration = sceneEndTime - sceneStart;
+
+      if (duration < SCENE_MIN && !isLastWord) {
+        continue;
+      }
+
+      scenes.push({
+        id: sceneId++,
+        start: Math.round(sceneStart * 100) / 100,
+        end: Math.round(sceneEndTime * 100) / 100,
+        duration: Math.round(duration * 100) / 100,
+        text: sceneText,
       });
-      currentChunk = section;
-      chunkStartTime = chunkEndTime;
-    } else {
-      currentChunk += (currentChunk ? '\n\n' : '') + section;
-    }
-    
-    // Bereken eindtijd op basis van woord-timestamps
-    wordsProcessed += sectionWords;
-    if (wordTimestamps.length > 0 && wordsProcessed < wordTimestamps.length) {
-      const wordData = wordTimestamps[Math.min(wordsProcessed - 1, wordTimestamps.length - 1)];
-      chunkEndTime = (wordData.end || wordData.end_time || 0) / 1000; // ms → sec
-    } else if (audioDuration > 0) {
-      chunkEndTime = (wordsProcessed / (wordTimestamps.length || scriptText.split(/\s+/).length)) * audioDuration;
+
+      currentWords = [];
+      sceneStart = words[i + 1]?.start || sceneEndTime;
     }
   }
-  if (currentChunk.trim()) {
-    sections.push({
-      text: currentChunk.trim(),
-      startTime: chunkStartTime,
-      endTime: audioDuration || chunkEndTime,
-      wordCount: currentChunk.trim().split(/\s+/).length,
-    });
+
+  // Merge resterende woorden met laatste scene
+  if (currentWords.length > 0 && scenes.length > 0) {
+    const lastScene = scenes[scenes.length - 1];
+    const extraText = currentWords.map(w => w.text).join(' ');
+    lastScene.text += ' ' + extraText;
+    lastScene.end = currentWords[currentWords.length - 1].end;
+    lastScene.duration = Math.round((lastScene.end - lastScene.start) * 100) / 100;
   }
 
-  console.log(`[Step 6] Script gesplitst in ${sections.length} batches`);
+  console.log(`[Step 6] ${scenes.length} scenes gesplitst (gem. ${(audioDuration / scenes.length).toFixed(1)}s per scene)`);
 
-  // 6. Bouw prompts met timing informatie
+  // ────────────────────────────────────────────────────────
+  // STAP B: Batch scenes per ~200-250 woorden script
+  // ────────────────────────────────────────────────────────
+  const WORDS_PER_BATCH = 225; // ~200-250 woorden per LLM call
+  const batches: typeof scenes[] = [];
+  let currentBatch: typeof scenes = [];
+  let batchWordCount = 0;
+
+  for (const scene of scenes) {
+    const sceneWordCount = scene.text.split(/\s+/).length;
+
+    if (batchWordCount > 0 && batchWordCount + sceneWordCount > WORDS_PER_BATCH) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      batchWordCount = 0;
+    }
+
+    currentBatch.push(scene);
+    batchWordCount += sceneWordCount;
+  }
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  console.log(`[Step 6] ${batches.length} batches (gem. ~${WORDS_PER_BATCH} woorden per batch)`);
+
+  // ────────────────────────────────────────────────────────
+  // STAP C: LLM prompts per batch (parallel)
+  // ────────────────────────────────────────────────────────
   const styleBlock = [
-    `- Prefix (begin van elke prompt): ${stylePreset.style_prefix}`,
-    `- Suffix (eind van elke prompt): ${stylePreset.style_suffix}`,
-    `- Character beschrijving: ${stylePreset.character_description}`,
+    `- Prefix (begin van elke prompt): ${stylePreset.style_prefix || ''}`,
+    `- Suffix (eind van elke prompt): ${stylePreset.style_suffix || ''}`,
+    `- Character beschrijving: ${stylePreset.character_description || ''}`,
     genre ? `- Genre: ${genre}` : '',
     mood ? `- Mood: ${mood}` : '',
   ].filter(Boolean).join('\n');
 
-  const batchPromises = sections.map((section, i) => {
-    const sectionDuration = section.endTime - section.startTime;
-    const expectedScenes = Math.max(1, Math.round(sectionDuration / targetSceneDuration));
-    
-    // Context van vorige en volgende batch voor continuiteit
-    const prevSection = i > 0 ? sections[i - 1] : null;
-    const nextSection = i < sections.length - 1 ? sections[i + 1] : null;
-    const prevContext = prevSection 
-      ? prevSection.text.split(/\s+/).slice(-40).join(' ')
-      : '(Dit is het BEGIN van de video)';
-    const nextContext = nextSection
-      ? nextSection.text.split(/\s+/).slice(0, 40).join(' ')
-      : '(Dit is het EINDE van de video)';
+  const PROMPT_SYSTEM = `Je bent een ervaren visuele regisseur die scene prompts maakt voor AI video generatie.
+Je werkt met image-to-video technologie: eerst wordt een stilstaand beeld gegenereerd, daarna wordt dat beeld geanimeerd tot een video.
+
+JE MAAKT PER SCENE:
+1. visual_prompt = het STARTBEELD (frame 1 van de video). Beschrijf wat je ziet als je de video pauzeert op het allereerste moment. Dit is een stilstaand beeld, GEEN actie beschrijven hier.
+2. video_prompt = de ACTIE die vervolgens plaatsvindt. Beschrijf wat er GEBEURT: bewegingen, veranderingen, acties. Dit stuurt de animatie aan.
+3. visual_prompt_variants = 3 VERSCHILLENDE perspectieven van hetzelfde startmoment (close-up, wide shot, creatief)
+
+VOORBEELD:
+Script: "De detective loopt door de verlaten straat in de regen"
+- visual_prompt: "Een detective in een lange jas staat aan het begin van een verlaten stadsstraat. Natte straatstenen reflecteren neonlicht. Regen hangt bevroren in de lucht. Camera op ooghoogte."
+- video_prompt: "De detective begint te lopen, zijn jas wappert. Regendruppels vallen. Camera volgt hem langzaam van achteren terwijl hij de straat in loopt."
+
+REGELS:
+- visual_prompt: ALTIJD beginnen met de style prefix, eindigen met de style suffix
+- visual_prompt: Beschrijf het MOMENT NET VOOR de actie begint
+- video_prompt: Beschrijf de BEWEGING en ACTIE die volgt op het startbeeld
+- video_prompt: Kort en concreet (1-2 zinnen), focus op wat er beweegt/verandert
+- Match de sfeer/emotie PRECIES met de tekst die wordt uitgesproken
+- De visual_prompt en video_prompt moeten SAMEN het verhaal van de scene vertellen
+- 3 varianten moeten ECHT ANDERS zijn qua camerahoek/perspectief, maar dezelfde actie beschrijven
+- NOOIT tekst, letters, woorden of nummers in het beeld
+- NOOIT pratende/sprekende karakters beschrijven`;
+
+  const batchPromises = batches.map(async (batch, batchIndex) => {
+    const scenesForPrompt = batch.map((scene) => {
+      const globalIdx = scenes.findIndex(s => s.id === scene.id);
+      const prevScene = globalIdx > 0 ? scenes[globalIdx - 1] : null;
+      const nextScene = globalIdx < scenes.length - 1 ? scenes[globalIdx + 1] : null;
+
+      return {
+        scene_number: scene.id,
+        scene_text: scene.text,
+        duration: scene.duration,
+        previous_context: prevScene ? prevScene.text : '(opening van de video)',
+        next_context: nextScene ? nextScene.text : '(einde van de video)',
+      };
+    });
 
     const batchPrompt = [
-      `Maak visuele scene prompts voor deel ${i + 1} van ${sections.length} van een video script.`,
-      '',
-      'VERHAALCONTEXT (KRITIEK — lees dit eerst):',
-      `- Wat er NET DAARVOOR werd verteld: "${prevContext}"`,
-      `- Wat er NA DIT DEEL wordt verteld: "${nextContext}"`,
-      '- Jouw scenes moeten NAADLOOS aansluiten op deze context',
-      '- De eerste scene moet visueel logisch volgen op het einde van het vorige deel',
-      '- De laatste scene moet een natuurlijke overgang zijn naar het volgende deel',
-      '',
-      'TIMING INFORMATIE:',
-      `- Dit deel loopt van ${section.startTime.toFixed(1)}s tot ${section.endTime.toFixed(1)}s (${sectionDuration.toFixed(1)} seconden)`,
-      `- Totale video duur: ${audioDuration.toFixed(1)} seconden`,
-      `- Genereer PRECIES ${expectedScenes} scenes voor dit deel`,
-      `- Elke scene moet 3-8 seconden duren (ideaal 4-6 seconden)`,
-      `- De scenes moeten PRECIES de tijdspanne ${section.startTime.toFixed(1)}s - ${section.endTime.toFixed(1)}s beslaan`,
+      `Genereer visuele prompts voor ${batch.length} scenes.`,
       '',
       'STIJL:',
       styleBlock,
       '',
-      `SCRIPT DEEL ${i + 1}:`,
-      section.text,
+      'SCENES:',
+      JSON.stringify(scenesForPrompt, null, 2),
       '',
-      'REGELS:',
-      '- STORYTELLING: Elke visual_prompt moet PRECIES beschrijven wat het script op DAT moment vertelt',
-      '- STORYTELLING: Scenes moeten visueel op elkaar aansluiten — geen willekeurige beelden',
-      '- STORYTELLING: Match de sfeer/emotie van het beeld met de toon van de tekst',
-      '- STORYTELLING: Bij doorlopend verhaal: behoud dezelfde setting, karakters en belichting',
-      '- Elke scene MOET start, end en duration hebben die optellen tot de volledige tijdspanne',
-      '- [CLIP] markers worden type: "clip"',
-      '- Elke scene heeft: id, start, end, duration, text, type, asset_type, visual_prompt, video_prompt, camera_movement, mood',
-      '- Geef ALLEEN een JSON object terug met een "scenes" array',
-      '- Voor ai_video scenes: voeg visual_prompt_variants toe (array van 3 VERSCHILLENDE prompts)',
-      '- visual_prompt = variant 1, visual_prompt_variants = [variant1, variant2, variant3]',
-      '- Varianten moeten ECHT ANDERS zijn: close-up vs wide shot vs creatief perspectief',
-      '- Clip en real_image scenes hebben GEEN visual_prompt_variants nodig',
-      '- Voor ai_video scenes: voeg video_prompt toe (korte beschrijving van beweging/actie)',
-      `- BELANGRIJK: Genereer PRECIES ${expectedScenes} scenes, niet meer en niet minder`,
+      'PER SCENE LEVEREN:',
+      '- visual_prompt: het STARTBEELD — wat je ziet als je frame 1 pauzeert (start met style prefix, eindig met suffix)',
+      '- visual_prompt_variants: array van 3 VERSCHILLENDE perspectieven van hetzelfde startmoment',
+      '- video_prompt: de ACTIE die volgt — wat er GEBEURT/BEWEEGT in de scene (1-2 zinnen)',
+      '- camera_movement: camerabewegingen (bijv. "slow pan right", "tracking shot")',
+      '- mood: sfeer/emotie van de scene',
+      '',
+      'ANTWOORD — ALLEEN JSON:',
+      '{"scenes": [{"id": 1, "visual_prompt": "...", "visual_prompt_variants": ["...", "...", "..."], "video_prompt": "...", "camera_movement": "...", "mood": "..."}]}',
     ].join('\n');
 
-    return llmJsonPrompt<{ scenes: any[] }>(
-      llmKeys, PROMPTS_SYSTEM, batchPrompt,
-      { maxTokens: 16000, temperature: 0.7 }
-    ).then(result => {
-      console.log(`[Step 6] Batch ${i + 1}: ${(result.scenes || []).length} scenes (verwacht: ${expectedScenes})`);
-      return { index: i, scenes: result.scenes || [], startTime: section.startTime };
-    }).catch(error => {
-      console.error(`[Step 6] Batch ${i + 1} gefaald: ${error.message}`);
-      return { index: i, scenes: [], startTime: section.startTime };
-    });
+    try {
+      const result = await llmJsonPrompt<{ scenes: any[] }>(
+        llmKeys, PROMPT_SYSTEM, batchPrompt,
+        { maxTokens: 16000, temperature: 0.7 }
+      );
+      console.log(`[Step 6] Batch ${batchIndex + 1}/${batches.length}: ${(result.scenes || []).length} prompts`);
+      return { batchIndex, scenes: result.scenes || [] };
+    } catch (error: any) {
+      console.error(`[Step 6] Batch ${batchIndex + 1} gefaald: ${error.message}`);
+      return { batchIndex, scenes: [] };
+    }
   });
 
-  // 7. Voer ALLE batches parallel uit
-  console.log(`[Step 6] ${sections.length} batches parallel starten...`);
   const batchResults = await Promise.all(batchPromises);
+  batchResults.sort((a, b) => a.batchIndex - b.batchIndex);
 
-  // 8. Sorteer en combineer met correcte timing
-  batchResults.sort((a, b) => a.index - b.index);
-  const allScenes: any[] = [];
-  let sceneId = 1;
-
+  // ────────────────────────────────────────────────────────
+  // STAP D: Combineer deterministische timing + LLM prompts
+  // ────────────────────────────────────────────────────────
+  const allPromptResults: any[] = [];
   for (const batch of batchResults) {
-    for (const scene of batch.scenes) {
-      scene.id = sceneId++;
-      allScenes.push(scene);
-    }
+    allPromptResults.push(...batch.scenes);
   }
 
-  if (allScenes.length === 0) {
-    throw new Error('Geen scenes gegenereerd uit alle batches');
+  const finalScenes: any[] = [];
+  let promptIdx = 0;
+
+  for (const scene of scenes) {
+    const llmScene = allPromptResults.find((p: any) => p.id === scene.id)
+      || allPromptResults[promptIdx];
+    promptIdx++;
+
+    finalScenes.push({
+      id: scene.id,
+      start: scene.start,
+      end: scene.end,
+      duration: scene.duration,
+      text: scene.text,
+      type: 'ai_video',
+      asset_type: 'ai_video',
+      visual_prompt: llmScene?.visual_prompt || `${stylePreset.style_prefix || ''} Scene depicting: ${scene.text}. ${stylePreset.style_suffix || ''}`,
+      visual_prompt_variants: llmScene?.visual_prompt_variants || [],
+      video_prompt: llmScene?.video_prompt || '',
+      camera_movement: llmScene?.camera_movement || 'slow pan',
+      mood: llmScene?.mood || mood || 'neutral',
+    });
   }
 
-  // 9. Statistieken
-  const aiVideoScenes = allScenes.filter((s: any) => s.type === 'ai_video' || s.asset_type === 'ai_video').length;
-  const clipScenes = allScenes.filter((s: any) => s.type === 'clip').length;
-  const realImageScenes = allScenes.filter((s: any) => s.asset_type === 'real_image').length;
-  const totalDuration = allScenes.reduce((sum: number, s: any) => sum + (s.duration || 0), 0);
-  const avgDuration = allScenes.length > 0 ? totalDuration / allScenes.length : 0;
+  // Statistieken
+  const totalDuration = finalScenes.reduce((sum: number, s: any) => sum + (s.duration || 0), 0);
+  const avgDuration = finalScenes.length > 0 ? totalDuration / finalScenes.length : 0;
+  const withPrompts = finalScenes.filter((s: any) => s.visual_prompt_variants?.length >= 3).length;
 
-  console.log(`[Step 6] Klaar! ${allScenes.length} scenes, ${totalDuration.toFixed(1)}s totaal (audio: ${audioDuration}s)`);
+  console.log(`[Step 6] Klaar! ${finalScenes.length} scenes, ${totalDuration.toFixed(1)}s totaal (audio: ${audioDuration}s)`);
+  console.log(`[Step 6] ${withPrompts}/${finalScenes.length} scenes met 3 prompt varianten`);
+
   if (Math.abs(totalDuration - audioDuration) > 10 && audioDuration > 0) {
     console.warn(`[Step 6] ⚠️ Scene totaal (${totalDuration.toFixed(1)}s) wijkt af van audio (${audioDuration}s)`);
   }
@@ -630,17 +715,17 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
   await writeJson(outputPath, {
     project: project.name, style: project.visualStyle, genre, mood,
     audio_duration: audioDuration,
-    total_scenes: allScenes.length, ai_video_scenes: aiVideoScenes,
-    clip_scenes: clipScenes, real_image_scenes: realImageScenes,
-    avg_scene_duration: Math.round(avgDuration * 10) / 10, scenes: allScenes,
+    total_scenes: finalScenes.length, ai_video_scenes: finalScenes.length,
+    clip_scenes: 0, real_image_scenes: 0,
+    avg_scene_duration: Math.round(avgDuration * 10) / 10, scenes: finalScenes,
   });
 
   return {
-    totalScenes: allScenes.length, aiVideoScenes, clipScenes, realImageScenes,
+    totalScenes: finalScenes.length, aiVideoScenes: finalScenes.length, clipScenes: 0, realImageScenes: 0,
     avgDuration: Math.round(avgDuration * 10) / 10, filePath: outputPath,
     audioDuration,
-    typeCounts: { ai_video: aiVideoScenes, clip: clipScenes, real_image: realImageScenes },
-    preview: allScenes.slice(0, 3),
+    typeCounts: { ai_video: finalScenes.length, clip: 0, real_image: 0 },
+    preview: finalScenes.slice(0, 3),
   };
 }
 
