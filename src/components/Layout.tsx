@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Film, FolderOpen, PlusCircle, Settings, LogOut, Palette } from 'lucide-react';
+import { Film, FolderOpen, PlusCircle, Settings, LogOut, Palette, Tv, Mic } from 'lucide-react';
 import Toast from './Toast';
 import { auth } from '../api';
 
@@ -40,6 +40,12 @@ export default function Layout() {
             <li>
               <Link to="/styles" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/styles') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
                 <Palette className="w-5 h-5" /> Styles
+              </Link>
+              <Link to="/channels" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/channels') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
+                <Tv className="w-5 h-5" /> Kanalen
+              </Link>
+              <Link to="/voices" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/voices') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
+                <Mic className="w-5 h-5" /> Voices
               </Link>
               <Link to="/settings" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/settings') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
                 <Settings className="w-5 h-5" /> Settings

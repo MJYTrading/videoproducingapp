@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Save, Pencil } from 'lucide-react';
 import { Project } from '../types';
 import { useStore } from '../store';
-import { VOICES } from '../data/voices';
+import * as api from '../api';
 import { COLOR_GRADES } from '../data/color-grades';
 import { OUTPUT_FORMATS } from '../data/output-formats';
 
@@ -18,7 +18,12 @@ export default function ConfigTab({ project }: ConfigTabProps) {
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState(project.description || '');
   const [scriptLength, setScriptLength] = useState(project.scriptLength || 5000);
+  const [voices, setVoices] = useState<Array<{id: string; name: string; voiceId: string; description: string; language: string}>>([]);
   const [voice, setVoice] = useState(project.voice);
+
+  useEffect(() => {
+    api.voices.getAll().then(setVoices).catch(() => {});
+  }, []);
   const [backgroundMusic, setBackgroundMusic] = useState(project.backgroundMusic);
   const [stockImages, setStockImages] = useState(project.stockImages);
   const [colorGrading, setColorGrading] = useState(project.colorGrading);
@@ -99,7 +104,7 @@ export default function ConfigTab({ project }: ConfigTabProps) {
         <div className="space-y-3">
           <Row label="Voice" value={voice}>
             <select value={voice} onChange={(e) => setVoice(e.target.value)} className="bg-zinc-900 border border-zinc-700 rounded px-3 py-1 text-sm">
-              {VOICES.map((v) => <option key={v.id} value={`${v.name} — ${v.description}`}>{v.name} — {v.description}</option>)}
+              {voices.map((v) => <option key={v.voiceId} value={`${v.name} — ${v.description}`}>{v.name} — {v.description}</option>)}
             </select>
           </Row>
           <Row label="Muziek" value={backgroundMusic ? 'Aan' : 'Uit'}>

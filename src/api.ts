@@ -283,3 +283,53 @@ export const styles = {
     if (!res.ok) throw new Error('Kon style niet verwijderen');
   },
 };
+
+export const channels = {
+  async getAll() {
+    const res = await apiFetch('/channels');
+    if (!res.ok) throw new Error('Kon kanalen niet ophalen');
+    return res.json();
+  },
+  async create(data: any) {
+    const res = await apiFetch('/channels', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Aanmaken mislukt'); }
+    return res.json();
+  },
+  async update(id: string, data: any) {
+    const res = await apiFetch('/channels/' + id, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Bijwerken mislukt'); }
+    return res.json();
+  },
+  async remove(id: string) {
+    const res = await apiFetch('/channels/' + id, { method: 'DELETE' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Verwijderen mislukt'); }
+    return res.json();
+  },
+};
+
+export const voices = {
+  async getAll() {
+    const res = await apiFetch('/voices');
+    if (!res.ok) throw new Error('Kon voices niet ophalen');
+    return res.json();
+  },
+  async create(data: any) {
+    const res = await apiFetch('/voices', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Aanmaken mislukt'); }
+    return res.json();
+  },
+  async update(id: string, data: any) {
+    const res = await apiFetch('/voices/' + id, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Bijwerken mislukt'); }
+    return res.json();
+  },
+  async remove(id: string) {
+    const res = await apiFetch('/voices/' + id, { method: 'DELETE' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Verwijderen mislukt'); }
+    return res.json();
+  },
+  async seed() {
+    const res = await apiFetch('/voices/seed', { method: 'POST' });
+    return res.json();
+  },
+};

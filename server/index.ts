@@ -9,6 +9,8 @@ import settingsRoutes from './routes/settings.js';
 import pipelineRoutes from './routes/pipeline.js';
 import pipelineEngineRoutes from './routes/pipeline-engine-routes.js';
 import stylesRoutes from './routes/styles.js';
+import channelRoutes from './routes/channels.js';
+import voiceRoutes from './routes/voices.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +34,8 @@ app.use('/api/projects', pipelineRoutes);
 app.use('/api/pipeline', pipelineEngineRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/styles', stylesRoutes);
+app.use('/api/channels', channelRoutes);
+app.use('/api/voices', voiceRoutes);
 
 const frontendPath = path.join(__dirname, '..', 'dist-frontend');
 app.use(express.static(frontendPath));

@@ -8,6 +8,8 @@ import NewProject from './pages/NewProject';
 import ProjectDetail from './pages/ProjectDetail';
 import SettingsPage from './pages/SettingsPage';
 import StylePresetsPage from './pages/StylePresetsPage';
+import ChannelsPage from './pages/ChannelsPage';
+import VoicesPage from './pages/VoicesPage';
 import LoginPage from './pages/LoginPage';
 
 function AppContent() {
@@ -37,6 +39,8 @@ function AppContent() {
           <Route path="project/:id" element={<ProjectDetail />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="styles" element={<StylePresetsPage />} />
+          <Route path="channels" element={<ChannelsPage />} />
+          <Route path="voices" element={<VoicesPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -94,7 +94,7 @@ export interface Project {
   visualStyleParent: string | null;
   customVisualStyle?: string;
   imageSelectionMode: 'auto' | 'manual';
-  imagesPerScene: 1 | 2 | 3 | 4;
+  imagesPerScene: 1 | 2 | 3;
   selectedImages: ImageSelection[];
   transitionMode: 'none' | 'uniform' | 'per-scene';
   uniformTransition: string | null;

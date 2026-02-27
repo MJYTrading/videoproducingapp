@@ -6,7 +6,7 @@
 
 import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
-import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6, executeStep6b, executeStep7, executeStep8, executeStep9, executeStep10, executeStep11, executeStep12, executeStep13 } from '../services/pipeline.js';
+import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6, executeStep6b, executeStep7, executeStep8, executeStep9, executeStep10, executeStep11, executeStep12, executeStep13, executeStep14 } from '../services/pipeline.js';
 
 const router = Router();
 
@@ -45,10 +45,25 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
     });
 
     const stepNames: Record<number, string> = {
-      0: 'Config validatie', 1: 'Transcripts ophalen', 2: 'Style profile maken',
-      3: 'Script schrijven', 4: 'Voiceover genereren', 5: 'Timestamps genereren', 6: 'Scene prompts genereren', 65: 'Scene images genereren', 7: 'Assets zoeken', 8: 'YouTube clips ophalen', 9: 'Video scenes genereren',
+      0: 'Ideation', 1: 'Project Formulier', 2: 'Research JSON',
+      3: 'Transcripts Ophalen', 4: 'Trending Clips Research',
+      5: 'Style Profile', 6: 'Script Schrijven', 7: 'Voice Over',
+      8: 'Avatar / Spokesperson', 9: 'Timestamps Ophalen',
+      10: 'Scene Prompts', 11: 'Assets Zoeken', 12: 'Clips Downloaden',
+      13: 'Images Genereren', 14: 'Video Scenes Genereren',
+      15: 'Orchestrator', 16: 'Achtergrondmuziek', 17: 'Color Grading',
+      18: 'Subtitles', 19: 'Overlay', 20: 'Sound Effects',
+      21: 'Video Effects', 22: 'Final Export', 23: 'Thumbnail', 24: 'Drive Upload',
     };
-    const source = stepNumber <= 1 || stepNumber === 12 ? 'App' : [4, 5, 7, 8, 9, 10, 11, 13, 65].includes(stepNumber) ? 'N8N' : 'Elevate AI';
+    const executorMap: Record<number, string> = {
+      0: 'App', 1: 'App', 2: 'Perplexity', 3: 'App', 4: 'Perplexity',
+      5: 'Elevate AI', 6: 'Elevate AI', 7: 'Elevate', 8: 'HeyGen',
+      9: 'Assembly AI', 10: 'Elevate AI', 11: 'TwelveLabs + N8N', 12: 'N8N',
+      13: 'Elevate', 14: 'Elevate', 15: 'Claude Opus', 16: 'FFMPEG',
+      17: 'FFMPEG', 18: 'FFMPEG', 19: 'FFMPEG', 20: 'FFMPEG',
+      21: 'FFMPEG', 22: 'FFMPEG', 23: 'App', 24: 'App',
+    };
+    const source = executorMap[stepNumber] || 'App';
 
     await prisma.logEntry.create({
       data: { level: 'info', step: stepNumber, source, message: `${stepNames[stepNumber] || `Stap ${stepNumber}`} gestart...`, projectId: id },
@@ -63,54 +78,74 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
       let metadata: any = {};
 
       switch (stepNumber) {
-        case 0: {
+        case 1: { // Project Formulier (was 0)
           const configResult = await executeStep0(projectData);
           if (!configResult.valid) throw new Error(`Validatie fouten: ${configResult.errors.join(', ')}`);
           result = { projectPath: configResult.projectPath };
           break;
         }
-        case 1: {
+        case 3: { // Transcripts Ophalen (was 1)
           const transcriptResult = await executeStep1(projectData, settings.youtubeTranscriptApiKey);
           result = transcriptResult;
           metadata = { wordCount: transcriptResult.transcripts.reduce((sum: number, t: any) => sum + t.wordCount, 0) };
           if (transcriptResult.failures.length > 0) {
             await prisma.logEntry.create({
-              data: { level: 'warn', step: 1, source: 'App', message: `${transcriptResult.failures.length} transcript(s) mislukt: ${transcriptResult.failures.map((f: any) => f.videoId).join(', ')}`, projectId: id },
+              data: { level: 'warn', step: stepNumber, source, message: `${transcriptResult.failures.length} transcript(s) mislukt`, projectId: id },
             });
           }
           break;
         }
-        case 2: {
+        case 5: { // Style Profile (was 2)
           const styleProfile = await executeStep2(projectData, { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey });
           result = styleProfile;
           metadata = { sections: styleProfile.script_formatting_rules?.sections };
           break;
         }
-        case 3: {
+        case 6: { // Script Schrijven (was 3)
           const scriptResult = await executeStep3(projectData, { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey });
           result = { wordCount: scriptResult.wordCount, sections: scriptResult.sections, filePath: scriptResult.filePath };
           metadata = { wordCount: scriptResult.wordCount };
           break;
         }
-        case 4: {
+        case 7: { // Voice Over (was 4)
           const voiceoverResult = await executeStep4(projectData, settings);
           result = voiceoverResult;
           metadata = { fileSizeKb: voiceoverResult.fileSizeKb, voiceName: voiceoverResult.voiceName };
           break;
         }
-        case 5: {
+        case 9: { // Timestamps (was 5)
           const timestampResult = await executeStep5(projectData, settings);
           result = timestampResult;
           metadata = { wordCount: timestampResult.wordCount, duration: timestampResult.duration, clipCount: timestampResult.clipCount };
           break;
         }
-        case 6: {
+        case 10: { // Scene Prompts (was 6)
           const promptsResult = await executeStep6(projectData, { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey });
           result = promptsResult;
           metadata = { sceneCount: promptsResult.totalScenes };
           break;
         }
-        case 65: {
+        case 11: { // Assets Zoeken (was 7)
+          const assetsResult = await executeStep7(projectData, settings);
+          result = assetsResult;
+          if (assetsResult.skipped) {
+            metadata = { skipped: true, reason: assetsResult.reason };
+          } else {
+            metadata = { assetsFound: assetsResult.assetsFound, assetsFailed: assetsResult.assetsFailed };
+          }
+          break;
+        }
+        case 12: { // Clips Downloaden (was 8)
+          const clipsResult = await executeStep8(projectData, settings);
+          result = clipsResult;
+          if (clipsResult.skipped) {
+            metadata = { skipped: true, reason: clipsResult.reason };
+          } else {
+            metadata = { clipsDownloaded: clipsResult.clipsDownloaded, clipsFailed: clipsResult.clipsFailed };
+          }
+          break;
+        }
+        case 13: { // Images Genereren (was 6b/65)
           const imgResult = await executeStep6b(projectData, settings);
           result = imgResult;
           if (imgResult.skipped) {
@@ -120,58 +155,23 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
           }
           break;
         }
-        case 7: {
-          const assetsResult = await executeStep7(projectData, settings);
-          result = assetsResult;
-          if (assetsResult.skipped) {
-            metadata = { skipped: true, reason: assetsResult.reason };
-            await prisma.logEntry.create({
-              data: { level: 'info', step: 7, source: 'N8N', message: `Stap 7 overgeslagen: ${assetsResult.reason}`, projectId: id },
-            });
-          } else {
-            metadata = { assetsFound: assetsResult.assetsFound, assetsFailed: assetsResult.assetsFailed };
-          }
-          break;
-        }
-        case 8: {
-          const clipsResult = await executeStep8(projectData, settings);
-          result = clipsResult;
-          if (clipsResult.skipped) {
-            metadata = { skipped: true, reason: clipsResult.reason };
-            await prisma.logEntry.create({
-              data: { level: 'info', step: 8, source: 'N8N', message: `Stap 8 overgeslagen: ${clipsResult.reason}`, projectId: id },
-            });
-          } else {
-            metadata = { clipsDownloaded: clipsResult.clipsDownloaded, clipsFailed: clipsResult.clipsFailed };
-          }
-          break;
-        }
-        case 9: {
+        case 14: { // Video Scenes Genereren (was 9)
           const scenesResult = await executeStep9(projectData, settings);
           result = scenesResult;
           if (scenesResult.skipped) {
             metadata = { skipped: true, reason: scenesResult.reason };
-            await prisma.logEntry.create({
-              data: { level: 'info', step: 9, source: 'N8N', message: `Stap 9 overgeslagen: ${scenesResult.reason}`, projectId: id },
-            });
           } else {
             metadata = { scenesCompleted: scenesResult.scenesCompleted, scenesFailed: scenesResult.scenesFailed };
           }
           break;
         }
-        case 10: {
-          const editResult = await executeStep10(projectData, settings);
-          result = editResult;
-          metadata = { duration: editResult.duration, segments: editResult.segments, fileSizeMb: editResult.fileSizeMb };
-          break;
-        }
-        case 11: {
+        case 17: { // Color Grading (was 11)
           const gradeResult = await executeStep11(projectData, settings);
           result = gradeResult;
           metadata = { colorGrade: gradeResult.colorGrade, fileSizeMb: gradeResult.fileSizeMb };
           break;
         }
-        case 12: {
+        case 18: { // Subtitles (was 12)
           const subResult = await executeStep12(projectData, settings);
           result = subResult;
           if (subResult.skipped) {
@@ -181,14 +181,40 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
           }
           break;
         }
-        case 13: {
+        case 20: { // Sound Effects (hergebruikt stap 10 editing)
+          const sfxResult = await executeStep10(projectData, settings);
+          result = sfxResult;
+          metadata = { duration: sfxResult.duration, fileSizeMb: sfxResult.fileSizeMb };
+          break;
+        }
+        case 21: { // Video Effects (hergebruikt stap 10 editing)
+          const vfxResult = await executeStep10(projectData, settings);
+          result = vfxResult;
+          metadata = { duration: vfxResult.duration, segments: vfxResult.segments, fileSizeMb: vfxResult.fileSizeMb };
+          break;
+        }
+        case 22: { // Final Export (was 13)
           const exportResult = await executeStep13(projectData, settings);
           result = exportResult;
           metadata = { duration: exportResult.duration, fileSizeMb: exportResult.fileSizeMb, format: exportResult.format };
           break;
         }
-        default:
-          throw new Error(`Stap ${stepNumber} wordt nog niet ondersteund door de app. Gebruik N8N voor deze stap.`);
+        case 24: { // Drive Upload (was 14)
+          const uploadResult = await executeStep14(projectData, settings);
+          result = uploadResult;
+          break;
+        }
+        default: {
+          // Niet-ready stappen of niet-ingeschakelde stappen → skip
+          await prisma.step.update({
+            where: { projectId_stepNumber: { projectId: id, stepNumber } },
+            data: { status: 'skipped', duration: 0 },
+          });
+          await prisma.logEntry.create({
+            data: { level: 'info', step: stepNumber, source, message: `Stap ${stepNumber} overgeslagen (niet ready of niet ingeschakeld)`, projectId: id },
+          });
+          return;
+        }
       }
 
       const duration = Math.round((Date.now() - startedAt.getTime()) / 1000);

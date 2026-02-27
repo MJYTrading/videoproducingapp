@@ -6,4 +6,5 @@ export const TRANSITIONS = [
   { id: "wipe_left", name: "Wipe Left", description: "Scene schuift naar links" },
   { id: "zoom_in", name: "Zoom In", description: "Inzoomen naar volgende scene" },
   { id: "glitch", name: "Glitch", description: "Korte glitch-effect transitie" },
+  { id: "random", name: "Random", description: "Willekeurige transitie per scene" },
 ];

@@ -29,6 +29,17 @@ const EMPTY_STYLE: Omit<StylePreset, 'id'> & { id: string } = {
   example_prompt: '',
 };
 
+const TEMPLATE_STYLE: Omit<StylePreset, 'id'> & { id: string } = {
+  id: '',
+  name: '',
+  allows_real_images: false,
+  style_prefix: 'A [STIJL] render of [KARAKTER BESCHRIJVING] in a [SCENE CONTEXT].',
+  style_suffix: 'Cinematic lighting, [RENDER ENGINE] style, 8K detail, hyper-realistic materials, depth of field. No text, words, letters, numbers, subtitles visible anywhere.',
+  character_description: 'Beschrijf hier het type karakter: uiterlijk, kleding, houding, hoe emotie wordt uitgedrukt. Bijvoorbeeld: "Featureless white mannequin with smooth plastic skin, no facial features, humanoid proportions."',
+  color_grade: 'clean_neutral',
+  example_prompt: 'A [STIJL] render of [KARAKTER] standing in [LOCATIE] with [BELICHTING]. Camera [HOEK/BEWEGING]. [RENDER ENGINE], 8K detail.',
+};
+
 export default function StylePresetsPage() {
   const [styles, setStyles] = useState<StylePreset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -184,13 +195,31 @@ export default function StylePresetsPage() {
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-bold">Style Presets</h1>
-          <button
-            onClick={() => setShowNew(!showNew)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors"
-          >
-            {showNew ? <X className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
-            {showNew ? 'Annuleren' : 'Nieuwe Style'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setNewStyle({ ...TEMPLATE_STYLE });
+                setShowNew(true);
+              }}
+              className="flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 px-4 py-2 rounded-lg transition-colors"
+            >
+              📋 Gebruik Template
+            </button>
+            <button
+              onClick={() => {
+                if (showNew) {
+                  setShowNew(false);
+                } else {
+                  setNewStyle({ ...EMPTY_STYLE });
+                  setShowNew(true);
+                }
+              }}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors"
+            >
+              {showNew ? <X className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+              {showNew ? 'Annuleren' : 'Nieuwe Style (leeg)'}
+            </button>
+          </div>
         </div>
 
         {message && (
@@ -201,7 +230,7 @@ export default function StylePresetsPage() {
 
         {showNew && (
           <div className="mb-6 bg-zinc-800 rounded-lg p-6 border border-blue-500/30">
-            <h2 className="text-lg font-semibold mb-2">Niuwe Style</h2>
+            <h2 className="text-lg font-semibold mb-2">Nieuwe Style</h2>
             <div className="mb-4">
               <label className="block text-sm font-medium mb-1 text-zinc-300">ID (uniek, geen spaties)</label>
               <input

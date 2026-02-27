@@ -12,6 +12,25 @@ import ConfigTab from '../components/ConfigTab';
 
 type TabType = 'pipeline' | 'preview' | 'script' | 'logs' | 'stats' | 'config';
 
+
+const STEP_NAV: Array<{ id: number; label: string }> = [
+  { id: 0, label: '0. Config' },
+  { id: 1, label: '1. Transcripts' },
+  { id: 2, label: '2. Style' },
+  { id: 3, label: '3. Script' },
+  { id: 4, label: '4. Voiceover' },
+  { id: 5, label: '5. Timestamps' },
+  { id: 6, label: '6. Prompts' },
+  { id: 7, label: '7. Assets' },
+  { id: 8, label: '8. Clips' },
+  { id: 9, label: '9. Video' },
+  { id: 10, label: '10. Editing' },
+  { id: 11, label: '11. Color' },
+  { id: 12, label: '12. Subs' },
+  { id: 13, label: '13. Export' },
+  { id: 14, label: '14. Upload' },
+];
+
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -77,13 +96,11 @@ export default function ProjectDetail() {
     }
   };
 
-  const completedSteps = project.steps.filter(
-    (s) => s.status === 'completed'
+  const doneSteps = project.steps.filter(
+    (s) => s.status === 'completed' || s.status === 'skipped'
   ).length;
-  const totalNonSkippedSteps = project.steps.filter(
-    (s) => s.status !== 'skipped'
-  ).length;
-  const progress = Math.round((completedSteps / totalNonSkippedSteps) * 100);
+  const totalSteps = project.steps.length;
+  const progress = totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
 
   const formatElapsedTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -161,7 +178,7 @@ export default function ProjectDetail() {
             <div className="flex justify-between text-sm text-zinc-400 mb-2">
               <span>Voortgang</span>
               <span>
-                {completedSteps}/{totalNonSkippedSteps} stappen
+                {doneSteps}/{totalSteps} stappen
               </span>
             </div>
             <div className="w-full bg-zinc-700 rounded-full h-3">
@@ -268,13 +285,39 @@ export default function ProjectDetail() {
             ))}
           </div>
 
-          <div className="p-6">
+          <div className="p-6 flex gap-4">
+            {activeTab === 'pipeline' && (
+              <div className="w-40 shrink-0 hidden lg:block">
+                <div className="sticky top-4 space-y-1">
+                  <p className="text-xs text-zinc-500 font-medium mb-2 uppercase">Stappen</p>
+                  {STEP_NAV.map((nav) => {
+                    const step = project.steps.find(s => s.id === nav.id);
+                    const statusIcon = !step ? '⬜' : step.status === 'completed' ? '✅' : step.status === 'running' ? '⏳' : step.status === 'failed' ? '❌' : step.status === 'skipped' ? '⏭' : step.status === 'review' ? '👁️' : '⬜';
+                    return (
+                      <button
+                        key={nav.id}
+                        onClick={() => {
+                          const el = document.querySelector(`[data-step-id="${nav.id}"]`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs hover:bg-zinc-700/50 transition-colors flex items-center gap-1.5 text-zinc-400 hover:text-white"
+                      >
+                        <span className="text-[10px]">{statusIcon}</span>
+                        <span className="truncate">{nav.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
             {activeTab === 'pipeline' && <PipelineTab project={project} />}
             {activeTab === 'preview' && <PreviewTab project={project} />}
             {activeTab === 'script' && <ScriptTab project={project} />}
             {activeTab === 'logs' && <LogsTab project={project} />}
             {activeTab === 'stats' && <StatsTab project={project} />}
             {activeTab === 'config' && <ConfigTab project={project} />}
+            </div>
           </div>
         </div>
 

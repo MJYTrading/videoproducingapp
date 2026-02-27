@@ -18,7 +18,7 @@ const CHECKPOINT_STEPS: CheckpointStep[] = [
   { id: 4, name: 'Voiceover genereren', recommended: true },
   { id: 5, name: 'Timestamps genereren' },
   { id: 6, name: 'Scene prompts genereren', recommended: true },
-  { id: 65, name: 'Scene images genereren', displayLabel: '6b' },
+  
   { id: 7, name: 'Assets zoeken' },
   { id: 8, name: 'YouTube clips ophalen' },
   { id: 9, name: 'Video scenes genereren', recommended: true },

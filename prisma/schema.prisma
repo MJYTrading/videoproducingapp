@@ -85,6 +85,7 @@ model Project {
   priority            Int       @default(0)
   queuePosition       Int?
   // Google Drive kanaal
+  enabledSteps        String    @default("[]")
   channelId           String?
   driveUrl            String?
   channel             Channel?  @relation(fields: [channelId], references: [id])
@@ -131,4 +132,13 @@ model Channel {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   projects      Project[]
+}
+
+model Voice {
+  id          String   @id @default(cuid())
+  name        String
+  voiceId     String   @unique
+  description String
+  language    String
+  createdAt   DateTime @default(now())
 }

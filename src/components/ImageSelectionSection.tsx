@@ -1,8 +1,8 @@
 interface ImageSelectionSectionProps {
   mode: 'auto' | 'manual';
-  imagesPerScene: 1 | 2 | 3 | 4;
+  imagesPerScene: 1 | 2 | 3;
   onModeChange: (mode: 'auto' | 'manual') => void;
-  onImagesPerSceneChange: (count: 1 | 2 | 3 | 4) => void;
+  onImagesPerSceneChange: (count: 1 | 2 | 3) => void;
 }
 
 export default function ImageSelectionSection({
@@ -60,7 +60,7 @@ export default function ImageSelectionSection({
               <div className="flex items-center gap-2 ml-1">
                 <span className="text-sm text-zinc-400">Aantal opties per scene:</span>
                 <div className="flex gap-2">
-                  {([2, 3, 4] as const).map((count) => (
+                  {([2, 3] as const).map((count) => (
                     <button
                       key={count}
                       type="button"

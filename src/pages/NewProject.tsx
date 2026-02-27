@@ -2,20 +2,53 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { Language, ScriptSource, MontageClip } from '../types';
-import { VOICES } from '../data/voices';
+
 import { COLOR_GRADES } from '../data/color-grades';
 import { OUTPUT_FORMATS } from '../data/output-formats';
-import { VIDEO_STYLES } from '../data/styles';
+import { VIDEO_STYLES, STYLE_STEP_DEFAULTS } from '../data/styles';
 import StylePicker from '../components/StylePicker';
 import CheckpointsSection from '../components/CheckpointsSection';
 import ClipTypesSection from '../components/ClipTypesSection';
 import ImageSelectionSection from '../components/ImageSelectionSection';
 import TransitionsSection from '../components/TransitionsSection';
+import * as api from '../api';
 
 export default function NewProject() {
   const navigate = useNavigate();
   const addProject = useStore((state) => state.addProject);
 
+  const STEP_NAMES: Record<number, { name: string; readyToUse: boolean }> = {
+    0: { name: 'Ideation', readyToUse: false },
+    1: { name: 'Project Formulier', readyToUse: true },
+    2: { name: 'Research JSON', readyToUse: false },
+    3: { name: 'Transcripts Ophalen', readyToUse: true },
+    4: { name: 'Trending Clips Research', readyToUse: false },
+    5: { name: 'Style Profile', readyToUse: true },
+    6: { name: 'Script Schrijven', readyToUse: true },
+    7: { name: 'Voice Over', readyToUse: true },
+    8: { name: 'Avatar / Spokesperson', readyToUse: false },
+    9: { name: 'Timestamps Ophalen', readyToUse: true },
+    10: { name: 'Scene Prompts', readyToUse: true },
+    11: { name: 'Assets Zoeken', readyToUse: true },
+    12: { name: 'Clips Downloaden', readyToUse: true },
+    13: { name: 'Images Genereren', readyToUse: true },
+    14: { name: 'Video Scenes Genereren', readyToUse: true },
+    15: { name: 'Orchestrator', readyToUse: false },
+    16: { name: 'Achtergrondmuziek', readyToUse: false },
+    17: { name: 'Color Grading', readyToUse: true },
+    18: { name: 'Subtitles', readyToUse: true },
+    19: { name: 'Overlay', readyToUse: false },
+    20: { name: 'Sound Effects', readyToUse: true },
+    21: { name: 'Video Effects', readyToUse: true },
+    22: { name: 'Final Export', readyToUse: true },
+    23: { name: 'Thumbnail', readyToUse: false },
+    24: { name: 'Drive Upload', readyToUse: true },
+  };
+
+  const [enabledSteps, setEnabledSteps] = useState<number[]>([]);
+  const [channels, setChannels] = useState<Array<{id: string; name: string}>>([]);
+  const [channelId, setChannelId] = useState('');
+  const [VOICES, setVOICES] = useState<Array<{id: string; name: string; voiceId: string; description: string; language: string}>>([]);
   const [name, setName] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -30,20 +63,30 @@ export default function NewProject() {
   const [visualStyleParent, setVisualStyleParent] = useState<string | null>('ai');
   const [customVisualStyle, setCustomVisualStyle] = useState('');
   const [imageSelectionMode, setImageSelectionMode] = useState<'auto' | 'manual'>('auto');
-  const [imagesPerScene, setImagesPerScene] = useState<1 | 2 | 3 | 4>(1);
+  const [imagesPerScene, setImagesPerScene] = useState<1 | 2 | 3>(1);
   const [transitionMode, setTransitionMode] = useState<'none' | 'uniform' | 'per-scene'>('uniform');
   const [uniformTransition, setUniformTransition] = useState<string | null>('cross-dissolve');
   const [useClips, setUseClips] = useState(false);
   const [referenceClips, setReferenceClips] = useState<string[]>([]);
   const [montageClips, setMontageClips] = useState<MontageClip[]>([]);
   const [stockImages, setStockImages] = useState(true);
-  const [colorGrading, setColorGrading] = useState('cinematic_dark');
-  const [subtitles, setSubtitles] = useState(true);
+  const [colorGrading, setColorGrading] = useState('none');
+  const [subtitles, setSubtitles] = useState(false);
   const [output, setOutput] = useState('youtube-1080p');
   const [aspectRatio, setAspectRatio] = useState('landscape');
   const [checkpoints, setCheckpoints] = useState<number[]>([3, 4, 6, 9]);
 
-  const selectedVoice = VOICES.find((v) => v.id === voice);
+  useEffect(() => {
+    api.channels.getAll().then(setChannels).catch(() => {});
+    api.voices.getAll().then((v: any[]) => {
+      setVOICES(v);
+      if (v.length > 0 && !v.find((x: any) => x.voiceId === voice)) {
+        setVoice(v[0].voiceId);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const selectedVoice = VOICES.find((v) => v.voiceId === voice);
   const selectedColorGrade = COLOR_GRADES.find((c) => c.id === colorGrading);
   const selectedOutput = OUTPUT_FORMATS.find((o) => o.id === output);
 
@@ -59,7 +102,12 @@ export default function NewProject() {
   };
 
   const selectedStyle = getSelectedStyle();
-  const isAIStyle = visualStyleParent === 'ai';
+  const getStyleCategory = () => {
+    const style = VIDEO_STYLES.find(s => s.id === visualStyle || s.id === visualStyleParent);
+    return style?.category || 'real';
+  };
+  const styleCategory = getStyleCategory();
+  const isAIStyle = styleCategory === 'ai' || styleCategory === 'spokesperson';
 
   useEffect(() => {
     if (selectedStyle) {
@@ -115,6 +163,8 @@ export default function NewProject() {
       subtitles,
       output: (selectedOutput?.name || 'YouTube 1080p') as any,
       aspectRatio,
+      enabledSteps,
+      channelId: channelId || undefined,
     });
 
     navigate(`/project/${project.id}`);
@@ -177,6 +227,20 @@ export default function NewProject() {
               <option value="NL">NL</option>
             </select>
           </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Kanaal</label>
+            <select
+              value={channelId}
+              onChange={(e) => setChannelId(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
+            >
+              <option value="">Geen kanaal</option>
+              {channels.map((ch) => (
+                <option key={ch.id} value={ch.id}>{ch.name}</option>
+              ))}
+            </select>
+          </div>
         </section>
 
         <section className="bg-zinc-800 rounded-lg p-6 space-y-4">
@@ -232,14 +296,14 @@ export default function NewProject() {
                 <input
                   type="number"
                   value={scriptLength}
-                  onChange={(e) => setScriptLength(Math.max(500, Number(e.target.value)))}
-                  min={500}
-                  max={20000}
-                  step={100}
+                  onChange={(e) => setScriptLength(Number(e.target.value))}
+                  
+                  
+                  
                   placeholder="Bijv. 5000"
                   className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
                 />
-                <p className="text-xs text-zinc-500 mt-1">Aantal woorden (500 - 20.000)</p>
+                <p className="text-xs text-zinc-500 mt-1">Aantal woorden</p>
               </div>
             </>
           )}
@@ -269,7 +333,7 @@ export default function NewProject() {
               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
             >
               {VOICES.map((v) => (
-                <option key={v.id} value={v.id}>
+                <option key={v.voiceId} value={v.voiceId}>
                   {v.name} — {v.description} ({v.language})
                 </option>
               ))}
@@ -309,15 +373,17 @@ export default function NewProject() {
           />
         )}
 
-        <ClipTypesSection
-          useClips={useClips}
-          referenceClips={referenceClips}
-          montageClips={montageClips}
-          onUseClipsChange={setUseClips}
-          onReferenceClipsChange={setReferenceClips}
-          onMontageClipsChange={setMontageClips}
-          isAIStyle={isAIStyle}
-        />
+        {!isAIStyle && (
+          <ClipTypesSection
+            useClips={useClips}
+            referenceClips={referenceClips}
+            montageClips={montageClips}
+            onUseClipsChange={setUseClips}
+            onReferenceClipsChange={setReferenceClips}
+            onMontageClipsChange={setMontageClips}
+            isAIStyle={isAIStyle}
+          />
+        )}
 
         <TransitionsSection
           mode={transitionMode}
@@ -329,21 +395,23 @@ export default function NewProject() {
         <section className="bg-zinc-800 rounded-lg p-6 space-y-4">
           <h2 className="text-xl font-semibold mb-4">Features</h2>
 
-          <div>
-            <label className={`flex items-center gap-2 ${isStockImagesDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
-              <input
-                type="checkbox"
-                checked={stockImages}
-                onChange={(e) => setStockImages(e.target.checked)}
-                disabled={isStockImagesDisabled}
-                className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-2 focus:ring-blue-600 focus:ring-offset-0 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-              />
-              <span>Stock afbeeldingen gebruiken</span>
-              {isStockImagesDisabled && (
-                <span className="text-xs text-zinc-500">(Niet beschikbaar voor deze stijl)</span>
-              )}
-            </label>
-          </div>
+          {!isAIStyle && (
+            <div>
+              <label className={`flex items-center gap-2 ${isStockImagesDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                <input
+                  type="checkbox"
+                  checked={stockImages}
+                  onChange={(e) => setStockImages(e.target.checked)}
+                  disabled={isStockImagesDisabled}
+                  className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-2 focus:ring-blue-600 focus:ring-offset-0 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                />
+                <span>Stock afbeeldingen gebruiken</span>
+                {isStockImagesDisabled && (
+                  <span className="text-xs text-zinc-500">(Niet beschikbaar voor deze stijl)</span>
+                )}
+              </label>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium mb-2">Color Grading</label>

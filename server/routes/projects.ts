@@ -14,6 +14,7 @@ function formatProject(p: any) {
     montageClips: JSON.parse(p.montageClips || '[]'),
     checkpoints: JSON.parse(p.checkpoints || '[]'),
     feedbackHistory: JSON.parse(p.feedbackHistory || '[]'),
+    enabledSteps: JSON.parse(p.enabledSteps || '[]'),
     steps: (p.steps || []).map((s: any) => ({
       id: s.stepNumber,
       name: s.name,
@@ -94,10 +95,16 @@ router.post('/', async (req: Request, res: Response) => {
         priority: data.priority || 0,
         channelId: data.channelId || null,
         status: 'config',
+        enabledSteps: JSON.stringify(data.enabledSteps || []),
         steps: {
-          create: DEFAULT_STEPS.map((s) => ({
-            stepNumber: s.stepNumber, name: s.name, executor: s.executor, status: 'waiting',
-          })),
+          create: DEFAULT_STEPS.map((s) => {
+            const enabled = data.enabledSteps ? data.enabledSteps.includes(s.stepNumber) : true;
+            const isReady = s.readyToUse;
+            return {
+              stepNumber: s.stepNumber, name: s.name, executor: s.executor,
+              status: (!enabled || !isReady) ? 'skipped' : 'waiting',
+            };
+          }),
         },
       },
       include: { steps: { orderBy: { stepNumber: 'asc' } }, logs: true },
@@ -120,7 +127,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
       'imageSelectionMode', 'imagesPerScene', 'transitionMode',
       'uniformTransition', 'useClips', 'stockImages', 'colorGrading',
       'subtitles', 'output', 'status', 'startedAt', 'completedAt',
-      'aspectRatio', 'priority', 'queuePosition', 'channelId',
+      'aspectRatio', 'priority', 'queuePosition', 'channelId', 'enabledSteps',
     ];
     for (const field of directFields) {
       if (data[field] !== undefined) updateData[field] = data[field];

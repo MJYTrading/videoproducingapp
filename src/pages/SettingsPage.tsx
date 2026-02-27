@@ -1,16 +1,7 @@
 import { useState } from 'react';
 import { Save, Eye, EyeOff, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { useStore } from '../store';
-import { VisualStyle, Language, ColorGrading } from '../types';
 
-const VOICES = [
-  'Brody — Crime Narrator',
-  'Sarah — Professional',
-  'Mike — Energetic',
-  'Emma — Calm',
-  'David — Deep',
-  'Lisa — Friendly',
-];
 
 export default function SettingsPage() {
   const settings = useStore((state) => state.settings);
@@ -258,123 +249,6 @@ export default function SettingsPage() {
                   </button>
                 </div>
               </div>
-          </section>
-
-          <section>
-            <h2 className="text-xl font-semibold mb-4">Default Instellingen</h2>
-            <div className="bg-zinc-900 rounded-lg p-6 space-y-4 border border-zinc-800">
-              <div>
-                <label className="block text-sm font-medium mb-2">Default voice</label>
-                <select
-                  value={localSettings.defaultVoice}
-                  onChange={(e) => setLocalSettings({ ...localSettings, defaultVoice: e.target.value })}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                >
-                  {VOICES.map((voice) => (
-                    <option key={voice} value={voice}>
-                      {voice}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Default visuele stijl</label>
-                <select
-                  value={localSettings.defaultVisualStyle}
-                  onChange={(e) => setLocalSettings({ ...localSettings, defaultVisualStyle: e.target.value as VisualStyle })}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                >
-                  <option value="3D Render">3D Render</option>
-                  <option value="Stickman">Stickman</option>
-                  <option value="2D Animatie">2D Animatie</option>
-                  <option value="History">History</option>
-                  <option value="Realistisch">Realistisch</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Default taal</label>
-                <select
-                  value={localSettings.defaultLanguage}
-                  onChange={(e) => setLocalSettings({ ...localSettings, defaultLanguage: e.target.value as Language })}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                >
-                  <option value="EN">EN</option>
-                  <option value="NL">NL</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Default scriptlengte</label>
-                <select
-                  value={localSettings.defaultScriptLength}
-                  onChange={(e) => setLocalSettings({ ...localSettings, defaultScriptLength: Number(e.target.value) })}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                >
-                  <option value={2000}>2000</option>
-                  <option value={5000}>5000</option>
-                  <option value={8000}>8000</option>
-                  <option value={10000}>10000</option>
-                </select>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">Default subtitles</label>
-                <button
-                  onClick={() => setLocalSettings({ ...localSettings, defaultSubtitles: !localSettings.defaultSubtitles })}
-                  className={`relative w-12 h-6 rounded-full transition-colors ${
-                    localSettings.defaultSubtitles ? 'bg-blue-600' : 'bg-zinc-700'
-                  }`}
-                >
-                  <div
-                    className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${
-                      localSettings.defaultSubtitles ? 'translate-x-6' : ''
-                    }`}
-                  />
-                </button>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Default color grading</label>
-                <select
-                  value={localSettings.defaultColorGrading}
-                  onChange={(e) => setLocalSettings({ ...localSettings, defaultColorGrading: e.target.value as ColorGrading })}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                >
-                  <option value="Geen">Geen</option>
-                  <option value="Cinematic Dark">Cinematic Dark</option>
-                  <option value="History Warm">History Warm</option>
-                  <option value="Vibrant">Vibrant</option>
-                  <option value="Clean Neutral">Clean Neutral</option>
-                  <option value="Cold Blue">Cold Blue</option>
-                  <option value="Noir">Noir</option>
-                </select>
-              </div>
-
-              <button
-                onClick={() => {
-                  updateSettings({
-                    defaultVoice: localSettings.defaultVoice,
-                    defaultVisualStyle: localSettings.defaultVisualStyle,
-                    defaultLanguage: localSettings.defaultLanguage,
-                    defaultScriptLength: localSettings.defaultScriptLength,
-                    defaultSubtitles: localSettings.defaultSubtitles,
-                    defaultColorGrading: localSettings.defaultColorGrading,
-                  });
-                  setSaved({ ...saved, defaults: true });
-                  setTimeout(() => setSaved((prev) => ({ ...prev, defaults: false })), 2000);
-                }}
-                className={`w-full px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 ${
-                  saved.defaults
-                    ? 'bg-green-600 text-white'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
-                }`}
-              >
-                <Save className="w-4 h-4" />
-                {saved.defaults ? 'Opgeslagen' : 'Opslaan'}
-              </button>
-            </div>
           </section>
 
           <section>

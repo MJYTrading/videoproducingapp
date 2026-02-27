@@ -15,7 +15,7 @@ export default function LogsTab({ project }: LogsTabProps) {
   const [stepFilter, setStepFilter] = useState<number | 'all'>('all');
   const [sourceFilter, setSourceFilter] = useState<Executor | 'all'>('all');
   const [sortField, setSortField] = useState<SortField>('timestamp');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 25;

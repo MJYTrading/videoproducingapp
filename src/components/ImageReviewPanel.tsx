@@ -63,7 +63,7 @@ export default function ImageReviewPanel({ project, step }: ImageReviewPanelProp
 
   if (loading) return (<div className="bg-violet-500/10 border-2 border-violet-500/50 rounded-lg p-6 mb-6"><p className="text-violet-300">Image opties laden...</p></div>);
   if (error) return (<div className="bg-red-500/10 border-2 border-red-500/50 rounded-lg p-6 mb-6"><p className="text-red-400">{error}</p><button onClick={loadImageOptions} className="mt-3 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm">Opnieuw</button></div>);
-  if (scenes.length === 0) return (<div className="bg-zinc-900 border border-zinc-700 rounded-lg p-6 mb-6"><p className="text-zinc-400">Geen image opties. Voer eerst stap 6b uit.</p></div>);
+  if (scenes.length === 0) return (<div className="bg-zinc-900 border border-zinc-700 rounded-lg p-6 mb-6"><p className="text-zinc-400">Geen image opties. Voer eerst stap 13 (Images Genereren) uit.</p></div>);
 
   return (
     <div className="bg-violet-500/10 border-2 border-violet-500/50 rounded-lg p-6 mb-6">

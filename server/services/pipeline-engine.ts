@@ -4,7 +4,7 @@
  * Beheert de volledige video productie pipeline:
  * - Automatisch doorschakelen tussen stappen
  * - Parallelle verwerking waar mogelijk
- * - 6b→9 streaming (per scene image→video)
+ * - 13→14 streaming (per scene image→video)
  * - Retry logica met incremental delay
  * - Timeout detectie
  * - Checkpoint pauzering (review)
@@ -20,6 +20,36 @@ import {
   executeStep11, executeStep12, executeStep13, executeStep14,
 } from './pipeline.js';
 
+// Mapping: nieuwe stepNumbers → oude executors
+// Stappen die nog niet ready zijn worden automatisch geskipped
+const STEP_EXECUTOR_MAP: Record<number, string> = {
+  0: 'skip',           // Ideation - niet ready
+  1: 'executeStep0',   // Project Formulier (was stap 0)
+  2: 'skip',           // Research JSON - niet ready
+  3: 'executeStep1',   // Transcripts (was stap 1)
+  4: 'skip',           // Trending Clips Research - niet ready
+  5: 'executeStep2',   // Style Profile (was stap 2)
+  6: 'executeStep3',   // Script (was stap 3)
+  7: 'executeStep4',   // Voice Over (was stap 4)
+  8: 'skip',           // Avatar - niet ready
+  9: 'executeStep5',   // Timestamps (was stap 5)
+  10: 'executeStep6',  // Scene Prompts (was stap 6)
+  11: 'executeStep7',  // Assets (was stap 7)
+  12: 'executeStep8',  // Clips (was stap 8)
+  13: 'executeStep6b', // Images (was stap 65/6b)
+  14: 'executeStep9',  // Video Scenes (was stap 9)
+  15: 'skip',          // Orchestrator - niet ready
+  16: 'skip',          // Achtergrondmuziek - niet ready
+  17: 'executeStep11', // Color Grading (was stap 11)
+  18: 'executeStep12', // Subtitles (was stap 12)
+  19: 'skip',          // Overlay - niet ready
+  20: 'executeStep10', // Sound Effects (was stap 10 - video editing)
+  21: 'executeStep10', // Video Effects (was stap 10 - video editing)
+  22: 'executeStep13', // Final Export (was stap 13)
+  23: 'skip',          // Thumbnail - niet ready
+  24: 'executeStep14', // Drive Upload (was stap 14)
+};
+
 // ── Types ──
 
 interface PipelineState {
@@ -29,7 +59,7 @@ interface PipelineState {
   completedSteps: Set<number>;    // Stappen die klaar zijn
   skippedSteps: Set<number>;      // Stappen die overgeslagen zijn
   failedSteps: Map<number, string>; // Stap → foutmelding
-  sceneQueue: SceneTask[];        // 6b→9 streaming queue
+  sceneQueue: SceneTask[];        // 13→14 streaming queue
   abortController?: AbortController;
 }
 
@@ -51,42 +81,48 @@ type StepExecutor = (project: any, settings: any, llmKeys: any) => Promise<any>;
 // "parallel" = mag tegelijk draaien met andere stappen die ook parallel=true zijn
 const STEP_CONFIG: Record<number, {
   dependsOn: number[];
-  isCheckpoint?: boolean;        // Pauzeert voor review
-  checkpointCondition?: string;  // Wanneer het een checkpoint is
+  isCheckpoint?: boolean;
+  checkpointCondition?: string;
   canSkip?: (project: any) => boolean;
-  timeout: number;               // Max milliseconden
+  timeout: number;
   maxRetries: number;
-  retryDelays: number[];         // Wachttijden tussen retries in ms
+  retryDelays: number[];
 }> = {
   0:  { dependsOn: [],         timeout: 30_000,     maxRetries: 1, retryDelays: [0] },
-  1:  { dependsOn: [0],        timeout: 120_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  1:  { dependsOn: [0],        timeout: 30_000,     maxRetries: 1, retryDelays: [0] },
   2:  { dependsOn: [1],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  3:  { dependsOn: [2],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  4:  { dependsOn: [3],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  5:  { dependsOn: [4],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  6:  { dependsOn: [5],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
+  3:  { dependsOn: [1],        timeout: 120_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  4:  { dependsOn: [1],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  5:  { dependsOn: [3],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  6:  { dependsOn: [5],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  7:  { dependsOn: [6],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  8:  { dependsOn: [6],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  9:  { dependsOn: [7],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  10: { dependsOn: [9],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
         checkpointCondition: 'manual_image_mode' },
-  65: { dependsOn: [6],        timeout: 900_000,    maxRetries: 2, retryDelays: [10_000, 30_000],
+  11: { dependsOn: [10],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  12: { dependsOn: [10],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  13: { dependsOn: [10],       timeout: 900_000,    maxRetries: 2, retryDelays: [10_000, 30_000],
         checkpointCondition: 'manual_image_mode' },
-  7:  { dependsOn: [6],        timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
-        canSkip: (p) => !p.stockImages },
-  8:  { dependsOn: [6],        timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
-        canSkip: (p) => !p.useClips },
-  9:  { dependsOn: [65],       timeout: 900_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  10: { dependsOn: [7, 8, 9],  timeout: 3_600_000,  maxRetries: 2, retryDelays: [15_000, 30_000] },
-  11: { dependsOn: [10],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000],
-        canSkip: (p) => !p.colorGrading || p.colorGrading === 'Geen' },
-  12: { dependsOn: [10],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000],
-        canSkip: (p) => !p.subtitles },
-  13: { dependsOn: [10, 11, 12], timeout: 1_800_000, maxRetries: 2, retryDelays: [10_000, 30_000] },
-  14: { dependsOn: [13],       timeout: 600_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  14: { dependsOn: [13],       timeout: 900_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  15: { dependsOn: [14],       timeout: 300_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  16: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  17: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  18: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  19: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  20: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  21: { dependsOn: [17, 18, 19, 20], timeout: 3_600_000, maxRetries: 2, retryDelays: [15_000, 30_000] },
+  22: { dependsOn: [21],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  23: { dependsOn: [22],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  24: { dependsOn: [22],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
 };
 
-// Stap volgorde voor display (stepNumber waarden)
-const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 65, 7, 8, 9, 10, 11, 12, 13, 14];
+// Stap volgorde voor display(stepNumber waarden)
+const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
 
 // Parallel groep: stappen 65, 7, 8 mogen tegelijk starten zodra stap 6 klaar is
-const PARALLEL_GROUP = [65, 7, 8];
+// Parallel groepen: stappen die tegelijk mogen draaien na hun dependencies
+const PARALLEL_GROUPS = [[11, 12, 13], [17, 18, 19, 20], [23, 24]];
 
 // ── Actieve pipelines in memory ──
 
@@ -141,10 +177,12 @@ async function updateProjectStatus(projectId: string, status: string) {
 
 function getExecutorName(stepNumber: number): string {
   const map: Record<number, string> = {
-    0: 'App', 1: 'App', 2: 'Elevate AI', 3: 'Elevate AI',
-    4: 'N8N', 5: 'N8N', 6: 'Elevate AI', 65: 'N8N',
-    7: 'N8N', 8: 'N8N', 9: 'N8N', 10: 'N8N',
-    11: 'N8N', 12: 'App', 13: 'N8N',
+    0: 'App', 1: 'App', 2: 'Perplexity', 3: 'App',
+    4: 'Perplexity', 5: 'Elevate AI', 6: 'Elevate AI', 7: 'Elevate',
+    8: 'HeyGen', 9: 'Assembly AI', 10: 'Elevate AI', 11: 'TwelveLabs + N8N',
+    12: 'N8N', 13: 'Elevate', 14: 'Elevate', 15: 'Claude Opus',
+    16: 'FFMPEG', 17: 'FFMPEG', 18: 'FFMPEG', 19: 'FFMPEG',
+    20: 'FFMPEG', 21: 'FFMPEG', 22: 'FFMPEG', 23: 'App', 24: 'App',
   };
   return map[stepNumber] || 'App';
 }
@@ -153,7 +191,7 @@ function getStepName(stepNumber: number): string {
   const map: Record<number, string> = {
     0: 'Config validatie', 1: 'Transcripts ophalen', 2: 'Style profile maken',
     3: 'Script schrijven', 4: 'Voiceover genereren', 5: 'Timestamps genereren',
-    6: 'Scene prompts genereren', 65: 'Scene images genereren',
+    6: 'Script Schrijven', 7: 'Voice Over', 8: 'Avatar / Spokesperson',
     7: 'Assets zoeken', 8: 'YouTube clips ophalen', 9: 'Video scenes genereren',
     10: 'Video editing', 11: 'Color grading', 12: 'Subtitles', 13: 'Final export', 14: 'Google Drive upload',
   };
@@ -297,7 +335,7 @@ async function executeStepFunction(
     case 4: return executeStep4(project, settings);
     case 5: return executeStep5(project, settings);
     case 6: return executeStep6(project, llmKeys);
-    case 65: return executeStep6b(project, settings);
+    case 13: return executeStep6b(project, settings);
     case 7: return executeStep7(project, settings);
     case 8: return executeStep8(project, settings);
     case 9: return executeStep9(project, settings);
@@ -432,7 +470,7 @@ async function runPipeline(projectId: string) {
 
     for (const stepNum of readySteps) {
       // Special: stap 65 = start scene streaming (65 + 9 samen)
-      if (stepNum === 65) {
+      if (stepNum === 13) {
         state.activeSteps.add(65);
         state.activeSteps.add(9);
 
@@ -729,7 +767,7 @@ export async function skipStep(projectId: string, stepNumber: number): Promise<{
 export async function retryStep(projectId: string, stepNumber: number): Promise<{ success: boolean }> {
   const state = activePipelines.get(projectId);
   // Stap 65 en 9 zijn gekoppeld via scene streaming — altijd beide resetten
-  const linkedSteps = (stepNumber === 65 || stepNumber === 9) ? [65, 9] : [stepNumber];
+  const linkedSteps = (stepNumber === 13 || stepNumber === 14) ? [13, 14] : [stepNumber];
 
   for (const sn of linkedSteps) {
     await updateStepInDb(projectId, sn, {
@@ -788,7 +826,7 @@ export function stopPipeline(projectId: string) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// SCENE STREAMING: 6b → 9 per scene
+// SCENE STREAMING: 13 → 14 per scene
 // ══════════════════════════════════════════════════════════════
 
 import fs from 'fs/promises';
@@ -801,7 +839,7 @@ const WORKSPACE_BASE = '/root/.openclaw/workspace/projects';
  * - Auto mode: per scene → genereer 1 image → start video meteen
  * - Manual mode: genereer alle images (3 per scene) → wacht op goedkeuring per scene → start video
  * 
- * Dit vervangt de losse executeStep6b + executeStep9 voor de pipeline engine.
+ * Dit vervangt de losse executeStep6b (stap 13) + executeStep9 (stap 14) voor de pipeline engine.
  * De originele functies blijven bestaan voor handmatig gebruik.
  */
 export async function runSceneStreaming(projectId: string, state: PipelineState): Promise<{
@@ -1169,7 +1207,7 @@ export async function runSceneStreaming(projectId: string, state: PipelineState)
 
     // Markeer stap 65 als klaar
     const img65Duration = Math.round((Date.now() - (await prisma.step.findUnique({
-      where: { projectId_stepNumber: { projectId, stepNumber: 65 } }
+      where: { projectId_stepNumber: { projectId, stepNumber: 13 } }
     }))!.startedAt!.getTime()) / 1000);
 
     await updateStepInDb(projectId, 65, {

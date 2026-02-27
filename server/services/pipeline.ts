@@ -351,7 +351,17 @@ async function loadStylePreset(styleId: string) {
   return styles.find((s: any) => s.id === styleId) || styles[0] || { style_prefix: '', style_suffix: '', character_description: '' };
 }
 
-const PROMPTS_SYSTEM = `Je bent een visuele regisseur die scene-voor-scene prompts maakt voor AI video generatie.
+const PROMPTS_SYSTEM = `Je bent een ervaren visuele regisseur en storyteller die scene-voor-scene prompts maakt voor AI video generatie.
+
+STORYTELLING PRINCIPES (KRITIEK):
+- Elke scene moet NAADLOOS aansluiten bij het verhaal — zowel visueel als narratief
+- De visuele prompt moet EXACT weergeven wat er op DAT MOMENT in het script wordt verteld
+- Denk als een filmmaker: elke scene moet visueel logisch volgen op de vorige en leiden naar de volgende
+- Voorkom visuele "sprongen" — als het script over een persoon praat die door een stad loopt, maak dan geen scene van een berg
+- De EMOTIE en SFEER van de scene moet matchen met de toon van de tekst op dat moment
+- Let op narratieve overgangen: als het script van onderwerp wisselt, moet de visuele overgang dat weerspiegelen
+- Bij een doorlopend verhaal: behoud visuele consistentie (zelfde setting, zelfde karakters, zelfde belichting)
+- Bij een nieuw onderwerp: maak een duidelijke visuele transitie die past bij de vertelling
 
 JE TAAK:
 - Segmenteer het transcript in scenes van 3-5 seconden
@@ -408,6 +418,7 @@ BELANGRIJK voor video_prompt:
 export async function executeStep6(project: any, llmKeys: { elevateApiKey?: string; anthropicApiKey?: string }) {
   const projPath = projectDir(project.name);
 
+  // 1. Laad script
   let scriptText: string;
   try {
     scriptText = await readText(path.join(projPath, 'script', 'script.txt'));
@@ -415,6 +426,20 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
     throw new Error('Script niet gevonden. Voer eerst stap 3 uit.');
   }
 
+  // 2. Laad timestamps (woord-level timing van AssemblyAI)
+  let timestamps: any = null;
+  let audioDuration = 0;
+  let wordTimestamps: any[] = [];
+  try {
+    timestamps = await readJson(path.join(projPath, 'audio', 'timestamps.json'));
+    audioDuration = timestamps.duration || timestamps.audio_duration || 0;
+    wordTimestamps = timestamps.words || timestamps.word_timestamps || [];
+    console.log(`[Step 6] Timestamps geladen: ${audioDuration}s, ${wordTimestamps.length} woorden`);
+  } catch {
+    console.warn('[Step 6] Geen timestamps gevonden — scene timing wordt geschat');
+  }
+
+  // 3. Laad style preset
   const stylePreset = await loadStylePreset(project.visualStyle || '3d-render');
 
   let genre = '', mood = '';
@@ -431,23 +456,59 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
     } catch {}
   }
 
-  // Split script in secties (~300 woorden per batch)
+  // 4. Bereken verwacht aantal scenes
+  const targetSceneDuration = 5; // seconden per scene
+  const estimatedSceneCount = audioDuration > 0
+    ? Math.ceil(audioDuration / targetSceneDuration)
+    : Math.ceil(scriptText.split(/\s+/).length / 15); // ~15 woorden = ~5 sec spraak
+  
+  console.log(`[Step 6] Audio: ${audioDuration}s → verwacht ~${estimatedSceneCount} scenes`);
+
+  // 5. Splits script in batches MET timestamp info
   const rawSections = scriptText.split(/\n\n+/);
-  const sections: string[] = [];
+  const sections: Array<{ text: string; startTime: number; endTime: number; wordCount: number }> = [];
   let currentChunk = '';
+  let chunkStartTime = 0;
+  let chunkEndTime = 0;
+  let wordsProcessed = 0;
+
   for (const section of rawSections) {
+    const sectionWords = section.split(/\s+/).length;
+    
     if (currentChunk && (currentChunk + ' ' + section).split(/\s+/).length > 350) {
-      sections.push(currentChunk.trim());
+      sections.push({
+        text: currentChunk.trim(),
+        startTime: chunkStartTime,
+        endTime: chunkEndTime,
+        wordCount: currentChunk.trim().split(/\s+/).length,
+      });
       currentChunk = section;
+      chunkStartTime = chunkEndTime;
     } else {
       currentChunk += (currentChunk ? '\n\n' : '') + section;
     }
+    
+    // Bereken eindtijd op basis van woord-timestamps
+    wordsProcessed += sectionWords;
+    if (wordTimestamps.length > 0 && wordsProcessed < wordTimestamps.length) {
+      const wordData = wordTimestamps[Math.min(wordsProcessed - 1, wordTimestamps.length - 1)];
+      chunkEndTime = (wordData.end || wordData.end_time || 0) / 1000; // ms → sec
+    } else if (audioDuration > 0) {
+      chunkEndTime = (wordsProcessed / (wordTimestamps.length || scriptText.split(/\s+/).length)) * audioDuration;
+    }
   }
-  if (currentChunk.trim()) sections.push(currentChunk.trim());
+  if (currentChunk.trim()) {
+    sections.push({
+      text: currentChunk.trim(),
+      startTime: chunkStartTime,
+      endTime: audioDuration || chunkEndTime,
+      wordCount: currentChunk.trim().split(/\s+/).length,
+    });
+  }
 
   console.log(`[Step 6] Script gesplitst in ${sections.length} batches`);
 
-  // Bouw prompts voor alle batches
+  // 6. Bouw prompts met timing informatie
   const styleBlock = [
     `- Prefix (begin van elke prompt): ${stylePreset.style_prefix}`,
     `- Suffix (eind van elke prompt): ${stylePreset.style_suffix}`,
@@ -457,18 +518,48 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
   ].filter(Boolean).join('\n');
 
   const batchPromises = sections.map((section, i) => {
+    const sectionDuration = section.endTime - section.startTime;
+    const expectedScenes = Math.max(1, Math.round(sectionDuration / targetSceneDuration));
+    
+    // Context van vorige en volgende batch voor continuiteit
+    const prevSection = i > 0 ? sections[i - 1] : null;
+    const nextSection = i < sections.length - 1 ? sections[i + 1] : null;
+    const prevContext = prevSection 
+      ? prevSection.text.split(/\s+/).slice(-40).join(' ')
+      : '(Dit is het BEGIN van de video)';
+    const nextContext = nextSection
+      ? nextSection.text.split(/\s+/).slice(0, 40).join(' ')
+      : '(Dit is het EINDE van de video)';
+
     const batchPrompt = [
       `Maak visuele scene prompts voor deel ${i + 1} van ${sections.length} van een video script.`,
+      '',
+      'VERHAALCONTEXT (KRITIEK — lees dit eerst):',
+      `- Wat er NET DAARVOOR werd verteld: "${prevContext}"`,
+      `- Wat er NA DIT DEEL wordt verteld: "${nextContext}"`,
+      '- Jouw scenes moeten NAADLOOS aansluiten op deze context',
+      '- De eerste scene moet visueel logisch volgen op het einde van het vorige deel',
+      '- De laatste scene moet een natuurlijke overgang zijn naar het volgende deel',
+      '',
+      'TIMING INFORMATIE:',
+      `- Dit deel loopt van ${section.startTime.toFixed(1)}s tot ${section.endTime.toFixed(1)}s (${sectionDuration.toFixed(1)} seconden)`,
+      `- Totale video duur: ${audioDuration.toFixed(1)} seconden`,
+      `- Genereer PRECIES ${expectedScenes} scenes voor dit deel`,
+      `- Elke scene moet 3-8 seconden duren (ideaal 4-6 seconden)`,
+      `- De scenes moeten PRECIES de tijdspanne ${section.startTime.toFixed(1)}s - ${section.endTime.toFixed(1)}s beslaan`,
       '',
       'STIJL:',
       styleBlock,
       '',
       `SCRIPT DEEL ${i + 1}:`,
-      section,
+      section.text,
       '',
       'REGELS:',
-      '- Maak scenes van 3-5 seconden elk',
-      '- Splits scenes langer dan 8 seconden',
+      '- STORYTELLING: Elke visual_prompt moet PRECIES beschrijven wat het script op DAT moment vertelt',
+      '- STORYTELLING: Scenes moeten visueel op elkaar aansluiten — geen willekeurige beelden',
+      '- STORYTELLING: Match de sfeer/emotie van het beeld met de toon van de tekst',
+      '- STORYTELLING: Bij doorlopend verhaal: behoud dezelfde setting, karakters en belichting',
+      '- Elke scene MOET start, end en duration hebben die optellen tot de volledige tijdspanne',
       '- [CLIP] markers worden type: "clip"',
       '- Elke scene heeft: id, start, end, duration, text, type, asset_type, visual_prompt, video_prompt, camera_movement, mood',
       '- Geef ALLEEN een JSON object terug met een "scenes" array',
@@ -476,40 +567,34 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
       '- visual_prompt = variant 1, visual_prompt_variants = [variant1, variant2, variant3]',
       '- Varianten moeten ECHT ANDERS zijn: close-up vs wide shot vs creatief perspectief',
       '- Clip en real_image scenes hebben GEEN visual_prompt_variants nodig',
-      '- Voor ai_video scenes: voeg video_prompt toe (korte beschrijving van beweging/actie voor image-to-video)',
+      '- Voor ai_video scenes: voeg video_prompt toe (korte beschrijving van beweging/actie)',
+      `- BELANGRIJK: Genereer PRECIES ${expectedScenes} scenes, niet meer en niet minder`,
     ].join('\n');
 
     return llmJsonPrompt<{ scenes: any[] }>(
       llmKeys, PROMPTS_SYSTEM, batchPrompt,
-      { maxTokens: 12000, temperature: 0.7 }
+      { maxTokens: 16000, temperature: 0.7 }
     ).then(result => {
-      console.log(`[Step 6] Batch ${i + 1}: ${(result.scenes || []).length} scenes`);
-      return { index: i, scenes: result.scenes || [] };
+      console.log(`[Step 6] Batch ${i + 1}: ${(result.scenes || []).length} scenes (verwacht: ${expectedScenes})`);
+      return { index: i, scenes: result.scenes || [], startTime: section.startTime };
     }).catch(error => {
       console.error(`[Step 6] Batch ${i + 1} gefaald: ${error.message}`);
-      return { index: i, scenes: [] };
+      return { index: i, scenes: [], startTime: section.startTime };
     });
   });
 
-  // Voer ALLE batches parallel uit
+  // 7. Voer ALLE batches parallel uit
   console.log(`[Step 6] ${sections.length} batches parallel starten...`);
   const batchResults = await Promise.all(batchPromises);
 
-  // Sorteer op originele volgorde en combineer
+  // 8. Sorteer en combineer met correcte timing
   batchResults.sort((a, b) => a.index - b.index);
   const allScenes: any[] = [];
   let sceneId = 1;
-  let timeOffset = 0;
 
   for (const batch of batchResults) {
     for (const scene of batch.scenes) {
       scene.id = sceneId++;
-      if (scene.start !== undefined) {
-        const originalDuration = (scene.end || 0) - (scene.start || 0);
-        scene.start = timeOffset;
-        scene.end = timeOffset + (originalDuration || scene.duration || 4);
-      }
-      timeOffset = scene.end || (timeOffset + (scene.duration || 4));
       allScenes.push(scene);
     }
   }
@@ -518,32 +603,38 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
     throw new Error('Geen scenes gegenereerd uit alle batches');
   }
 
+  // 9. Statistieken
   const aiVideoScenes = allScenes.filter((s: any) => s.type === 'ai_video' || s.asset_type === 'ai_video').length;
   const clipScenes = allScenes.filter((s: any) => s.type === 'clip').length;
   const realImageScenes = allScenes.filter((s: any) => s.asset_type === 'real_image').length;
   const totalDuration = allScenes.reduce((sum: number, s: any) => sum + (s.duration || 0), 0);
   const avgDuration = allScenes.length > 0 ? totalDuration / allScenes.length : 0;
 
+  console.log(`[Step 6] Klaar! ${allScenes.length} scenes, ${totalDuration.toFixed(1)}s totaal (audio: ${audioDuration}s)`);
+  if (Math.abs(totalDuration - audioDuration) > 10 && audioDuration > 0) {
+    console.warn(`[Step 6] ⚠️ Scene totaal (${totalDuration.toFixed(1)}s) wijkt af van audio (${audioDuration}s)`);
+  }
+
   const outputPath = path.join(projPath, 'assets', 'scene-prompts.json');
   await writeJson(outputPath, {
     project: project.name, style: project.visualStyle, genre, mood,
+    audio_duration: audioDuration,
     total_scenes: allScenes.length, ai_video_scenes: aiVideoScenes,
     clip_scenes: clipScenes, real_image_scenes: realImageScenes,
     avg_scene_duration: Math.round(avgDuration * 10) / 10, scenes: allScenes,
   });
 
-  console.log(`[Step 6] Klaar! ${allScenes.length} scenes totaal`);
-
   return {
     totalScenes: allScenes.length, aiVideoScenes, clipScenes, realImageScenes,
     avgDuration: Math.round(avgDuration * 10) / 10, filePath: outputPath,
+    audioDuration,
     typeCounts: { ai_video: aiVideoScenes, clip: clipScenes, real_image: realImageScenes },
     preview: allScenes.slice(0, 3),
   };
 }
 
 
-// ── Stap 6b: Scene images genereren (via N8N) ──
+// ── Stap 13: Images Genereren (via N8N) ──
 
 export async function executeStep6b(project: any, settings: any) {
   const projPath = projectDir(project.name);
@@ -564,19 +655,19 @@ export async function executeStep6b(project: any, settings: any) {
   );
 
   if (aiScenes.length === 0) {
-    console.log('[Step 6b] Geen ai_video scenes met prompt varianten gevonden');
+    console.log('[Step 13] Geen ai_video scenes met prompt varianten gevonden');
     return { skipped: true, reason: 'Geen scenes met visual_prompt_variants in scene-prompts.json' };
   }
 
   const isAutoMode = project.imageSelectionMode !== 'manual';
   if (isAutoMode) {
-    console.log('[Step 6b] Auto mode: 1 image per scene genereren, automatisch selecteren');
+    console.log('[Step 13] Auto mode: 1 image per scene genereren, automatisch selecteren');
   }
 
   const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/image-options-generator';
   const aspectRatio = project.output === 'youtube_short' ? 'portrait' : 'landscape';
 
-  console.log('[Step 6b] ' + aiScenes.length + ' scenes, 3 images per scene genereren via ' + n8nUrl);
+  console.log('[Step 13] ' + aiScenes.length + ' scenes, 3 images per scene genereren via ' + n8nUrl);
 
   const allOptions: any[] = [];
   let completed = 0;
@@ -617,10 +708,10 @@ export async function executeStep6b(project: any, settings: any) {
         throw new Error('Webhook mislukt (' + response.status + '): ' + body);
       }
 
-      console.log('[Step 6b] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') webhook verstuurd');
+      console.log('[Step 13] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') webhook verstuurd');
       sceneJobs.push({ sceneId, scene, statusPath, webhookOk: true });
     } catch (err: any) {
-      console.error('[Step 6b] Scene ' + sceneId + ' webhook error: ' + err.message);
+      console.error('[Step 13] Scene ' + sceneId + ' webhook error: ' + err.message);
       sceneJobs.push({ sceneId, scene, statusPath, webhookOk: false });
       failed++;
       allOptions.push({
@@ -634,7 +725,7 @@ export async function executeStep6b(project: any, settings: any) {
   }));
 
   const activeJobs = sceneJobs.filter(j => j.webhookOk);
-  console.log('[Step 6b] ' + activeJobs.length + '/' + aiScenes.length + ' webhooks verstuurd, parallel pollen...');
+  console.log('[Step 13] ' + activeJobs.length + '/' + aiScenes.length + ' webhooks verstuurd, parallel pollen...');
 
   // ── Stap 2: Alle status files parallel pollen ──
   await Promise.all(activeJobs.map(async (job) => {
@@ -649,7 +740,7 @@ export async function executeStep6b(project: any, settings: any) {
           visual_prompt: job.scene.visual_prompt,
           options: status.options || [],
         });
-        console.log('[Step 6b] Scene ' + job.sceneId + ' klaar! (' + completed + '/' + aiScenes.length + ')');
+        console.log('[Step 13] Scene ' + job.sceneId + ' klaar! (' + completed + '/' + aiScenes.length + ')');
       } else {
         failed++;
         allOptions.push({
@@ -659,7 +750,7 @@ export async function executeStep6b(project: any, settings: any) {
           options: [],
           error: status.error || 'Unknown',
         });
-        console.warn('[Step 6b] Scene ' + job.sceneId + ' mislukt: ' + (status.error || 'Unknown'));
+        console.warn('[Step 13] Scene ' + job.sceneId + ' mislukt: ' + (status.error || 'Unknown'));
       }
     } catch (err: any) {
       failed++;
@@ -670,7 +761,7 @@ export async function executeStep6b(project: any, settings: any) {
         options: [],
         error: err.message,
       });
-      console.error('[Step 6b] Scene ' + job.sceneId + ' poll error: ' + err.message);
+      console.error('[Step 13] Scene ' + job.sceneId + ' poll error: ' + err.message);
     }
   }));
 
@@ -685,7 +776,7 @@ export async function executeStep6b(project: any, settings: any) {
     scenes: allOptions,
   });
 
-  console.log('[Step 6b] Klaar! ' + completed + ' scenes gelukt, ' + failed + ' mislukt');
+  console.log('[Step 13] Klaar! ' + completed + ' scenes gelukt, ' + failed + ' mislukt');
 
   // Auto mode: schrijf automatisch image-selections.json (altijd optie 1)
   if (isAutoMode) {
@@ -705,7 +796,7 @@ export async function executeStep6b(project: any, settings: any) {
       total_selections: autoSelections.length,
       selections: autoSelections,
     });
-    console.log('[Step 6b] Auto mode: ' + autoSelections.length + ' images automatisch geselecteerd');
+    console.log('[Step 13] Auto mode: ' + autoSelections.length + ' images automatisch geselecteerd');
   }
 
   // Als geen enkele scene gelukt is, throw error zodat de stap niet op completed komt
@@ -1118,13 +1209,13 @@ export async function executeStep9(project: any, settings: any) {
     throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 6 uit.');
   }
 
-  // Lees image selecties (van stap 6b)
+  // Lees image selecties (van stap 13)
   let imageSelections: any = { selections: [] };
   try {
     imageSelections = await readJson(selectionsPath);
     console.log('[Step 9] ' + (imageSelections.selections?.length || 0) + ' image selecties geladen');
   } catch {
-    throw new Error('image-selections.json niet gevonden. Voer eerst stap 6b uit.');
+    throw new Error('image-selections.json niet gevonden. Voer eerst stap 13 (Images Genereren) uit.');
   }
 
   const selections = imageSelections.selections || [];
