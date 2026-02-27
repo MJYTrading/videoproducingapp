@@ -365,7 +365,7 @@ function getReadySteps(state: PipelineState, project: any): number[] {
 
   // Special: stap 65 en 9 worden door runSceneStreaming afgehandeld
   // Ze komen NIET in de ready list — de orchestrator start ze apart
-  const STREAMING_STEPS = new Set([65, 9]);
+  const STREAMING_STEPS = new Set([65, 14]); // 65=images streaming, 14=video scenes
 
   for (const stepNum of STEP_ORDER) {
     // Scene streaming stappen skippen — worden apart afgehandeld
@@ -395,9 +395,9 @@ function getReadySteps(state: PipelineState, project: any): number[] {
   // Special: check of scene streaming moet starten
   // Conditie: stap 6 is klaar, en 65+9 zijn nog niet gestart/klaar
   if (state.completedSteps.has(6) &&
-      !state.completedSteps.has(65) && !state.completedSteps.has(9) &&
-      !state.skippedSteps.has(65) && !state.skippedSteps.has(9) &&
-      !state.activeSteps.has(65) && !state.activeSteps.has(9)) {
+      !state.completedSteps.has(65) && !state.completedSteps.has(14) &&
+      !state.skippedSteps.has(65) && !state.skippedSteps.has(14) &&
+      !state.activeSteps.has(65) && !state.activeSteps.has(14)) {
     ready.push(65); // Marker: 65 in ready = start scene streaming
   }
 
@@ -482,7 +482,7 @@ async function runPipeline(projectId: string) {
       // Special: stap 65 = start scene streaming (65 + 9 samen)
       if (stepNum === 13) {
         state.activeSteps.add(65);
-        state.activeSteps.add(9);
+        state.activeSteps.add(14);
 
         const streamPromise = (async () => {
           try {
@@ -499,12 +499,12 @@ async function runPipeline(projectId: string) {
             // Auto mode: beide stappen zijn klaar
             state.completedSteps.add(65);
             if (streamResult.videosCompleted > 0) {
-              state.completedSteps.add(9);
+              state.completedSteps.add(14);
             } else if (streamResult.totalScenes > 0) {
               state.failedSteps.set(9, 'Geen video scenes geslaagd');
             } else {
               state.skippedSteps.add(65);
-              state.skippedSteps.add(9);
+              state.skippedSteps.add(14);
             }
           } catch (err: any) {
             state.activeSteps.delete(65);
