@@ -98,7 +98,7 @@ router.post('/', async (req: Request, res: Response) => {
         enabledSteps: JSON.stringify(data.enabledSteps || []),
         steps: {
           create: DEFAULT_STEPS.map((s) => {
-            const enabled = data.enabledSteps ? data.enabledSteps.includes(s.stepNumber) : true;
+            const enabled = (data.enabledSteps && data.enabledSteps.length > 0) ? data.enabledSteps.includes(s.stepNumber) : true;
             const isReady = s.readyToUse;
             return {
               stepNumber: s.stepNumber, name: s.name, executor: s.executor,

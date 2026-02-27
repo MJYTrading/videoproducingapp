@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Play, Pause, RotateCcw, Copy, Trash2, FastForward } from 'lucide-react';
+import { Play, Pause, RotateCcw, Copy, Trash2, FastForward, ExternalLink } from 'lucide-react';
 import { useStore } from '../store';
 import { ProjectStatus } from '../types';
 import PipelineTab from '../components/PipelineTab';
@@ -12,23 +12,41 @@ import ConfigTab from '../components/ConfigTab';
 
 type TabType = 'pipeline' | 'preview' | 'script' | 'logs' | 'stats' | 'config';
 
+const TABS: Array<{ key: TabType; label: string; icon?: string }> = [
+  { key: 'pipeline', label: 'Pipeline' },
+  { key: 'preview', label: 'Preview' },
+  { key: 'script', label: 'Script' },
+  { key: 'logs', label: 'Logs' },
+  { key: 'stats', label: 'Stats', icon: '📊' },
+  { key: 'config', label: 'Config', icon: '⚙️' },
+];
 
 const STEP_NAV: Array<{ id: number; label: string }> = [
-  { id: 0, label: '0. Config' },
-  { id: 1, label: '1. Transcripts' },
-  { id: 2, label: '2. Style' },
-  { id: 3, label: '3. Script' },
-  { id: 4, label: '4. Voiceover' },
-  { id: 5, label: '5. Timestamps' },
-  { id: 6, label: '6. Prompts' },
-  { id: 7, label: '7. Assets' },
-  { id: 8, label: '8. Clips' },
-  { id: 9, label: '9. Video' },
-  { id: 10, label: '10. Editing' },
-  { id: 11, label: '11. Color' },
-  { id: 12, label: '12. Subs' },
-  { id: 13, label: '13. Export' },
-  { id: 14, label: '14. Upload' },
+  { id: 0,  label: '0. Ideation' },
+  { id: 1,  label: '1. Formulier' },
+  { id: 2,  label: '2. Research' },
+  { id: 3,  label: '3. Transcripts' },
+  { id: 4,  label: '4. Clips Research' },
+  { id: 5,  label: '5. Style Profile' },
+  { id: 6,  label: '6. Script' },
+  { id: 7,  label: '7. Voice Over' },
+  { id: 8,  label: '8. Avatar' },
+  { id: 9,  label: '9. Timestamps' },
+  { id: 10, label: '10. Scene Prompts' },
+  { id: 11, label: '11. Assets' },
+  { id: 12, label: '12. Clips' },
+  { id: 13, label: '13. Images' },
+  { id: 14, label: '14. Video Scenes' },
+  { id: 15, label: '15. Orchestrator' },
+  { id: 16, label: '16. Muziek' },
+  { id: 17, label: '17. Color Grade' },
+  { id: 18, label: '18. Subtitles' },
+  { id: 19, label: '19. Overlay' },
+  { id: 20, label: '20. Sound FX' },
+  { id: 21, label: '21. Video FX' },
+  { id: 22, label: '22. Export' },
+  { id: 23, label: '23. Thumbnail' },
+  { id: 24, label: '24. Drive Upload' },
 ];
 
 export default function ProjectDetail() {
@@ -50,7 +68,6 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     if (!project) return;
-
     let interval: NodeJS.Timeout;
     if (project.status === 'running' && project.startedAt) {
       interval = setInterval(() => {
@@ -59,21 +76,15 @@ export default function ProjectDetail() {
         setElapsedTime(Math.floor((now - start) / 1000));
       }, 1000);
     }
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
+    return () => { if (interval) clearInterval(interval); };
   }, [project?.status, project?.startedAt]);
 
   if (!project) {
     return (
-      <div className="p-8">
+      <div className="p-8 flex items-center justify-center h-[60vh]">
         <div className="text-center">
-          <h1 className="text-2xl font-bold mb-4">Project niet gevonden</h1>
-          <button
-            onClick={() => navigate('/')}
-            className="text-blue-500 hover:text-blue-400"
-          >
+          <h1 className="text-xl font-bold mb-4 text-zinc-300">Project niet gevonden</h1>
+          <button onClick={() => navigate('/')} className="text-brand-400 hover:text-brand-300 text-sm font-medium">
             Terug naar overzicht
           </button>
         </div>
@@ -81,24 +92,20 @@ export default function ProjectDetail() {
     );
   }
 
-  const getStatusColor = (status: ProjectStatus) => {
-    switch (status) {
-      case 'completed':
-        return 'bg-green-500/10 text-green-500 border-green-500/20';
-      case 'running':
-        return 'bg-blue-500/10 text-blue-500 border-blue-500/20';
-      case 'failed':
-        return 'bg-red-500/10 text-red-500 border-red-500/20';
-      case 'paused':
-        return 'bg-orange-500/10 text-orange-500 border-orange-500/20';
-      default:
-        return 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20';
-    }
+  const getStatusBadge = (status: ProjectStatus) => {
+    const map: Record<string, string> = {
+      completed: 'badge-success',
+      running: 'badge-running',
+      failed: 'badge-error',
+      paused: 'badge-warning',
+      config: 'badge-neutral',
+      review: 'badge-info',
+      queued: 'badge-purple',
+    };
+    return map[status] || 'badge-neutral';
   };
 
-  const doneSteps = project.steps.filter(
-    (s) => s.status === 'completed' || s.status === 'skipped'
-  ).length;
+  const doneSteps = project.steps.filter((s) => s.status === 'completed' || s.status === 'skipped').length;
   const totalSteps = project.steps.length;
   const progress = totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
 
@@ -108,27 +115,14 @@ export default function ProjectDetail() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleStartPipeline = () => {
-    startPipeline(project.id);
-  };
+  const handleStartPipeline = () => startPipeline(project.id);
+  const handlePausePipeline = () => pausePipeline(project.id);
+  const handleResumePipeline = () => resumePipeline(project.id);
+  const handleRetryFailed = () => retryFailed(project.id);
 
-  const handlePausePipeline = () => {
-    pausePipeline(project.id);
-  };
-
-  const handleResumePipeline = () => {
-    resumePipeline(project.id);
-  };
-
-  const handleRetryFailed = () => {
-    retryFailed(project.id);
-  };
-
-  const handleDuplicate = () => {
-    const newProject = duplicateProject(project.id);
-    if (newProject) {
-      navigate(`/project/${newProject.id}`);
-    }
+  const handleDuplicate = async () => {
+    const newProject = await duplicateProject(project.id);
+    if (newProject) navigate(`/project/${newProject.id}`);
   };
 
   const handleDelete = () => {
@@ -141,258 +135,213 @@ export default function ProjectDetail() {
     setShowForceContinueConfirm(false);
   };
 
+  const getStepStatusIcon = (stepNumber: number) => {
+    const step = project.steps.find(s => s.id === stepNumber);
+    if (!step) return '⬜';
+    switch (step.status) {
+      case 'completed': return '✅';
+      case 'running': return '⏳';
+      case 'failed': return '❌';
+      case 'skipped': return '⏭';
+      case 'review': return '👁️';
+      default: return '⬜';
+    }
+  };
+
   return (
-    <div className="p-8">
+    <div className="p-8 animate-fade-in">
       <div className="max-w-6xl mx-auto">
-        <div className="bg-zinc-800 rounded-lg p-6 mb-6 border border-zinc-700">
-          <div className="flex items-start justify-between mb-4">
-            <div className="flex-1">
-              <h1 className="text-3xl font-bold mb-2">{project.name}</h1>
-              <p className="text-zinc-400 text-lg">{project.title}</p>
+        {/* Header card */}
+        <div className="glass rounded-2xl p-6 mb-6">
+          <div className="flex items-start justify-between mb-5">
+            <div className="flex-1 min-w-0">
+              <h1 className="text-2xl font-bold tracking-tight mb-1">{project.name}</h1>
+              <p className="text-zinc-500 text-sm">{project.title}</p>
             </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleDuplicate}
-                className="flex items-center gap-2 px-3 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-sm transition-colors"
-                title="Dupliceer project"
-              >
-                <Copy className="w-4 h-4" />
+            <div className="flex items-center gap-2.5 shrink-0 ml-4">
+              <button onClick={handleDuplicate} className="btn-secondary text-xs py-2 px-3">
+                <Copy className="w-3.5 h-3.5" />
                 Dupliceer
               </button>
               {project.status === 'running' && (
-                <div className="px-3 py-1 bg-zinc-900 rounded text-sm font-mono text-zinc-400">
+                <div className="px-3 py-1.5 bg-surface-300/60 rounded-lg text-xs font-mono text-zinc-400 border border-white/[0.04]">
                   {formatElapsedTime(elapsedTime)}
                 </div>
               )}
-              <span
-                className={`px-3 py-1 text-sm font-medium rounded border ${getStatusColor(
-                  project.status
-                )}`}
-              >
+              <span className={`badge ${getStatusBadge(project.status)}`}>
                 {project.status}
               </span>
             </div>
           </div>
 
-          <div className="mb-4">
-            <div className="flex justify-between text-sm text-zinc-400 mb-2">
+          {/* Progress */}
+          <div className="mb-5">
+            <div className="flex justify-between text-xs text-zinc-500 mb-2">
               <span>Voortgang</span>
-              <span>
-                {doneSteps}/{totalSteps} stappen
-              </span>
+              <span className="font-mono">{doneSteps}/{totalSteps} stappen &middot; {progress}%</span>
             </div>
-            <div className="w-full bg-zinc-700 rounded-full h-3">
+            <div className="w-full bg-surface-300/40 rounded-full h-2 overflow-hidden">
               <div
-                className="bg-blue-600 h-3 rounded-full transition-all duration-500"
+                className={`h-full rounded-full transition-all duration-700 ease-out ${
+                  progress >= 100
+                    ? 'bg-gradient-to-r from-emerald-500 to-emerald-400'
+                    : 'progress-bar'
+                }`}
                 style={{ width: `${progress}%` }}
               />
             </div>
           </div>
 
+          {/* Drive link */}
           {project.driveUrl && (
-            <div className="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg flex items-center gap-3">
-              <span className="text-green-400 text-lg">📁</span>
+            <div className="mb-5 p-3.5 bg-emerald-500/8 border border-emerald-500/15 rounded-xl flex items-center gap-3">
+              <span className="text-lg">📁</span>
               <div className="flex-1">
-                <span className="text-green-400 font-medium">Google Drive</span>
+                <span className="text-emerald-400 font-medium text-sm">Google Drive</span>
                 <a
                   href={project.driveUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="ml-3 text-blue-400 hover:text-blue-300 underline text-sm"
+                  className="ml-3 text-brand-400 hover:text-brand-300 text-xs inline-flex items-center gap-1"
                 >
-                  Open in Drive →
+                  Open in Drive <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
             </div>
           )}
 
-          <div className="flex gap-3">
+          {/* Action buttons */}
+          <div className="flex gap-2.5">
             {project.status === 'config' && (
-              <button
-                onClick={handleStartPipeline}
-                className="flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors"
-              >
-                <Play className="w-5 h-5" />
-                Start Pipeline
+              <button onClick={handleStartPipeline} className="btn-primary">
+                <Play className="w-4 h-4" /> Start Pipeline
               </button>
             )}
-
             {project.status === 'running' && (
-              <button
-                onClick={handlePausePipeline}
-                className="flex items-center gap-2 px-4 py-3 bg-orange-600 hover:bg-orange-700 rounded-lg font-semibold transition-colors"
-              >
-                <Pause className="w-5 h-5" />
-                Pause
+              <button onClick={handlePausePipeline} className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600/90 hover:bg-amber-500 text-white font-semibold rounded-xl shadow-glow-orange transition-all duration-200">
+                <Pause className="w-4 h-4" /> Pause
               </button>
             )}
-
             {project.status === 'paused' && (
-              <button
-                onClick={handleResumePipeline}
-                className="flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors"
-              >
-                <Play className="w-5 h-5" />
-                Resume
+              <button onClick={handleResumePipeline} className="btn-primary">
+                <Play className="w-4 h-4" /> Resume
               </button>
             )}
-
             {project.status === 'failed' && (
               <>
-                <button
-                  onClick={handleRetryFailed}
-                  className="flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors"
-                >
-                  <RotateCcw className="w-5 h-5" />
-                  Retry Failed
+                <button onClick={handleRetryFailed} className="btn-primary">
+                  <RotateCcw className="w-4 h-4" /> Retry Failed
                 </button>
                 <button
                   onClick={() => setShowForceContinueConfirm(true)}
-                  className="flex items-center gap-2 px-4 py-3 bg-orange-600 hover:bg-orange-700 rounded-lg font-semibold transition-colors"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600/90 hover:bg-amber-500 text-white font-semibold rounded-xl transition-all duration-200"
                 >
-                  <FastForward className="w-5 h-5" />
-                  Force Continue
+                  <FastForward className="w-4 h-4" /> Force Continue
                 </button>
               </>
             )}
           </div>
         </div>
 
-        <div className="bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden">
-          <div className="flex border-b border-zinc-700">
-            {[
-              { key: 'pipeline', label: 'Pipeline' },
-              { key: 'preview', label: 'Preview' },
-              { key: 'script', label: 'Script' },
-              { key: 'logs', label: 'Logs' },
-              { key: 'stats', label: '📊 Stats' },
-              { key: 'config', label: '⚙️ Config' },
-            ].map((tab) => (
+        {/* Tabs */}
+        <div className="glass rounded-2xl overflow-hidden">
+          <div className="flex border-b border-white/[0.06]">
+            {TABS.map((tab) => (
               <button
                 key={tab.key}
-                onClick={() => setActiveTab(tab.key as TabType)}
-                className={`px-6 py-4 font-medium transition-colors relative ${
+                onClick={() => setActiveTab(tab.key)}
+                className={`px-5 py-3.5 text-sm font-medium transition-all duration-200 relative ${
                   activeTab === tab.key
-                    ? 'text-blue-500'
-                    : 'text-zinc-400 hover:text-white'
+                    ? 'text-brand-300'
+                    : 'text-zinc-500 hover:text-zinc-300'
                 }`}
               >
-                {tab.label}
+                {tab.icon ? `${tab.icon} ${tab.label}` : tab.label}
                 {activeTab === tab.key && (
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500"></div>
+                  <div className="absolute bottom-0 left-3 right-3 h-[2px] rounded-full bg-gradient-to-r from-brand-500 to-brand-400" />
                 )}
               </button>
             ))}
           </div>
 
-          <div className="p-6 flex gap-4">
+          <div className="p-6 flex gap-5">
+            {/* Step navigator sidebar */}
             {activeTab === 'pipeline' && (
               <div className="w-40 shrink-0 hidden lg:block">
-                <div className="sticky top-4 space-y-1">
-                  <p className="text-xs text-zinc-500 font-medium mb-2 uppercase">Stappen</p>
-                  {STEP_NAV.map((nav) => {
-                    const step = project.steps.find(s => s.id === nav.id);
-                    const statusIcon = !step ? '⬜' : step.status === 'completed' ? '✅' : step.status === 'running' ? '⏳' : step.status === 'failed' ? '❌' : step.status === 'skipped' ? '⏭' : step.status === 'review' ? '👁️' : '⬜';
-                    return (
-                      <button
-                        key={nav.id}
-                        onClick={() => {
-                          const el = document.querySelector(`[data-step-id="${nav.id}"]`);
-                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }}
-                        className="w-full text-left px-2 py-1.5 rounded text-xs hover:bg-zinc-700/50 transition-colors flex items-center gap-1.5 text-zinc-400 hover:text-white"
-                      >
-                        <span className="text-[10px]">{statusIcon}</span>
-                        <span className="truncate">{nav.label}</span>
-                      </button>
-                    );
-                  })}
+                <div className="sticky top-4 space-y-0.5 max-h-[75vh] overflow-y-auto pr-1 scrollbar-thin">
+                  <p className="text-[10px] text-zinc-600 font-semibold mb-2 uppercase tracking-wider">Stappen</p>
+                  {STEP_NAV.map((nav) => (
+                    <button
+                      key={nav.id}
+                      onClick={() => {
+                        const el = document.querySelector(`[data-step-id="${nav.id}"]`);
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }}
+                      className="w-full text-left px-2 py-1 rounded-lg text-[11px] hover:bg-white/[0.04] transition-colors flex items-center gap-1.5 text-zinc-500 hover:text-zinc-300"
+                    >
+                      <span className="text-[10px]">{getStepStatusIcon(nav.id)}</span>
+                      <span className="truncate">{nav.label}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
             <div className="flex-1 min-w-0">
-            {activeTab === 'pipeline' && <PipelineTab project={project} />}
-            {activeTab === 'preview' && <PreviewTab project={project} />}
-            {activeTab === 'script' && <ScriptTab project={project} />}
-            {activeTab === 'logs' && <LogsTab project={project} />}
-            {activeTab === 'stats' && <StatsTab project={project} />}
-            {activeTab === 'config' && <ConfigTab project={project} />}
+              {activeTab === 'pipeline' && <PipelineTab project={project} />}
+              {activeTab === 'preview' && <PreviewTab project={project} />}
+              {activeTab === 'script' && <ScriptTab project={project} />}
+              {activeTab === 'logs' && <LogsTab project={project} />}
+              {activeTab === 'stats' && <StatsTab project={project} />}
+              {activeTab === 'config' && <ConfigTab project={project} />}
             </div>
           </div>
         </div>
 
-        <div className="mt-6 bg-red-500/10 border border-red-500/20 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-red-500 mb-2">Danger Zone</h3>
-          <p className="text-sm text-zinc-400 mb-4">
-            Wees voorzichtig met deze actie. Dit kan niet ongedaan worden.
-          </p>
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-medium transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-            Project Verwijderen
+        {/* Danger zone */}
+        <div className="mt-6 bg-red-500/5 border border-red-500/10 rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-red-400 mb-1.5">Danger Zone</h3>
+          <p className="text-xs text-zinc-600 mb-4">Wees voorzichtig — dit kan niet ongedaan worden.</p>
+          <button onClick={() => setShowDeleteConfirm(true)} className="btn-danger text-xs py-2">
+            <Trash2 className="w-3.5 h-3.5" /> Project Verwijderen
           </button>
         </div>
       </div>
 
+      {/* Delete modal */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-8">
-          <div className="bg-zinc-800 rounded-lg max-w-md w-full border border-zinc-700">
-            <div className="p-6 border-b border-zinc-700">
-              <h3 className="text-xl font-semibold">Project Verwijderen</h3>
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-8 animate-fade-in">
+          <div className="glass-strong rounded-2xl max-w-md w-full animate-scale-in">
+            <div className="p-6 border-b border-white/[0.06]">
+              <h3 className="text-lg font-semibold">Project Verwijderen</h3>
             </div>
             <div className="p-6">
-              <p className="text-zinc-300 mb-2">
-                Weet je zeker dat je <strong>'{project.name}'</strong> wilt verwijderen?
+              <p className="text-zinc-300 text-sm mb-2">
+                Weet je zeker dat je <strong className="text-white">'{project.name}'</strong> wilt verwijderen?
               </p>
-              <p className="text-sm text-zinc-500">
-                Dit kan niet ongedaan worden. Alle data en voortgang gaat verloren.
-              </p>
+              <p className="text-xs text-zinc-600">Dit kan niet ongedaan worden. Alle data en voortgang gaat verloren.</p>
             </div>
-            <div className="p-6 border-t border-zinc-700 flex justify-end gap-3">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg transition-colors"
-              >
-                Annuleren
-              </button>
-              <button
-                onClick={handleDelete}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-medium transition-colors"
-              >
-                Verwijderen
-              </button>
+            <div className="p-6 border-t border-white/[0.06] flex justify-end gap-3">
+              <button onClick={() => setShowDeleteConfirm(false)} className="btn-secondary text-sm">Annuleren</button>
+              <button onClick={handleDelete} className="btn-danger text-sm">Verwijderen</button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Force continue modal */}
       {showForceContinueConfirm && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-8">
-          <div className="bg-zinc-800 rounded-lg max-w-md w-full border border-zinc-700">
-            <div className="p-6 border-b border-zinc-700">
-              <h3 className="text-xl font-semibold">Force Continue</h3>
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-8 animate-fade-in">
+          <div className="glass-strong rounded-2xl max-w-md w-full animate-scale-in">
+            <div className="p-6 border-b border-white/[0.06]">
+              <h3 className="text-lg font-semibold">Force Continue</h3>
             </div>
             <div className="p-6">
-              <p className="text-zinc-300 mb-2">
-                Alle gefaalde stappen worden overgeslagen. Wil je doorgaan?
-              </p>
-              <p className="text-sm text-zinc-500">
-                De pipeline zal verder gaan met de volgende waiting stap.
-              </p>
+              <p className="text-zinc-300 text-sm mb-2">Alle gefaalde stappen worden overgeslagen. Wil je doorgaan?</p>
+              <p className="text-xs text-zinc-600">De pipeline zal verder gaan met de volgende waiting stap.</p>
             </div>
-            <div className="p-6 border-t border-zinc-700 flex justify-end gap-3">
-              <button
-                onClick={() => setShowForceContinueConfirm(false)}
-                className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg transition-colors"
-              >
-                Annuleren
-              </button>
-              <button
-                onClick={handleForceContinue}
-                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded-lg font-medium transition-colors"
-              >
+            <div className="p-6 border-t border-white/[0.06] flex justify-end gap-3">
+              <button onClick={() => setShowForceContinueConfirm(false)} className="btn-secondary text-sm">Annuleren</button>
+              <button onClick={handleForceContinue} className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-xl text-sm transition-all">
                 Doorgaan
               </button>
             </div>

@@ -6,66 +6,69 @@ interface PreviewTabProps {
   project: Project;
 }
 
-const fullMockScript = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
-
-Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.
-
-Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem.`;
-
-const mockScenePrompts = [
-  "A dark cyber room with glowing screens showing code",
-  "Hacker typing furiously on multiple keyboards",
-  "Digital world map with connection lines",
-  "Close-up of terminal window with scrolling text",
-  "Server room with blue LED lights",
-  "Anonymous mask in dramatic lighting",
-  "Binary code flowing like a waterfall",
-  "Satellite view of city at night",
-  "FBI office with agents working",
-  "Dark web marketplace interface",
-  "Encrypted message being decoded",
-  "Network traffic visualization",
-  "Cybersecurity breach animation",
-  "Hooded figure in a dark room",
-  "Server rack with blinking lights",
-  "Digital fingerprint analysis",
-  "Code compilation progress bar",
-  "Underground hacker collective meeting",
-  "Firewall breach visualization",
-  "Data packets traveling through network",
-  "Cryptocurrency transaction flow",
-  "Password cracking algorithm",
-  "Dark alley with neon signs",
-  "Laptop screen reflecting in glasses",
-  "Digital explosion effect",
-  "Matrix-style code rain",
-  "Security camera footage being hacked",
-  "Final reveal of the hacker's identity"
-];
-
-const mockScenes = mockScenePrompts.map((prompt, i) => ({
-  id: i + 1,
-  prompt,
-  duration: Math.floor(Math.random() * 8) + 3,
-  status: i < 24 ? 'completed' : i < 26 ? 'running' : 'failed'
-}));
-
 export default function PreviewTab({ project }: PreviewTabProps) {
   const [showScriptModal, setShowScriptModal] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
   const [sceneViewMode, setSceneViewMode] = useState<'grid' | 'list'>('grid');
 
-  const isStepCompleted = (stepId: number) => {
-    return project.steps[stepId]?.status === 'completed';
+  // Step numbers mapping (new pipeline)
+  const STEP = {
+    SCRIPT: 6,
+    VOICEOVER: 7,
+    TIMESTAMPS: 9,
+    SCENE_PROMPTS: 10,
+    ASSETS: 11,
+    CLIPS: 12,
+    IMAGES: 13,
+    VIDEO_SCENES: 14,
+    ORCHESTRATOR: 15,
+    COLOR_GRADING: 17,
+    SUBTITLES: 18,
+    VIDEO_FX: 21,
+    FINAL_EXPORT: 22,
+    DRIVE_UPLOAD: 24,
   };
+
+  const getStep = (stepNumber: number) => project.steps.find(s => s.id === stepNumber);
+  const isStepCompleted = (stepNumber: number) => getStep(stepNumber)?.status === 'completed';
+  const isStepRunning = (stepNumber: number) => getStep(stepNumber)?.status === 'running';
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
   };
 
-  const wordCount = fullMockScript.split(/\s+/).length;
-  const previewText = fullMockScript.slice(0, 300) + '...';
+  // Get real script from step result
+  const scriptStep = getStep(STEP.SCRIPT);
+  const scriptText = scriptStep?.result?.script || scriptStep?.result?.text || scriptStep?.result || '';
+  const scriptString = typeof scriptText === 'string' ? scriptText : JSON.stringify(scriptText);
+  const wordCount = scriptString ? scriptString.split(/\s+/).filter(Boolean).length : 0;
+  const previewText = scriptString ? (scriptString.length > 400 ? scriptString.slice(0, 400) + '...' : scriptString) : '';
+
+  // Get voice info from project
+  const voiceStep = getStep(STEP.VOICEOVER);
+  const voiceDuration = voiceStep?.metadata?.estimatedDuration || voiceStep?.duration || 0;
+  const voiceFileSize = voiceStep?.metadata?.fileSize || 0;
+
+  // Get scene data from step results
+  const scenePromptsStep = getStep(STEP.SCENE_PROMPTS);
+  const videoScenesStep = getStep(STEP.VIDEO_SCENES);
+  const scenes: Array<{ id: number; prompt: string; duration: number; status: string }> = [];
+
+  if (scenePromptsStep?.result) {
+    const promptsData = Array.isArray(scenePromptsStep.result) ? scenePromptsStep.result : scenePromptsStep.result?.scenes || [];
+    promptsData.forEach((scene: any, i: number) => {
+      scenes.push({
+        id: i + 1,
+        prompt: scene.prompt || scene.description || scene.text || (typeof scene === 'string' ? scene : `Scene ${i + 1}`),
+        duration: scene.duration || 5,
+        status: isStepCompleted(STEP.VIDEO_SCENES) ? 'completed' : isStepRunning(STEP.VIDEO_SCENES) ? 'running' : 'waiting',
+      });
+    });
+  }
+
+  // Export info
+  const exportStep = getStep(STEP.FINAL_EXPORT);
 
   const toggleAudioPlay = () => {
     setIsAudioPlaying(!isAudioPlaying);
@@ -86,293 +89,273 @@ export default function PreviewTab({ project }: PreviewTabProps) {
   const getSceneStatusIcon = (status: string) => {
     if (status === 'completed') return '✅';
     if (status === 'running') return '⏳';
-    return '❌';
+    if (status === 'failed') return '❌';
+    return '⬜';
+  };
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   return (
-    <div className="space-y-6">
-      <div className="bg-zinc-800 rounded-lg p-6 border border-zinc-700">
-        <div className="flex items-center justify-between mb-4">
+    <div className="space-y-5">
+      {/* Script card */}
+      <div className="glass rounded-xl p-5">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
-            <h3 className="text-lg font-semibold flex items-center gap-2">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
               📝 Script
             </h3>
-            {isStepCompleted(3) && (
+            {isStepCompleted(STEP.SCRIPT) && (
               <div className="flex gap-2">
-                <span className="px-2 py-1 bg-blue-600 text-white text-xs font-medium rounded">
+                <span className="text-[11px] px-2 py-0.5 bg-brand-500/15 text-brand-300 rounded-md border border-brand-500/20">
                   {wordCount} woorden
                 </span>
-                <span className="px-2 py-1 bg-zinc-700 text-white text-xs font-medium rounded">
+                <span className="text-[11px] px-2 py-0.5 bg-surface-200 text-zinc-400 rounded-md border border-white/[0.04]">
                   {project.language}
                 </span>
               </div>
             )}
           </div>
-          {isStepCompleted(3) && (
+          {isStepCompleted(STEP.SCRIPT) && (
             <button
-              onClick={() => handleCopy(fullMockScript)}
-              className="flex items-center gap-2 px-3 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-sm transition-colors"
+              onClick={() => handleCopy(scriptString)}
+              className="btn-secondary text-xs py-1.5 px-3"
             >
-              <Copy className="w-4 h-4" />
-              Kopieer
+              <Copy className="w-3.5 h-3.5" /> Kopieer
             </button>
           )}
         </div>
 
-        {isStepCompleted(3) ? (
+        {isStepCompleted(STEP.SCRIPT) && scriptString ? (
           <>
-            <div className="flex gap-2 mb-3">
-              <span className="px-2 py-1 bg-purple-600/20 text-purple-400 text-xs font-medium rounded border border-purple-600/30">
-                Dramatic
-              </span>
-              <span className="px-2 py-1 bg-purple-600/20 text-purple-400 text-xs font-medium rounded border border-purple-600/30">
-                First Person
-              </span>
-              <span className="px-2 py-1 bg-purple-600/20 text-purple-400 text-xs font-medium rounded border border-purple-600/30">
-                Fast Paced
-              </span>
-            </div>
-            <div className="bg-zinc-900 rounded-lg p-4 text-sm text-zinc-300 leading-relaxed mb-3">
+            <div className="bg-surface-100 rounded-lg p-4 text-sm text-zinc-300 leading-relaxed mb-3 max-h-40 overflow-y-auto border border-white/[0.04]">
               {previewText}
             </div>
-            <button
-              onClick={() => setShowScriptModal(true)}
-              className="text-blue-500 hover:text-blue-400 text-sm font-medium"
-            >
-              Lees meer...
-            </button>
+            {scriptString.length > 400 && (
+              <button
+                onClick={() => setShowScriptModal(true)}
+                className="text-brand-400 hover:text-brand-300 text-xs font-medium"
+              >
+                Volledig script bekijken →
+              </button>
+            )}
           </>
         ) : (
-          <p className="text-zinc-500 text-sm italic">
-            Script wordt gegenereerd in stap 3...
+          <p className="text-zinc-600 text-sm">
+            Script wordt gegenereerd in stap {STEP.SCRIPT}...
           </p>
         )}
       </div>
 
-      <div className="bg-zinc-800 rounded-lg p-6 border border-zinc-700">
-        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+      {/* Voiceover card */}
+      <div className="glass rounded-xl p-5">
+        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
           🎙️ Voiceover
         </h3>
 
-        {isStepCompleted(4) ? (
+        {isStepCompleted(STEP.VOICEOVER) ? (
           <>
-            <div className="bg-zinc-900 rounded-lg p-6 mb-4">
-              <div className="flex items-center gap-4 mb-4">
+            <div className="bg-surface-100 rounded-lg p-4 mb-3 border border-white/[0.04]">
+              <div className="flex items-center gap-4">
                 <button
                   onClick={toggleAudioPlay}
-                  className="w-16 h-16 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center transition-colors flex-shrink-0"
+                  className="w-12 h-12 bg-gradient-to-br from-brand-500 to-brand-600 hover:from-brand-400 hover:to-brand-500 rounded-full flex items-center justify-center transition-all flex-shrink-0 shadow-glow-blue"
                 >
                   {isAudioPlaying ? (
-                    <Pause className="w-8 h-8" />
+                    <Pause className="w-5 h-5" />
                   ) : (
-                    <Play className="w-8 h-8 ml-1" />
+                    <Play className="w-5 h-5 ml-0.5" />
                   )}
                 </button>
                 <div className="flex-1">
                   <div
-                    className="w-full bg-zinc-700 rounded-full h-2 mb-2 cursor-pointer"
+                    className="w-full bg-surface-300 rounded-full h-1.5 mb-2 cursor-pointer"
                     onClick={(e) => {
                       const rect = e.currentTarget.getBoundingClientRect();
                       const x = e.clientX - rect.left;
-                      const percentage = (x / rect.width) * 100;
-                      setAudioProgress(percentage);
+                      setAudioProgress((x / rect.width) * 100);
                     }}
                   >
-                    <div
-                      className="bg-blue-600 h-2 rounded-full transition-all"
-                      style={{ width: `${audioProgress}%` }}
-                    ></div>
+                    <div className="bg-brand-500 h-1.5 rounded-full transition-all" style={{ width: `${audioProgress}%` }} />
                   </div>
-                  <div className="flex justify-between text-xs text-zinc-400">
-                    <span>{Math.floor((audioProgress / 100) * 765)}s</span>
-                    <span className="font-medium">12:45</span>
+                  <div className="flex justify-between text-[11px] text-zinc-500">
+                    <span>{formatDuration((audioProgress / 100) * voiceDuration)}</span>
+                    <span className="font-mono">{formatDuration(voiceDuration)}</span>
                   </div>
                 </div>
-                <Volume2 className="w-5 h-5 text-zinc-400" />
-                <button className="p-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg transition-colors">
-                  <Download className="w-4 h-4" />
-                </button>
+                <Volume2 className="w-4 h-4 text-zinc-500" />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="flex-1 bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                <p className="text-xs text-zinc-500 mb-1">Voice</p>
-                <p className="text-sm font-medium">Brody — Crime Narrator</p>
+            <div className="flex gap-2.5">
+              <div className="flex-1 bg-surface-100 rounded-lg p-2.5 border border-white/[0.04]">
+                <p className="text-[10px] text-zinc-600 mb-0.5">Voice</p>
+                <p className="text-xs font-medium text-zinc-300">{project.voice}</p>
               </div>
-              <div className="flex-1 bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                <p className="text-xs text-zinc-500 mb-1">Model</p>
-                <p className="text-sm font-medium">eleven_flash_v2_5</p>
+              <div className="flex-1 bg-surface-100 rounded-lg p-2.5 border border-white/[0.04]">
+                <p className="text-[10px] text-zinc-600 mb-0.5">Duur</p>
+                <p className="text-xs font-medium text-zinc-300">{formatDuration(voiceDuration)}</p>
               </div>
-              <div className="flex-1 bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                <p className="text-xs text-zinc-500 mb-1">Grootte</p>
-                <p className="text-sm font-medium">18.4 MB</p>
-              </div>
+              {voiceFileSize > 0 && (
+                <div className="flex-1 bg-surface-100 rounded-lg p-2.5 border border-white/[0.04]">
+                  <p className="text-[10px] text-zinc-600 mb-0.5">Grootte</p>
+                  <p className="text-xs font-medium text-zinc-300">{(voiceFileSize / 1024 / 1024).toFixed(1)} MB</p>
+                </div>
+              )}
             </div>
           </>
         ) : (
-          <p className="text-zinc-500 text-sm italic">
-            Voiceover wordt gegenereerd in stap 4...
+          <p className="text-zinc-600 text-sm">
+            Voiceover wordt gegenereerd in stap {STEP.VOICEOVER}...
           </p>
         )}
       </div>
 
-      <div className="bg-zinc-800 rounded-lg p-6 border border-zinc-700">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            🎬 Video Scenes ({mockScenes.length} scenes)
+      {/* Video Scenes card */}
+      <div className="glass rounded-xl p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            🎬 Video Scenes {scenes.length > 0 && `(${scenes.length} scenes)`}
           </h3>
-          {isStepCompleted(9) && (
-            <div className="flex gap-2">
+          {scenes.length > 0 && (
+            <div className="flex gap-1.5">
               <button
                 onClick={() => setSceneViewMode('grid')}
-                className={`p-2 rounded-lg transition-colors ${
-                  sceneViewMode === 'grid'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600'
+                className={`p-1.5 rounded-lg transition-colors ${
+                  sceneViewMode === 'grid' ? 'bg-brand-500/20 text-brand-300' : 'bg-surface-200 text-zinc-500 hover:text-zinc-300'
                 }`}
               >
-                <Grid3x3 className="w-4 h-4" />
+                <Grid3x3 className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => setSceneViewMode('list')}
-                className={`p-2 rounded-lg transition-colors ${
-                  sceneViewMode === 'list'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600'
+                className={`p-1.5 rounded-lg transition-colors ${
+                  sceneViewMode === 'list' ? 'bg-brand-500/20 text-brand-300' : 'bg-surface-200 text-zinc-500 hover:text-zinc-300'
                 }`}
               >
-                <List className="w-4 h-4" />
+                <List className="w-3.5 h-3.5" />
               </button>
             </div>
           )}
         </div>
 
-        {isStepCompleted(9) ? (
+        {scenes.length > 0 ? (
           sceneViewMode === 'grid' ? (
-            <div className="grid grid-cols-4 gap-3">
-              {mockScenes.map((scene) => (
+            <div className="grid grid-cols-4 gap-2.5">
+              {scenes.map((scene) => (
                 <div
                   key={scene.id}
-                  className="aspect-video bg-zinc-900 rounded-lg border border-zinc-700 relative group hover:border-zinc-500 transition-colors cursor-pointer"
+                  className="aspect-video bg-surface-100 rounded-lg border border-white/[0.06] relative group hover:border-white/[0.12] transition-colors cursor-pointer"
                   title={scene.prompt}
                 >
-                  <div className="absolute top-2 left-2 px-2 py-1 bg-black/70 rounded text-xs font-medium">
-                    Scene {scene.id}
+                  <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-black/60 rounded text-[10px] font-medium">
+                    {scene.id}
                   </div>
-                  <div className="absolute top-2 right-2 text-lg">
+                  <div className="absolute top-1.5 right-1.5 text-sm">
                     {getSceneStatusIcon(scene.status)}
                   </div>
-                  <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/90 to-transparent">
-                    <p className="text-xs text-zinc-300 truncate">
-                      {scene.prompt}
-                    </p>
-                    <span className="text-xs text-zinc-500">{scene.duration}s</span>
+                  <div className="absolute bottom-0 left-0 right-0 p-1.5 bg-gradient-to-t from-black/80 to-transparent rounded-b-lg">
+                    <p className="text-[10px] text-zinc-300 truncate">{scene.prompt}</p>
+                    <span className="text-[10px] text-zinc-500">{scene.duration}s</span>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="bg-zinc-900 rounded-lg border border-zinc-700 overflow-hidden">
+            <div className="bg-surface-100 rounded-lg border border-white/[0.04] overflow-hidden">
               <table className="w-full">
-                <thead className="bg-zinc-800 border-b border-zinc-700">
+                <thead className="bg-surface-200 border-b border-white/[0.04]">
                   <tr>
-                    <th className="text-left px-4 py-2 text-sm font-semibold w-16">#</th>
-                    <th className="text-left px-4 py-2 text-sm font-semibold">Prompt</th>
-                    <th className="text-left px-4 py-2 text-sm font-semibold w-20">Duur</th>
-                    <th className="text-left px-4 py-2 text-sm font-semibold w-24">Status</th>
+                    <th className="text-left px-3 py-2 text-[11px] font-semibold text-zinc-500 w-12">#</th>
+                    <th className="text-left px-3 py-2 text-[11px] font-semibold text-zinc-500">Prompt</th>
+                    <th className="text-left px-3 py-2 text-[11px] font-semibold text-zinc-500 w-16">Duur</th>
+                    <th className="text-left px-3 py-2 text-[11px] font-semibold text-zinc-500 w-16">Status</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-700">
-                  {mockScenes.map((scene) => (
-                    <tr key={scene.id} className="hover:bg-zinc-800/50">
-                      <td className="px-4 py-3 text-sm text-zinc-400">{scene.id}</td>
-                      <td className="px-4 py-3 text-sm text-zinc-300 truncate max-w-md">
-                        {scene.prompt}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-zinc-400">{scene.duration}s</td>
-                      <td className="px-4 py-3 text-sm">{getSceneStatusIcon(scene.status)}</td>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {scenes.map((scene) => (
+                    <tr key={scene.id} className="hover:bg-white/[0.02]">
+                      <td className="px-3 py-2 text-xs text-zinc-500">{scene.id}</td>
+                      <td className="px-3 py-2 text-xs text-zinc-300 truncate max-w-md">{scene.prompt}</td>
+                      <td className="px-3 py-2 text-xs text-zinc-500">{scene.duration}s</td>
+                      <td className="px-3 py-2 text-sm">{getSceneStatusIcon(scene.status)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )
+        ) : isStepCompleted(STEP.SCENE_PROMPTS) ? (
+          <p className="text-zinc-600 text-sm">Geen scene data beschikbaar.</p>
         ) : (
-          <p className="text-zinc-500 text-sm italic">
-            Video scenes worden gegenereerd in stap 9...
+          <p className="text-zinc-600 text-sm">
+            Video scenes worden gegenereerd in stap {STEP.VIDEO_SCENES}...
           </p>
         )}
       </div>
 
-      <div className="bg-zinc-800 rounded-lg p-6 border border-zinc-700">
-        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+      {/* Final Video card */}
+      <div className="glass rounded-xl p-5">
+        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
           🎥 Final Video
         </h3>
 
-        {isStepCompleted(13) ? (
+        {isStepCompleted(STEP.FINAL_EXPORT) ? (
           <div>
-            <div className="aspect-video bg-zinc-900 rounded-lg flex items-center justify-center border border-zinc-700 mb-4">
-              <button className="w-24 h-24 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center transition-colors">
-                <Play className="w-12 h-12 ml-2" />
+            <div className="aspect-video bg-surface-100 rounded-lg flex items-center justify-center border border-white/[0.06] mb-3">
+              <button className="w-16 h-16 bg-gradient-to-br from-brand-500 to-brand-600 hover:from-brand-400 hover:to-brand-500 rounded-full flex items-center justify-center transition-all shadow-glow-blue">
+                <Play className="w-8 h-8 ml-1" />
               </button>
             </div>
-            <button className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-semibold transition-colors mb-4">
-              <Download className="w-5 h-5" />
-              Download Final Video
+            <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600/90 hover:bg-emerald-500 rounded-xl font-semibold text-sm transition-colors mb-3">
+              <Download className="w-4 h-4" /> Download Final Video
             </button>
-            <div className="flex gap-3">
-              <div className="flex-1 bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                <p className="text-xs text-zinc-500 mb-1">Formaat</p>
-                <p className="text-sm font-medium">{project.output}</p>
+            <div className="flex gap-2.5">
+              <div className="flex-1 bg-surface-100 rounded-lg p-2.5 border border-white/[0.04]">
+                <p className="text-[10px] text-zinc-600 mb-0.5">Formaat</p>
+                <p className="text-xs font-medium text-zinc-300">{project.output}</p>
               </div>
-              <div className="flex-1 bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                <p className="text-xs text-zinc-500 mb-1">Duur</p>
-                <p className="text-sm font-medium">12:45</p>
+              <div className="flex-1 bg-surface-100 rounded-lg p-2.5 border border-white/[0.04]">
+                <p className="text-[10px] text-zinc-600 mb-0.5">Aspect Ratio</p>
+                <p className="text-xs font-medium text-zinc-300">{project.aspectRatio || 'landscape'}</p>
               </div>
-              <div className="flex-1 bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                <p className="text-xs text-zinc-500 mb-1">Grootte</p>
-                <p className="text-sm font-medium">847 MB</p>
-              </div>
+              {exportStep?.metadata?.fileSize && (
+                <div className="flex-1 bg-surface-100 rounded-lg p-2.5 border border-white/[0.04]">
+                  <p className="text-[10px] text-zinc-600 mb-0.5">Grootte</p>
+                  <p className="text-xs font-medium text-zinc-300">{(exportStep.metadata.fileSize / 1024 / 1024).toFixed(0)} MB</p>
+                </div>
+              )}
             </div>
           </div>
         ) : (
-          <p className="text-zinc-500 text-sm italic">
-            Final video wordt geëxporteerd in stap 13...
+          <p className="text-zinc-600 text-sm">
+            Final video wordt geëxporteerd in stap {STEP.FINAL_EXPORT}...
           </p>
         )}
       </div>
 
+      {/* Script modal */}
       {showScriptModal && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-8">
-          <div className="bg-zinc-800 rounded-lg max-w-4xl w-full max-h-[80vh] flex flex-col border border-zinc-700">
-            <div className="flex items-center justify-between p-6 border-b border-zinc-700">
-              <h3 className="text-xl font-semibold">Volledig Script</h3>
-              <button
-                onClick={() => setShowScriptModal(false)}
-                className="p-2 hover:bg-zinc-700 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5" />
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-8 animate-fade-in">
+          <div className="glass-strong rounded-2xl max-w-4xl w-full max-h-[80vh] flex flex-col animate-scale-in">
+            <div className="flex items-center justify-between p-6 border-b border-white/[0.06]">
+              <h3 className="text-lg font-semibold">Volledig Script</h3>
+              <button onClick={() => setShowScriptModal(false)} className="btn-icon">
+                <X className="w-4 h-4" />
               </button>
             </div>
             <div className="p-6 overflow-y-auto flex-1">
-              <div className="prose prose-invert max-w-none">
-                <div className="text-zinc-300 leading-relaxed whitespace-pre-line">
-                  {fullMockScript}
-                </div>
+              <div className="text-zinc-300 text-sm leading-relaxed whitespace-pre-line">
+                {scriptString}
               </div>
             </div>
-            <div className="p-6 border-t border-zinc-700 flex justify-end gap-3">
-              <button
-                onClick={() => handleCopy(fullMockScript)}
-                className="flex items-center gap-2 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg transition-colors"
-              >
-                <Copy className="w-4 h-4" />
-                Kopieer
+            <div className="p-6 border-t border-white/[0.06] flex justify-end gap-3">
+              <button onClick={() => handleCopy(scriptString)} className="btn-secondary text-sm">
+                <Copy className="w-3.5 h-3.5" /> Kopieer
               </button>
-              <button
-                onClick={() => setShowScriptModal(false)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-              >
+              <button onClick={() => setShowScriptModal(false)} className="btn-primary text-sm">
                 Sluiten
               </button>
             </div>

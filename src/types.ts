@@ -140,6 +140,7 @@ export interface Settings {
   genaiProApiKey: string;
   genaiProEnabled: boolean;
   genaiProImagesEnabled: boolean;
+  videoDownloadApiKey: string;
 }
 
 export interface ConnectionStatus {

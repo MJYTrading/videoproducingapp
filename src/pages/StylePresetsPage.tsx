@@ -3,39 +3,22 @@ import { Plus, Trash2, Save, ChevronDown, ChevronUp, X } from 'lucide-react';
 import * as api from '../api';
 
 interface StylePreset {
-  id: string;
-  name: string;
-  allows_real_images: boolean;
-  style_prefix: string;
-  style_suffix: string;
-  character_description: string;
-  color_grade: string;
-  example_prompt: string;
+  id: string; name: string; allows_real_images: boolean; style_prefix: string; style_suffix: string;
+  character_description: string; color_grade: string; example_prompt: string;
 }
 
-const COLOR_GRADES = [
-  'cinematic_dark', 'history_warm', 'vibrant', 'clean_neutral',
-  'cold_blue', 'noir', 'none',
-];
+const COLOR_GRADES = ['cinematic_dark', 'history_warm', 'vibrant', 'clean_neutral', 'cold_blue', 'noir', 'none'];
 
 const EMPTY_STYLE: Omit<StylePreset, 'id'> & { id: string } = {
-  id: '',
-  name: '',
-  allows_real_images: false,
-  style_prefix: '',
-  style_suffix: '',
-  character_description: '',
-  color_grade: 'clean_neutral',
-  example_prompt: '',
+  id: '', name: '', allows_real_images: false, style_prefix: '', style_suffix: '',
+  character_description: '', color_grade: 'clean_neutral', example_prompt: '',
 };
 
 const TEMPLATE_STYLE: Omit<StylePreset, 'id'> & { id: string } = {
-  id: '',
-  name: '',
-  allows_real_images: false,
+  id: '', name: '', allows_real_images: false,
   style_prefix: 'A [STIJL] render of [KARAKTER BESCHRIJVING] in a [SCENE CONTEXT].',
   style_suffix: 'Cinematic lighting, [RENDER ENGINE] style, 8K detail, hyper-realistic materials, depth of field. No text, words, letters, numbers, subtitles visible anywhere.',
-  character_description: 'Beschrijf hier het type karakter: uiterlijk, kleding, houding, hoe emotie wordt uitgedrukt. Bijvoorbeeld: "Featureless white mannequin with smooth plastic skin, no facial features, humanoid proportions."',
+  character_description: 'Beschrijf hier het type karakter: uiterlijk, kleding, houding, hoe emotie wordt uitgedrukt.',
   color_grade: 'clean_neutral',
   example_prompt: 'A [STIJL] render of [KARAKTER] standing in [LOCATIE] with [BELICHTING]. Camera [HOEK/BEWEGING]. [RENDER ENGINE], 8K detail.',
 };
@@ -51,90 +34,47 @@ export default function StylePresetsPage() {
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   const fetchStyles = async () => {
-    try {
-      const data = await api.styles.getAll();
-      setStyles(data);
-    } catch (err: any) {
-      setMessage({ text: 'Laden mislukt: ' + err.message, type: 'error' });
-    }
+    try { const data = await api.styles.getAll(); setStyles(data); } catch (err: any) { setMessage({ text: 'Laden mislukt: ' + err.message, type: 'error' }); }
     setLoading(false);
   };
 
-  useEffect(() => {
-    fetchStyles();
-  }, []);
+  useEffect(() => { fetchStyles(); }, []);
 
   const showMsg = (text: string, type: 'success' | 'error') => {
-    setMessage({ text, type });
-    setTimeout(() => setMessage(null), 3000);
+    setMessage({ text, type }); setTimeout(() => setMessage(null), 3000);
   };
 
   const handleExpand = (id: string) => {
-    if (expandedId === id) {
-      setExpandedId(null);
-      setEditData(null);
-    } else {
-      setExpandedId(id);
-      const style = styles.find((s) => s.id === id);
-      if (style) setEditData({ ...style });
-    }
+    if (expandedId === id) { setExpandedId(null); setEditData(null); }
+    else { setExpandedId(id); const style = styles.find((s) => s.id === id); if (style) setEditData({ ...style }); }
   };
 
   const handleSave = async () => {
     if (!editData) return;
     setSaving(true);
-    try {
-      await api.styles.update(editData.id, editData);
-      await fetchStyles();
-      showMsg('Style opgeslagen!', 'success');
-    } catch (err: any) {
-      showMsg('Opslaan mislukt: ' + err.message, 'error');
-    }
+    try { await api.styles.update(editData.id, editData); await fetchStyles(); showMsg('Style opgeslagen!', 'success'); }
+    catch (err: any) { showMsg('Opslaan mislukt: ' + err.message, 'error'); }
     setSaving(false);
   };
 
   const handleCreate = async () => {
-    if (!newStyle.id || !newStyle.name) {
-      showMsg('ID en naam zijn verplicht', 'error');
-      return;
-    }
+    if (!newStyle.id || !newStyle.name) { showMsg('ID en naam zijn verplicht', 'error'); return; }
     setSaving(true);
-    try {
-      await api.styles.create(newStyle);
-      await fetchStyles();
-      setNewStyle({ ...EMPTY_STYLE });
-      setShowNew(false);
-      showMsg('Style aangemaakt!', 'success');
-    } catch (err: any) {
-      showMsg('Aanmaken mislukt: ' + err.message, 'error');
-    }
+    try { await api.styles.create(newStyle); await fetchStyles(); setNewStyle({ ...EMPTY_STYLE }); setShowNew(false); showMsg('Style aangemaakt!', 'success'); }
+    catch (err: any) { showMsg('Aanmaken mislukt: ' + err.message, 'error'); }
     setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Weet je zeker dat je deze style wilt verwijderen?')) return;
-    try {
-      await api.styles.remove(id);
-      await fetchStyles();
-      if (expandedId === id) {
-        setExpandedId(null);
-        setEditData(null);
-      }
-      showMsg('Style verwijderd', 'success');
-    } catch (err: any) {
-      showMsg('Verwijderen mislukt: ' + err.message, 'error');
-    }
+    try { await api.styles.remove(id); await fetchStyles(); if (expandedId === id) { setExpandedId(null); setEditData(null); } showMsg('Style verwijderd', 'success'); }
+    catch (err: any) { showMsg('Verwijderen mislukt: ' + err.message, 'error'); }
   };
 
   const TextArea = ({ label, value, onChange, rows = 3 }: { label: string; value: string; onChange: (v: string) => void; rows?: number }) => (
     <div>
-      <label className="block text-sm font-medium mb-1 text-zinc-300">{label}</label>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        rows={rows}
-        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm resize-y"
-      />
+      <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">{label}</label>
+      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={rows} className="input-base text-sm resize-y" />
     </div>
   );
 
@@ -142,36 +82,22 @@ export default function StylePresetsPage() {
     <div className="space-y-4 mt-4">
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium mb-1 text-zinc-300">Naam</label>
-          <input
-            type="text"
-            value={data.name}
-            onChange={(e) => setData({ ...data, name: e.target.value })}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
-          />
+          <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Naam</label>
+          <input type="text" value={data.name} onChange={(e) => setData({ ...data, name: e.target.value })} className="input-base text-sm" />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1 text-zinc-300">Color Grade</label>
-          <select
-            value={data.color_grade}
-            onChange={(e) => setData({ ...data, color_grade: e.target.value })}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
-          >
-            {COLOR_GRADES.map((cg) => (
-              <option key={cg} value={cg}>{cg}</option>
-            ))}
+          <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Color Grade</label>
+          <select value={data.color_grade} onChange={(e) => setData({ ...data, color_grade: e.target.value })} className="input-base text-sm">
+            {COLOR_GRADES.map((cg) => (<option key={cg} value={cg}>{cg}</option>))}
           </select>
         </div>
       </div>
 
       <div className="flex items-center gap-3">
-        <label className="text-sm font-medium text-zinc-300">Gebruikt echte afbeeldingen</label>
-        <button
-          type="button"
-          onClick={() => setData({ ...data, allows_real_images: !data.allows_real_images })}
-          className={'relative w-10 h-5 rounded-full transition-colors ' + (data.allows_real_images ? 'bg-green-600' : 'bg-zinc-700')}
-        >
-          <div className={'absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ' + (data.allows_real_images ? 'translate-x-5' : '')} />
+        <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Gebruikt echte afbeeldingen</label>
+        <button type="button" onClick={() => setData({ ...data, allows_real_images: !data.allows_real_images })}
+          className={`relative w-11 h-6 rounded-full transition-colors ${data.allows_real_images ? 'bg-emerald-600' : 'bg-surface-400'}`}>
+          <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${data.allows_real_images ? 'translate-x-5' : ''}`} />
         </button>
       </div>
 
@@ -182,113 +108,75 @@ export default function StylePresetsPage() {
     </div>
   );
 
-  if (loading) {
-    return (
-      <div className="p-8 flex items-center justify-center h-[60vh]">
-        <p className="text-zinc-400">Styles laden...</p>
-      </div>
-    );
-  }
+  if (loading) return <div className="p-8 flex items-center justify-center h-[60vh]"><p className="text-zinc-500">Styles laden...</p></div>;
 
   return (
-    <div className="p-8">
+    <div className="p-8 animate-fade-in">
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold">Style Presets</h1>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Style Presets</h1>
+            <p className="text-sm text-zinc-500 mt-1">{styles.length} style{styles.length !== 1 ? 's' : ''}</p>
+          </div>
           <div className="flex gap-2">
-            <button
-              onClick={() => {
-                setNewStyle({ ...TEMPLATE_STYLE });
-                setShowNew(true);
-              }}
-              className="flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 px-4 py-2 rounded-lg transition-colors"
-            >
-              📋 Gebruik Template
+            <button onClick={() => { setNewStyle({ ...TEMPLATE_STYLE }); setShowNew(true); }} className="btn-secondary text-sm">
+              📋 Template
             </button>
-            <button
-              onClick={() => {
-                if (showNew) {
-                  setShowNew(false);
-                } else {
-                  setNewStyle({ ...EMPTY_STYLE });
-                  setShowNew(true);
-                }
-              }}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors"
-            >
-              {showNew ? <X className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
-              {showNew ? 'Annuleren' : 'Nieuwe Style (leeg)'}
+            <button onClick={() => { if (showNew) { setShowNew(false); } else { setNewStyle({ ...EMPTY_STYLE }); setShowNew(true); } }}
+              className={showNew ? 'btn-secondary text-sm' : 'btn-primary text-sm'}>
+              {showNew ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+              {showNew ? 'Annuleren' : 'Nieuwe Style'}
             </button>
           </div>
         </div>
 
         {message && (
-          <div className={'mb-6 p-4 rounded-lg border ' + (message.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-red-500/10 border-red-500/20 text-red-400')}>
+          <div className={`mb-6 p-4 rounded-xl border text-sm animate-fade-in ${message.type === 'success' ? 'bg-emerald-500/8 border-emerald-500/15 text-emerald-400' : 'bg-red-500/8 border-red-500/15 text-red-400'}`}>
             {message.text}
           </div>
         )}
 
         {showNew && (
-          <div className="mb-6 bg-zinc-800 rounded-lg p-6 border border-blue-500/30">
-            <h2 className="text-lg font-semibold mb-2">Nieuwe Style</h2>
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-1 text-zinc-300">ID (uniek, geen spaties)</label>
-              <input
-                type="text"
-                value={newStyle.id}
-                onChange={(e) => setNewStyle({ ...newStyle, id: e.target.value.replace(/\s/g, '-').toLowerCase() })}
-                placeholder="bijv. ai-cartoon"
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
-              />
+          <div className="mb-6 section-card border-brand-500/20 animate-fade-in-down">
+            <h2 className="section-title">Nieuwe Style</h2>
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">ID (uniek, geen spaties)</label>
+              <input type="text" value={newStyle.id} onChange={(e) => setNewStyle({ ...newStyle, id: e.target.value.replace(/\s/g, '-').toLowerCase() })}
+                placeholder="bijv. ai-cartoon" className="input-base text-sm" />
             </div>
             <StyleForm data={newStyle} setData={setNewStyle} />
-            <button
-              onClick={handleCreate}
-              disabled={saving}
-              className="mt-4 flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 px-6 py-2 rounded-lg transition-colors"
-            >
-              <Save className="w-4 h-4" />
-              Aanmaken
+            <button onClick={handleCreate} disabled={saving} className="btn-success text-sm mt-2">
+              <Save className="w-4 h-4" /> Aanmaken
             </button>
           </div>
         )}
 
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {styles.map((style) => (
-            <div key={style.id} className="bg-zinc-800 rounded-lg border border-zinc-700">
-              <div
-                className="flex items-center justify-between p-4 cursor-pointer hover:bg-zinc-750 transition-colors"
-                onClick={() => handleExpand(style.id)}
-              >
+            <div key={style.id} className="glass rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between p-4 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                onClick={() => handleExpand(style.id)}>
                 <div className="flex items-center gap-3">
                   <span className="text-lg">{style.allows_real_images ? '\uD83D\uDCF7' : '\uD83E\uDD16'}</span>
                   <div>
-                    <h3 className="font-semibold">{style.name}</h3>
-                    <p className="text-sm text-zinc-400">{style.id} — {style.color_grade}</p>
+                    <h3 className="font-semibold text-sm">{style.name}</h3>
+                    <p className="text-[11px] text-zinc-600">{style.id} — {style.color_grade}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(style.id); }}
-                    className="p-2 hover:bg-red-600/20 text-red-400 rounded-lg transition-colors"
-                    title="Verwijderen"
-                  >
+                  <button onClick={(e) => { e.stopPropagation(); handleDelete(style.id); }}
+                    className="btn-icon text-red-400/60 hover:text-red-400" title="Verwijderen">
                     <Trash2 className="w-4 h-4" />
                   </button>
-                  {expandedId === style.id ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  {expandedId === style.id ? <ChevronUp className="w-4 h-4 text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-600" />}
                 </div>
               </div>
 
               {expandedId === style.id && editData && (
-                <div className="px-4 pb-4 border-t border-zinc-700">
+                <div className="px-4 pb-4 border-t border-white/[0.06] animate-fade-in-down">
                   <StyleForm data={editData} setData={setEditData as any} />
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="mt-4 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg transition-colors"
-                  >
-                    <Save className="w-4 h-4" />
-                    {saving ? 'Opslaan...' : 'Opslaan'}
+                  <button onClick={handleSave} disabled={saving} className="btn-primary text-sm mt-4">
+                    <Save className="w-4 h-4" /> {saving ? 'Opslaan...' : 'Opslaan'}
                   </button>
                 </div>
               )}

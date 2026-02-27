@@ -5,8 +5,6 @@ import { useStore } from '../store';
 import ReviewPanel from './ReviewPanel';
 import ImageReviewPanel from './ImageReviewPanel';
 
-
-
 interface PipelineTabProps {
   project: Project;
 }
@@ -22,517 +20,271 @@ export default function PipelineTab({ project }: PipelineTabProps) {
 
   const getStepStatusIcon = (status: StepStatus) => {
     switch (status) {
-      case 'completed':
-        return '✅';
-      case 'running':
-        return '⏳';
-      case 'failed':
-        return '❌';
-      case 'skipped':
-        return '⏭';
-      case 'review':
-        return '👁️';
-      default:
-        return '⬜';
+      case 'completed': return '✅';
+      case 'running': return '⏳';
+      case 'failed': return '❌';
+      case 'skipped': return '⏭';
+      case 'review': return '👁️';
+      default: return '⬜';
     }
   };
 
   const getStepStatusText = (step: Step) => {
     switch (step.status) {
-      case 'completed':
-        return `Voltooid in ${step.duration || 0}s`;
-      case 'running':
-        return `Bezig...`;
-      case 'failed':
-        return `Mislukt: ${step.error || 'Onbekende fout'}`;
-      case 'skipped':
-        return 'Overgeslagen';
-      case 'review':
-        return 'Wacht op review';
-      default:
-        return 'Wachtend';
+      case 'completed': return `Voltooid in ${step.duration || 0}s`;
+      case 'running': return 'Bezig...';
+      case 'failed': return `Mislukt: ${step.error || 'Onbekende fout'}`;
+      case 'skipped': return 'Overgeslagen';
+      case 'review': return 'Wacht op review';
+      default: return 'Wachtend';
     }
   };
 
-  const getExecutorColor = (executor: string) => {
-    switch (executor) {
-      case 'App':
-        return 'bg-zinc-600 text-white';
-      case 'N8N':
-        return 'bg-blue-600 text-white';
-      case 'Elevate AI':
-        return 'bg-purple-600 text-white';
-      case 'OpenClaw':
-        return 'bg-orange-600 text-white';
-      default:
-        return 'bg-zinc-600 text-white';
-    }
+  const getExecutorBadge = (executor: string) => {
+    const map: Record<string, string> = {
+      // Elevate = donkerblauw/wit
+      'Elevate':        'bg-blue-900/60 text-blue-100 border-blue-700/40',
+      'Elevate AI':     'bg-blue-900/60 text-blue-100 border-blue-700/40',
+      // Perplexity = zwart/wit
+      'Perplexity':     'bg-zinc-900/80 text-zinc-100 border-zinc-600/40',
+      // Claude Opus = oranje/wit
+      'Claude Opus':    'bg-orange-600/25 text-orange-200 border-orange-500/30',
+      // App = blauw/wit
+      'App':            'bg-sky-600/20 text-sky-200 border-sky-500/25',
+      // Assembly AI = rood/wit
+      'Assembly AI':    'bg-red-600/25 text-red-200 border-red-500/30',
+      // TwelveLabs = zwart/wit
+      'TwelveLabs':     'bg-zinc-900/80 text-zinc-100 border-zinc-600/40',
+      'TwelveLabs + N8N': 'bg-zinc-900/80 text-zinc-100 border-zinc-600/40',
+      // N8N = oranje/zwart
+      'N8N':            'bg-orange-500/25 text-orange-900 border-orange-400/40',
+      // FFMPEG = geel/wit
+      'FFMPEG':         'bg-yellow-500/20 text-yellow-200 border-yellow-400/30',
+      // HeyGen = paars/wit
+      'HeyGen':         'bg-purple-600/25 text-purple-200 border-purple-500/30',
+    };
+    return map[executor] || 'bg-zinc-700/30 text-zinc-300 border-zinc-600/30';
   };
 
-  const getStepBorderClass = (status: StepStatus) => {
+  const getStepBorderColor = (status: StepStatus) => {
     switch (status) {
-      case 'running':
-        return 'border-blue-500/50 shadow-lg shadow-blue-500/20';
-      case 'failed':
-        return 'border-red-500/50 shadow-lg shadow-red-500/20';
-      case 'review':
-        return 'border-violet-500/50 shadow-lg shadow-violet-500/20';
-      default:
-        return 'border-zinc-700';
+      case 'completed': return 'border-emerald-500/15 bg-emerald-500/[0.03]';
+      case 'running': return 'border-brand-500/25 bg-brand-500/[0.04] shadow-glow-blue';
+      case 'failed': return 'border-red-500/20 bg-red-500/[0.04]';
+      case 'review': return 'border-amber-500/20 bg-amber-500/[0.04]';
+      case 'skipped': return 'border-white/[0.04] bg-white/[0.01] opacity-50';
+      default: return 'border-white/[0.06] bg-white/[0.02]';
     }
   };
 
-  const handleShowAiPanel = (stepId: number) => {
-    setShowAiPanel({ ...showAiPanel, [stepId]: true });
+  const totalDuration = project.steps
+    .filter((s) => s.status === 'completed' && s.duration)
+    .reduce((sum, s) => sum + (s.duration || 0), 0);
+
+  const formatTotalTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}m ${secs}s`;
   };
 
-  const handleAskAI = (stepId: number) => {
-    setAiThinking({ ...aiThinking, [stepId]: true });
-    setTimeout(() => {
-      setAiThinking({ ...aiThinking, [stepId]: false });
-      setAiResponse({
-        ...aiResponse,
-        [stepId]: {
-          problem: 'De VEO 3 prompt voor scene 14 is te abstract. De prompt "ethereal consciousness expanding through dimensions" bevat geen concrete visuele elementen.',
-          action: 'modify_and_retry',
-          solution: 'Ik heb de prompt aangepast naar iets concreter: "A white mannequin figure standing in a vast dark void with glowing particles expanding outward like a shockwave". Dit geeft VEO 3 meer houvast.',
-        },
-      });
-    }, 3000);
-  };
-
-  const handleAcceptAI = (stepId: number) => {
-    retryStep(project.id, stepId);
-    setShowAiPanel({ ...showAiPanel, [stepId]: false });
-    setAiResponse({ ...aiResponse, [stepId]: undefined });
-    setAiContext({ ...aiContext, [stepId]: '' });
-  };
-
-  const handleRejectAI = (stepId: number) => {
-    setAiResponse({ ...aiResponse, [stepId]: undefined });
-  };
-
-  const formatTime = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('nl-NL', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-  };
-
-  const renderEditingStepDetails = (step: Step) => {
-    if (step.status !== 'completed') return null;
-
-    switch (step.id) {
-      case 10:
-        return (
-          <div>
-            <p className="text-sm text-zinc-300 mb-3">28 scenes + voiceover samengevoegd</p>
-            <div className="bg-zinc-900 rounded-lg p-4">
-              <p className="text-xs text-zinc-500 mb-2">Timeline Preview</p>
-              <div className="flex gap-1">
-                {Array.from({ length: 28 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="flex-1 h-8 rounded"
-                    style={{
-                      backgroundColor: `hsl(${(i * 13) % 360}, 60%, 45%)`,
-                    }}
-                  ></div>
-                ))}
-              </div>
-            </div>
-          </div>
-        );
-      case 11:
-        if (project.colorGrading === 'Geen' || !project.colorGrading) return null;
-        return (
-          <div>
-            <p className="text-sm text-zinc-300 mb-3">Applied: {project.colorGrading}</p>
-            <div className="flex gap-4">
-              <div className="flex-1">
-                <p className="text-xs text-zinc-500 mb-2">Before</p>
-                <div className="aspect-video bg-gradient-to-br from-zinc-600 to-zinc-700 rounded-lg border border-zinc-600"></div>
-              </div>
-              <div className="flex-1">
-                <p className="text-xs text-zinc-500 mb-2">After</p>
-                <div
-                  className={`aspect-video rounded-lg border ${
-                    project.colorGrading === 'Cinematic Dark'
-                      ? 'bg-gradient-to-br from-zinc-800 via-zinc-900 to-black border-zinc-800'
-                      : project.colorGrading === 'History Warm'
-                      ? 'bg-gradient-to-br from-amber-900 via-orange-900 to-red-900 border-amber-800'
-                      : project.colorGrading === 'Vibrant'
-                      ? 'bg-gradient-to-br from-blue-600 via-purple-600 to-pink-600 border-blue-500'
-                      : project.colorGrading === 'Cold Blue'
-                      ? 'bg-gradient-to-br from-blue-900 via-cyan-900 to-slate-900 border-blue-800'
-                      : project.colorGrading === 'Noir'
-                      ? 'bg-gradient-to-br from-black via-zinc-900 to-zinc-800 border-black'
-                      : 'bg-gradient-to-br from-zinc-600 to-zinc-700 border-zinc-600'
-                  }`}
-                ></div>
-              </div>
-            </div>
-          </div>
-        );
-      case 12:
-        if (!project.subtitles) return null;
-        return (
-          <div>
-            <p className="text-sm text-zinc-300 mb-2">SRT bestand gegenereerd</p>
-            <div className="bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-              <p className="text-xs text-zinc-500">247 regels subtitles</p>
-            </div>
-          </div>
-        );
-      case 13:
-        return (
-          <div>
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              <div className="bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                <p className="text-xs text-zinc-500 mb-1">Formaat</p>
-                <p className="text-sm font-medium">{project.output}</p>
-              </div>
-              <div className="bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                <p className="text-xs text-zinc-500 mb-1">Duur</p>
-                <p className="text-sm font-medium">12:45</p>
-              </div>
-              <div className="bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                <p className="text-xs text-zinc-500 mb-1">Grootte</p>
-                <p className="text-sm font-medium">847 MB</p>
-              </div>
-            </div>
-            <button className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg font-medium transition-colors">
-              <span>⬇</span>
-              Download
-            </button>
-          </div>
-        );
-      default:
-        return null;
-    }
-  };
-
-  const getStatusBanner = () => {
-    const totalSteps = project.steps.filter((s) => s.status !== 'skipped').length;
-    const runningStep = project.steps.find((s) => s.status === 'running');
-    const reviewStep = project.steps.find((s) => s.status === 'review');
-    const failedStep = project.steps.find((s) => s.status === 'failed');
-
-    if (project.status === 'review' && reviewStep) {
-      return null;
-    }
-
-    if (project.status === 'running' && runningStep) {
-      return (
-        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mb-4">
-          <p className="text-sm text-blue-400">
-            Pipeline draait — stap {runningStep.id} van {totalSteps} bezig...
-          </p>
-        </div>
-      );
-    }
-
-    if (project.status === 'paused' && runningStep) {
-      return (
-        <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4 mb-4">
-          <p className="text-sm text-orange-400">
-            Pipeline gepauzeerd bij stap {runningStep.id}. Klik Resume om door te gaan.
-          </p>
-        </div>
-      );
-    }
-
-    if (project.status === 'failed' && failedStep) {
-      return (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-4">
-          <p className="text-sm text-red-400">
-            Pipeline gestopt bij stap {failedStep.id}. 3 acties beschikbaar: Retry, Skip, of Ask AI.
-          </p>
-        </div>
-      );
-    }
-
-    if (project.status === 'completed') {
-      const duration = project.startedAt && project.completedAt
-        ? Math.floor((new Date(project.completedAt).getTime() - new Date(project.startedAt).getTime()) / 1000)
-        : 0;
-      const minutes = Math.floor(duration / 60);
-      const seconds = duration % 60;
-      return (
-        <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4 mb-4">
-          <p className="text-sm text-green-400">
-            ✅ Pipeline voltooid in {minutes}m {seconds}s!
-          </p>
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  const reviewStep = project.steps.find((s) => s.status === 'review');
+  const completedCount = project.steps.filter((s) => s.status === 'completed').length;
+  const failedCount = project.steps.filter((s) => s.status === 'failed').length;
+  const skippedCount = project.steps.filter((s) => s.status === 'skipped').length;
+  const isAllDone = project.steps.every((s) => s.status === 'completed' || s.status === 'skipped');
 
   return (
-    <div className="space-y-3">
-      {getStatusBanner()}
+    <div className="space-y-2.5">
+      {/* Summary banner */}
+      {isAllDone && (
+        <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-sm text-emerald-400 font-medium animate-fade-in">
+          ✅ Pipeline voltooid in {formatTotalTime(totalDuration)}!
+        </div>
+      )}
+      {failedCount > 0 && !isAllDone && (
+        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 font-medium animate-fade-in">
+          ❌ {failedCount} stap(pen) mislukt
+        </div>
+      )}
 
-      {reviewStep && reviewStep.id === 13 && <ImageReviewPanel project={project} step={reviewStep} />}
-      {reviewStep && reviewStep.id !== 13 && <ReviewPanel project={project} step={reviewStep} />}
-
-      {[...project.steps].sort((a, b) => a.id - b.id).map((step) => (
-        <div key={step.id}>
+      {/* Steps */}
+      {project.steps.map((step) => (
+        <div
+          key={step.id}
+          data-step-id={step.id}
+          className={`rounded-xl border transition-all duration-300 ${getStepBorderColor(step.status)}`}
+        >
+          {/* Step header */}
           <div
-            className={`bg-zinc-900 rounded-lg p-4 border ${getStepBorderClass(
-              step.status
-            )} cursor-pointer hover:bg-zinc-800/50 transition-all`}
-            onClick={() =>
-              setExpandedStep(expandedStep === step.id ? null : step.id)
-            }
+            className="flex items-center justify-between px-4 py-3.5 cursor-pointer"
+            onClick={() => setExpandedStep(expandedStep === step.id ? null : step.id)}
           >
-            <div className="flex items-start gap-4">
-              <div className="text-2xl">{getStepStatusIcon(step.status)}</div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-3 mb-1">
-                  <span className="text-zinc-500 font-mono text-sm">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-lg">{getStepStatusIcon(step.status)}</span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-zinc-600 font-mono">
                     {step.id.toString().padStart(2, '0')}
                   </span>
-                  <span className="font-medium">{step.name}</span>
-                  {step.retryCount && step.retryCount > 0 && (
-                    <span className="text-xs text-orange-500 font-medium">
-                      ↻{step.retryCount}
+                  <span className="font-semibold text-sm">{step.name}</span>
+                  <span className="text-[11px] text-zinc-600">{getStepStatusIcon(step.status) === '⬜' ? '' : ''}</span>
+                </div>
+                <p className="text-xs text-zinc-500 mt-0.5">{getStepStatusText(step)}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5 shrink-0">
+              <span className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border ${getExecutorBadge(step.executor)}`}>
+                {step.executor}
+              </span>
+              {expandedStep === step.id ? (
+                <ChevronUp className="w-4 h-4 text-zinc-600" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-zinc-600" />
+              )}
+            </div>
+          </div>
+
+          {/* Expanded content */}
+          {expandedStep === step.id && (
+            <div className="px-4 pb-4 border-t border-white/[0.04] pt-3 animate-fade-in-down">
+              {/* Metadata */}
+              {step.metadata && (
+                <div className="flex gap-3 mb-3 flex-wrap">
+                  {step.metadata.wordCount && (
+                    <span className="text-xs px-2.5 py-1 bg-surface-200 rounded-lg text-zinc-400 border border-white/[0.04]">
+                      {step.metadata.wordCount} woorden
+                    </span>
+                  )}
+                  {step.metadata.estimatedDuration && (
+                    <span className="text-xs px-2.5 py-1 bg-surface-200 rounded-lg text-zinc-400 border border-white/[0.04]">
+                      ~{Math.round(step.metadata.estimatedDuration / 60)}min
+                    </span>
+                  )}
+                  {step.metadata.sceneCount && (
+                    <span className="text-xs px-2.5 py-1 bg-surface-200 rounded-lg text-zinc-400 border border-white/[0.04]">
+                      {step.metadata.sceneCount} scenes
+                    </span>
+                  )}
+                  {step.metadata.fileSize && (
+                    <span className="text-xs px-2.5 py-1 bg-surface-200 rounded-lg text-zinc-400 border border-white/[0.04]">
+                      {(step.metadata.fileSize / 1024 / 1024).toFixed(1)} MB
                     </span>
                   )}
                 </div>
-                <p className="text-sm text-zinc-400">{getStepStatusText(step)}</p>
-                {(step.status === 'completed' || step.status === 'review') && step.metadata && (
-                  <div className="flex items-center gap-3 mt-2 text-xs text-zinc-500">
-                    {step.id === 3 && step.metadata.wordCount && (
-                      <>
-                        <span>📊 {step.metadata.wordCount.toLocaleString()} woorden</span>
-                        <span>🎙️ ~{step.metadata.estimatedDuration} min VO</span>
-                      </>
-                    )}
-                    {step.id === 4 && step.metadata.estimatedDuration && (
-                      <>
-                        <span>🎙️ {Math.floor(step.metadata.estimatedDuration / 60)}:{(step.metadata.estimatedDuration % 60).toString().padStart(2, '0')}</span>
-                        <span>📦 {step.metadata.fileSize?.toFixed(1)} MB</span>
-                      </>
-                    )}
-                    {step.id === 9 && step.metadata.sceneCount && (
-                      <span>🎬 {step.metadata.sceneCount} scenes</span>
-                    )}
-                    {step.duration && <span>⏱️ {step.duration}s</span>}
-                  </div>
+              )}
+
+              {/* Duration info */}
+              {step.duration && (
+                <p className="text-xs text-zinc-600 mb-3">
+                  Duur: {step.duration}s
+                  {step.retryCount && step.retryCount > 0 && ` · ${step.retryCount} retries`}
+                  {step.attemptNumber && step.attemptNumber > 1 && ` · Poging ${step.attemptNumber}`}
+                </p>
+              )}
+
+              {/* Error details */}
+              {step.status === 'failed' && step.error && (
+                <div className="p-3 bg-red-500/8 border border-red-500/15 rounded-lg mb-3">
+                  <p className="text-xs text-red-400 font-mono">{step.error}</p>
+                </div>
+              )}
+
+              {/* AI Response */}
+              {step.aiResponse && (
+                <div className="p-3 bg-brand-500/8 border border-brand-500/15 rounded-lg mb-3">
+                  <p className="text-[11px] text-brand-400 font-semibold mb-1">🤖 AI Analyse</p>
+                  <p className="text-xs text-zinc-400"><strong>Probleem:</strong> {step.aiResponse.problem}</p>
+                  <p className="text-xs text-zinc-400"><strong>Actie:</strong> {step.aiResponse.action}</p>
+                  <p className="text-xs text-zinc-400"><strong>Oplossing:</strong> {step.aiResponse.solution}</p>
+                </div>
+              )}
+
+              {/* Result preview */}
+              {step.result && (
+                <div className="p-3 bg-surface-200 border border-white/[0.04] rounded-lg mb-3">
+                  <p className="text-[11px] text-zinc-500 font-semibold mb-1">Resultaat</p>
+                  <pre className="text-xs text-zinc-400 overflow-x-auto max-h-32 overflow-y-auto font-mono">
+                    {typeof step.result === 'string' ? step.result : JSON.stringify(step.result, null, 2)}
+                  </pre>
+                </div>
+              )}
+
+              {/* Review panel */}
+              {step.status === 'review' && step.id !== 13 && (
+                <ReviewPanel project={project} step={step} />
+              )}
+              {step.status === 'review' && step.id === 13 && (
+                <ImageReviewPanel project={project} step={step} />
+              )}
+
+              {/* Action buttons */}
+              <div className="flex gap-2 mt-3">
+                {(step.status === 'failed' || step.status === 'completed') && (
+                  <button
+                    onClick={() => retryStep(project.id, step.id)}
+                    className="btn-secondary text-xs py-1.5"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> Retry
+                  </button>
+                )}
+                {(step.status === 'failed' || step.status === 'waiting') && (
+                  <button
+                    onClick={() => skipStep(project.id, step.id)}
+                    className="btn-secondary text-xs py-1.5"
+                  >
+                    <SkipForward className="w-3.5 h-3.5" /> Skip
+                  </button>
                 )}
               </div>
 
-              <div className="flex items-center gap-3">
-                <span
-                  className={`px-3 py-1 text-xs font-medium rounded ${getExecutorColor(
-                    step.executor
-                  )}`}
+              {/* AI context panel */}
+              {showAiPanel[step.id] && (
+                <div className="mt-3 p-3 bg-brand-500/5 border border-brand-500/15 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-brand-400 font-semibold">🤖 AI Feedback</span>
+                    <button onClick={() => setShowAiPanel({ ...showAiPanel, [step.id]: false })} className="text-zinc-600 hover:text-zinc-400">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <textarea
+                    value={aiContext[step.id] || ''}
+                    onChange={(e) => setAiContext({ ...aiContext, [step.id]: e.target.value })}
+                    placeholder="Beschrijf wat er anders moet..."
+                    className="input-base text-xs resize-none h-20 mb-2"
+                  />
+                  <button
+                    onClick={() => {
+                      if (aiContext[step.id]?.trim()) {
+                        useStore.getState().submitFeedback(project.id, step.id, aiContext[step.id]);
+                        setAiContext({ ...aiContext, [step.id]: '' });
+                        setShowAiPanel({ ...showAiPanel, [step.id]: false });
+                      }
+                    }}
+                    className="btn-primary text-xs py-1.5"
+                    disabled={!aiContext[step.id]?.trim()}
+                  >
+                    <Bot className="w-3.5 h-3.5" /> Verstuur Feedback
+                  </button>
+                </div>
+              )}
+
+              {/* Toggle AI panel button */}
+              {(step.status === 'completed' || step.status === 'review') && !showAiPanel[step.id] && (
+                <button
+                  onClick={() => setShowAiPanel({ ...showAiPanel, [step.id]: true })}
+                  className="mt-2 text-xs text-brand-400 hover:text-brand-300 font-medium flex items-center gap-1"
                 >
-                  {step.executor}
-                </span>
-                {expandedStep === step.id ? (
-                  <ChevronUp className="w-5 h-5 text-zinc-400" />
-                ) : (
-                  <ChevronDown className="w-5 h-5 text-zinc-400" />
-                )}
-              </div>
-            </div>
-          </div>
-
-          {expandedStep === step.id && (
-            <div className="bg-zinc-800 border-x border-b border-zinc-700 rounded-b-lg p-4 mt-[-8px] animate-slide-down">
-              {step.status === 'completed' && (
-                <div>
-                  {renderEditingStepDetails(step) || (
-                    <>
-                      <h4 className="text-sm font-semibold mb-2">Resultaat</h4>
-                      <pre className="bg-zinc-900 p-3 rounded text-xs text-zinc-400 overflow-x-auto">
-                        {JSON.stringify(step.result, null, 2)}
-                      </pre>
-                    </>
-                  )}
-                </div>
+                  <Bot className="w-3.5 h-3.5" /> AI Feedback geven
+                </button>
               )}
 
-              {step.status === 'failed' && (
-                <div>
-                  <h4 className="text-sm font-semibold mb-3 text-red-400">
-                    ❌ Stap {step.id}: {step.name} — MISLUKT
-                  </h4>
-
-                  <div className="mb-4">
-                    <p className="text-xs text-zinc-500 mb-2">Error:</p>
-                    <div className="bg-red-950 border border-red-800 rounded-lg p-3">
-                      <p className="text-sm text-red-300 font-mono">{step.error}</p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
-                    <div>
-                      <span className="text-zinc-500">Pogingen:</span>
-                      <span className="ml-2 text-white font-medium">{step.retryCount || 1}/3</span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Duur laatste poging:</span>
-                      <span className="ml-2 text-white font-medium">{step.duration || 0}s</span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Executor:</span>
-                      <span className="ml-2 text-white font-medium">{step.executor}</span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Eerste poging:</span>
-                      <span className="ml-2 text-white font-medium">
-                        {step.firstAttemptAt ? formatTime(step.firstAttemptAt) : '-'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2 mb-4">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        retryStep(project.id, step.id);
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                      Retry
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        skipStep(project.id, step.id);
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-sm font-medium transition-colors"
-                    >
-                      <SkipForward className="w-4 h-4" />
-                      Skip
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleShowAiPanel(step.id);
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm font-medium transition-colors"
-                    >
-                      <Bot className="w-4 h-4" />
-                      Ask AI
-                    </button>
-                  </div>
-
-                  {showAiPanel[step.id] && (
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
-                      <h5 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                        <Bot className="w-4 h-4" />
-                        AI Hulp
-                      </h5>
-
-                      <div className="mb-4">
-                        <p className="text-xs text-zinc-500 mb-2">Context die naar AI gestuurd wordt:</p>
-                        <div className="bg-zinc-900 rounded-lg p-3 text-xs text-zinc-400 space-y-1">
-                          <p>• Project: {project.name}</p>
-                          <p>• Stap: {step.id} — {step.name}</p>
-                          <p>• Error: {step.error?.substring(0, 50)}...</p>
-                          <p>• Pogingen: {step.retryCount || 1}</p>
-                          <p>• Stijl: {project.visualStyle}</p>
-                        </div>
-                      </div>
-
-                      <div className="mb-3">
-                        <label className="block text-xs text-zinc-500 mb-2">
-                          Extra context (optioneel):
-                        </label>
-                        <textarea
-                          value={aiContext[step.id] || ''}
-                          onChange={(e) =>
-                            setAiContext({ ...aiContext, [step.id]: e.target.value })
-                          }
-                          className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-3 text-sm focus:outline-none focus:border-purple-500 transition-colors"
-                          rows={3}
-                          placeholder="Typ hier extra info voor de AI..."
-                        />
-                      </div>
-
-                      {!aiResponse[step.id] ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAskAI(step.id);
-                          }}
-                          disabled={aiThinking[step.id]}
-                          className="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                        >
-                          {aiThinking[step.id] ? (
-                            <>
-                              <Bot className="w-4 h-4 animate-pulse" />
-                              ⏳ AI is aan het nadenken...
-                            </>
-                          ) : (
-                            <>
-                              <Bot className="w-4 h-4" />
-                              Verstuur naar AI
-                            </>
-                          )}
-                        </button>
-                      ) : (
-                        <div className="bg-zinc-900 border border-purple-500/30 rounded-lg p-4">
-                          <h6 className="text-sm font-semibold mb-3 flex items-center gap-2 text-purple-400">
-                            <Bot className="w-4 h-4" />
-                            AI Analyse
-                          </h6>
-                          <p className="text-sm text-zinc-300 mb-3">
-                            <strong className="text-white">Probleem:</strong> {aiResponse[step.id].problem}
-                          </p>
-                          <p className="text-sm text-zinc-300 mb-3">
-                            <strong className="text-white">Aanbevolen actie:</strong>{' '}
-                            <span className="text-purple-400">{aiResponse[step.id].action}</span>
-                          </p>
-                          <p className="text-sm text-zinc-300 mb-4">
-                            "{aiResponse[step.id].solution}"
-                          </p>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleAcceptAI(step.id);
-                              }}
-                              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition-colors"
-                            >
-                              <CheckCircle className="w-4 h-4" />
-                              Accepteer & Retry
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleRejectAI(step.id);
-                              }}
-                              className="flex items-center gap-2 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-sm font-medium transition-colors"
-                            >
-                              <X className="w-4 h-4" />
-                              Negeer
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {step.status === 'running' && (
-                <div>
-                  <p className="text-sm text-zinc-400">
-                    Bezig met verwerken...
-                  </p>
-                </div>
+              {/* Approve button for review steps */}
+              {step.status === 'review' && step.id !== 13 && (
+                <button
+                  onClick={() => useStore.getState().approveStep(project.id, step.id)}
+                  className="mt-2 btn-success text-xs py-1.5"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" /> Goedkeuren
+                </button>
               )}
             </div>
           )}

@@ -43,6 +43,7 @@ model Settings {
   genaiProApiKey       String  @default("")
   genaiProEnabled      Boolean @default(false)
   genaiProImagesEnabled Boolean @default(false)
+  videoDownloadApiKey   String  @default("")
 }
 
 model Project {

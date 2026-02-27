@@ -1,13 +1,24 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Film, FolderOpen, PlusCircle, Settings, LogOut, Palette, Tv, Mic } from 'lucide-react';
+import { Film, FolderOpen, PlusCircle, Settings, LogOut, Palette, Tv, Mic, Sparkles } from 'lucide-react';
 import Toast from './Toast';
 import { auth } from '../api';
+
+const NAV_ITEMS = [
+  { path: '/', icon: FolderOpen, label: 'Projecten', exact: true },
+  { path: '/project/new', icon: PlusCircle, label: 'Nieuw Project' },
+  { type: 'divider' as const },
+  { path: '/styles', icon: Palette, label: 'Styles' },
+  { path: '/channels', icon: Tv, label: 'Kanalen' },
+  { path: '/voices', icon: Mic, label: 'Voices' },
+  { type: 'divider' as const },
+  { path: '/settings', icon: Settings, label: 'Settings' },
+];
 
 export default function Layout() {
   const location = useLocation();
 
-  const isActive = (path: string) => {
-    if (path === '/') return location.pathname === '/';
+  const isActive = (path: string, exact?: boolean) => {
+    if (exact) return location.pathname === path;
     return location.pathname.startsWith(path);
   };
 
@@ -17,54 +28,83 @@ export default function Layout() {
   };
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-white">
-      <aside className="w-[260px] bg-zinc-900 border-r border-zinc-800 flex flex-col fixed h-screen">
-        <div className="p-6 border-b border-zinc-800">
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Film className="w-6 h-6" />
-            Video Producer
-          </h1>
+    <div className="flex h-screen bg-surface text-white overflow-hidden">
+      {/* Sidebar */}
+      <aside className="w-[260px] shrink-0 flex flex-col fixed h-screen z-30 bg-surface-50/80 backdrop-blur-xl border-r border-white/[0.06]">
+        {/* Logo */}
+        <div className="p-5 pb-4">
+          <Link to="/" className="flex items-center gap-3 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-glow-sm group-hover:shadow-glow transition-shadow duration-300">
+              <Film className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-[15px] font-bold tracking-tight text-white">Video Producer</h1>
+              <p className="text-[10px] text-zinc-500 font-medium tracking-wider uppercase">Pipeline Studio</p>
+            </div>
+          </Link>
         </div>
-        <nav className="flex-1 p-4">
-          <ul className="space-y-2">
-            <li>
-              <Link to="/" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
-                <FolderOpen className="w-5 h-5" /> Projecten
-              </Link>
-            </li>
-            <li>
-              <Link to="/project/new" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/project/new') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
-                <PlusCircle className="w-5 h-5" /> Nieuw Project
-              </Link>
-            </li>
-            <li>
-              <Link to="/styles" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/styles') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
-                <Palette className="w-5 h-5" /> Styles
-              </Link>
-              <Link to="/channels" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/channels') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
-                <Tv className="w-5 h-5" /> Kanalen
-              </Link>
-              <Link to="/voices" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/voices') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
-                <Mic className="w-5 h-5" /> Voices
-              </Link>
-              <Link to="/settings" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/settings') ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'}`}>
-                <Settings className="w-5 h-5" /> Settings
-              </Link>
-            </li>
-          </ul>
+
+        <div className="divider mx-4" />
+
+        {/* Navigation */}
+        <nav className="flex-1 px-3 py-3 overflow-y-auto">
+          <div className="space-y-0.5">
+            {NAV_ITEMS.map((item, i) => {
+              if ('type' in item && item.type === 'divider') {
+                return <div key={`div-${i}`} className="divider my-2.5 mx-2" />;
+              }
+              const navItem = item as { path: string; icon: any; label: string; exact?: boolean };
+              const Icon = navItem.icon;
+              const active = isActive(navItem.path, navItem.exact);
+
+              return (
+                <Link
+                  key={navItem.path}
+                  to={navItem.path}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group relative ${
+                    active
+                      ? 'bg-brand-600/15 text-brand-300 shadow-inner-glow'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
+                  }`}
+                >
+                  {active && (
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-gradient-to-b from-brand-400 to-brand-600" />
+                  )}
+                  <Icon className={`w-[18px] h-[18px] transition-colors duration-200 ${
+                    active ? 'text-brand-400' : 'text-zinc-500 group-hover:text-zinc-400'
+                  }`} />
+                  {navItem.label}
+                </Link>
+              );
+            })}
+          </div>
         </nav>
-        <div className="p-4 border-t border-zinc-800">
-          <div className="flex items-center justify-between px-4 py-2">
-            <span className="text-sm text-zinc-400">{auth.getUsername()}</span>
-            <button onClick={handleLogout} className="text-zinc-500 hover:text-red-400 transition-colors" title="Uitloggen">
-              <LogOut className="w-4 h-4" />
+
+        {/* User section */}
+        <div className="p-3 border-t border-white/[0.06]">
+          <div className="flex items-center justify-between px-3 py-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-600/30 to-purple-600/30 flex items-center justify-center border border-white/[0.06]">
+                <Sparkles className="w-3.5 h-3.5 text-brand-400" />
+              </div>
+              <span className="text-xs font-medium text-zinc-400">{auth.getUsername()}</span>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="btn-icon !p-1.5 text-zinc-600 hover:text-red-400"
+              title="Uitloggen"
+            >
+              <LogOut className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
       </aside>
-      <main className="flex-1 ml-[260px] overflow-auto">
+
+      {/* Main content */}
+      <main className="flex-1 ml-[260px] overflow-auto bg-surface">
         <Outlet />
       </main>
+
       <Toast />
     </div>
   );
