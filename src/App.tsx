@@ -11,6 +11,11 @@ import StylePresetsPage from './pages/StylePresetsPage';
 import ChannelsPage from './pages/ChannelsPage';
 import VoicesPage from './pages/VoicesPage';
 import IdeationPage from './pages/IdeationPage';
+import MusicLibraryPage from './pages/MusicLibraryPage';
+import SfxLibraryPage from './pages/SfxLibraryPage';
+import OverlayLibraryPage from './pages/OverlayLibraryPage';
+import SpecialEditsPage from './pages/SpecialEditsPage';
+import ClipLibraryPage from './pages/ClipLibraryPage';
 import LoginPage from './pages/LoginPage';
 
 function AppContent() {
@@ -48,7 +53,6 @@ function AppContent() {
           <Route path="overlays" element={<OverlayLibraryPage />} />
           <Route path="special-edits" element={<SpecialEditsPage />} />
           <Route path="clip-library" element={<ClipLibraryPage />} />
-          <Route path="ideation" element={<IdeationPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
