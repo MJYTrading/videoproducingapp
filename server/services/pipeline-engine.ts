@@ -23,7 +23,7 @@ import {
 // Mapping: nieuwe stepNumbers → oude executors
 // Stappen die nog niet ready zijn worden automatisch geskipped
 const STEP_EXECUTOR_MAP: Record<number, string> = {
-  0: 'skip',           // Ideation - niet ready
+  0: 'auto-complete',   // Ideation - direct completed bij start
   1: 'executeStep0',   // Project Formulier (was stap 0)
   2: 'skip',           // Research JSON - niet ready
   3: 'executeStep1',   // Transcripts (was stap 1)
@@ -43,8 +43,8 @@ const STEP_EXECUTOR_MAP: Record<number, string> = {
   17: 'executeStep11', // Color Grading (was stap 11)
   18: 'executeStep12', // Subtitles (was stap 12)
   19: 'skip',          // Overlay - niet ready
-  20: 'executeStep10', // Sound Effects (was stap 10 - video editing)
-  21: 'executeStep10', // Video Effects (was stap 10 - video editing)
+  20: 'skip',          // Sound Effects - niet ready (was stap 10 - video editing)
+  21: 'skip',          // Video Effects - niet ready (was stap 10 - video editing)
   22: 'executeStep13', // Final Export (was stap 13)
   23: 'skip',          // Thumbnail - niet ready
   24: 'executeStep14', // Drive Upload (was stap 14)
