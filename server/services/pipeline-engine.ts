@@ -14,7 +14,7 @@
 
 import prisma from '../db.js';
 import {
-  executeStepResearch, executeStepTrendingClips, executeStepScriptOrchestrator,
+  executeStepResearch, executeStepTrendingClips, executeStepScriptOrchestrator, executeStepDirectorsCut,
   executeStep0, executeStep1, executeStep2, executeStep3,
   executeStep4, executeStep5, executeStep6, executeStep6b,
   executeStep7, executeStep8, executeStep9, executeStep10,
@@ -40,7 +40,7 @@ const STEP_EXECUTOR_MAP: Record<number, string> = {
   13: 'executeStep8',            // Clips Downloaden
   14: 'executeStep6b',           // Images Genereren
   15: 'executeStep9',            // Video Scenes
-  16: 'skip',                    // Director's Cut - niet ready
+  16: 'executeStepDirectorsCut', // Director's Cut - Claude Opus
   17: 'skip',                    // Achtergrondmuziek - niet ready
   18: 'executeStep11',           // Color Grading
   19: 'executeStep12',           // Subtitles
@@ -351,7 +351,7 @@ async function executeStepFunction(
     case 13: return executeStep8(project, settings);                               // Clips Downloaden
     case 14: return executeStep6b(project, settings);                              // Images Genereren
     case 15: return executeStep9(project, settings);                               // Video Scenes
-    case 16: throw new Error("Director's Cut nog niet geïmplementeerd");           // Director's Cut (TODO)
+    case 16: return executeStepDirectorsCut(project, settings, llmKeys);            // Director's Cut
     case 17: throw new Error('Achtergrondmuziek nog niet geïmplementeerd');        // Muziek (TODO)
     case 18: return executeStep11(project, settings);                              // Color Grading
     case 19: return executeStep12(project, settings);                              // Subtitles

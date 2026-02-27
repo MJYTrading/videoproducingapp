@@ -416,3 +416,103 @@ export const assetClips = {
     return res.json();
   },
 };
+
+// ── Media Library API ──
+
+export const mediaLibrary = {
+  // Music
+  async getMusic(): Promise<any[]> {
+    const res = await apiFetch('/media/music');
+    if (!res.ok) throw new Error('Kon muziek niet ophalen');
+    return res.json();
+  },
+  async createMusic(data: any): Promise<any> {
+    const res = await apiFetch('/media/music', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Aanmaken mislukt'); }
+    return res.json();
+  },
+  async updateMusic(id: string, data: any): Promise<any> {
+    const res = await apiFetch(`/media/music/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Bijwerken mislukt'); }
+    return res.json();
+  },
+  async deleteMusic(id: string): Promise<void> {
+    const res = await apiFetch(`/media/music/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Verwijderen mislukt');
+  },
+  async assignMusic(id: string, channelIds: string[]): Promise<void> {
+    const res = await apiFetch(`/media/music/${id}/assign`, { method: 'POST', body: JSON.stringify({ channelIds }) });
+    if (!res.ok) throw new Error('Toewijzen mislukt');
+  },
+
+  // SFX
+  async getSfx(): Promise<any[]> {
+    const res = await apiFetch('/media/sfx');
+    if (!res.ok) throw new Error('Kon SFX niet ophalen');
+    return res.json();
+  },
+  async createSfx(data: any): Promise<any> {
+    const res = await apiFetch('/media/sfx', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Aanmaken mislukt'); }
+    return res.json();
+  },
+  async updateSfx(id: string, data: any): Promise<any> {
+    const res = await apiFetch(`/media/sfx/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Bijwerken mislukt'); }
+    return res.json();
+  },
+  async deleteSfx(id: string): Promise<void> {
+    const res = await apiFetch(`/media/sfx/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Verwijderen mislukt');
+  },
+  async assignSfx(id: string, channelIds: string[]): Promise<void> {
+    const res = await apiFetch(`/media/sfx/${id}/assign`, { method: 'POST', body: JSON.stringify({ channelIds }) });
+    if (!res.ok) throw new Error('Toewijzen mislukt');
+  },
+
+  // Overlays
+  async getOverlays(): Promise<any[]> {
+    const res = await apiFetch('/media/overlays');
+    if (!res.ok) throw new Error('Kon overlays niet ophalen');
+    return res.json();
+  },
+  async createOverlay(data: any): Promise<any> {
+    const res = await apiFetch('/media/overlays', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Aanmaken mislukt'); }
+    return res.json();
+  },
+  async updateOverlay(id: string, data: any): Promise<any> {
+    const res = await apiFetch(`/media/overlays/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Bijwerken mislukt'); }
+    return res.json();
+  },
+  async deleteOverlay(id: string): Promise<void> {
+    const res = await apiFetch(`/media/overlays/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Verwijderen mislukt');
+  },
+
+  // Special Edits
+  async getSpecialEdits(): Promise<any[]> {
+    const res = await apiFetch('/media/special-edits');
+    if (!res.ok) throw new Error('Kon special edits niet ophalen');
+    return res.json();
+  },
+  async createSpecialEdit(data: any): Promise<any> {
+    const res = await apiFetch('/media/special-edits', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Aanmaken mislukt'); }
+    return res.json();
+  },
+  async updateSpecialEdit(id: string, data: any): Promise<any> {
+    const res = await apiFetch(`/media/special-edits/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Bijwerken mislukt'); }
+    return res.json();
+  },
+  async deleteSpecialEdit(id: string): Promise<void> {
+    const res = await apiFetch(`/media/special-edits/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Verwijderen mislukt');
+  },
+  async assignSpecialEdit(id: string, channelIds: string[]): Promise<void> {
+    const res = await apiFetch(`/media/special-edits/${id}/assign`, { method: 'POST', body: JSON.stringify({ channelIds }) });
+    if (!res.ok) throw new Error('Toewijzen mislukt');
+  },
+};

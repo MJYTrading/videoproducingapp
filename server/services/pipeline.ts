@@ -2145,3 +2145,13 @@ Maak een gedetailleerde outline/blueprint voor deze video. Gebruik ALLE beschikb
     format: 'json',
   };
 }
+
+// ══════════════════════════════════════════════════
+// STAP 16: DIRECTOR'S CUT (Claude Opus 4.5)
+// ══════════════════════════════════════════════════
+
+import { executeDirectorsCut } from './directors-cut.js';
+
+export async function executeStepDirectorsCut(project: any, settings: any, llmKeys: any): Promise<any> {
+  return executeDirectorsCut({ project, settings, llmKeys });
+}
