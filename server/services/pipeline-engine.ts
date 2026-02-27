@@ -429,6 +429,7 @@ async function runPipeline(projectId: string) {
   while (state.status === 'running') {
     const freshProject = await getProjectData(projectId);
     const readySteps = getReadySteps(state, freshProject);
+    console.log("[Pipeline DEBUG] Ready steps:", readySteps, "Active:", Array.from(state.activeSteps), "Completed:", Array.from(state.completedSteps), "Skipped:", Array.from(state.skippedSteps));
 
     if (readySteps.length === 0) {
       // Niets meer te doen — zijn we klaar of wachten we?
@@ -479,43 +480,7 @@ async function runPipeline(projectId: string) {
     const stepPromises: Promise<void>[] = [];
 
     for (const stepNum of readySteps) {
-      // Special: stap 65 = start scene streaming (65 + 9 samen)
-      if (stepNum === 13) {
-        state.activeSteps.add(65);
-        state.activeSteps.add(14);
-
-        const streamPromise = (async () => {
-          try {
-            const streamResult = await runSceneStreaming(projectId, state);
-            state.activeSteps.delete(65);
-            state.activeSteps.delete(9);
-
-            if (state.status === 'review') {
-              // Manual mode: 65 staat op review, 9 is nog niet gestart
-              // completedSteps wordt niet gezet — wacht op approve
-              return;
-            }
-
-            // Auto mode: beide stappen zijn klaar
-            state.completedSteps.add(65);
-            if (streamResult.videosCompleted > 0) {
-              state.completedSteps.add(14);
-            } else if (streamResult.totalScenes > 0) {
-              state.failedSteps.set(9, 'Geen video scenes geslaagd');
-            } else {
-              state.skippedSteps.add(65);
-              state.skippedSteps.add(14);
-            }
-          } catch (err: any) {
-            state.activeSteps.delete(65);
-            state.activeSteps.delete(9);
-            state.failedSteps.set(65, err.message || 'Scene streaming mislukt');
-          }
-        })();
-
-        stepPromises.push(streamPromise);
-        continue;
-      }
+      // Scene streaming disabled — stap 13 en 14 draaien als normale stappen
 
       state.activeSteps.add(stepNum);
 
@@ -695,6 +660,7 @@ export async function pausePipeline(projectId: string): Promise<{ success: boole
 export async function resumePipeline(projectId: string): Promise<{ success: boolean }> {
   const state = activePipelines.get(projectId);
   if (state && state.status === 'paused') {
+    state.activeSteps.clear(); // Reset actieve stappen bij hervatten
     state.status = 'running';
     await updateProjectStatus(projectId, 'running');
     await addLog(projectId, 'info', 0, 'App', 'Pipeline hervat');
