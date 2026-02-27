@@ -189,14 +189,11 @@ function getExecutorName(stepNumber: number): string {
 
 function getStepName(stepNumber: number): string {
   const map: Record<number, string> = {
-    0: 'Ideation', 1: 'Project Formulier', 2: 'Research JSON',
-    3: 'Transcripts Ophalen', 4: 'Trending Clips Research', 5: 'Style Profile',
+    0: 'Config validatie', 1: 'Transcripts ophalen', 2: 'Style profile maken',
+    3: 'Script schrijven', 4: 'Voiceover genereren', 5: 'Timestamps genereren',
     6: 'Script Schrijven', 7: 'Voice Over', 8: 'Avatar / Spokesperson',
-    9: 'Timestamps Ophalen', 10: 'Scene Prompts', 11: 'Assets Zoeken',
-    12: 'Clips Downloaden', 13: 'Images Genereren', 14: 'Video Scenes Genereren',
-    15: 'Orchestrator', 16: 'Achtergrondmuziek', 17: 'Color Grading',
-    18: 'Subtitles', 19: 'Overlay', 20: 'Sound Effects',
-    21: 'Video Effects', 22: 'Final Export', 23: 'Thumbnail', 24: 'Drive Upload',
+    7: 'Assets zoeken', 8: 'YouTube clips ophalen', 9: 'Video scenes genereren',
+    10: 'Video editing', 11: 'Color grading', 12: 'Subtitles', 13: 'Final export', 14: 'Google Drive upload',
   };
   return map[stepNumber] || `Stap ${stepNumber}`;
 }
@@ -326,34 +323,27 @@ async function executeStepWithRetry(
 async function executeStepFunction(
   stepNumber: number, project: any, settings: any, llmKeys: any
 ): Promise<any> {
-  // Mapping: nieuwe stepNumbers (0-24) → oude executor functies
-  // Stap 0 en 1 worden direct completed bij pipeline start (niet hier)
   switch (stepNumber) {
-    // Stap 0: Ideation → direct completed bij start
-    // Stap 1: Project Formulier → direct completed bij start
-    case 2: return executeStep2(project, llmKeys);                              // Research JSON → Style Profile logic (Perplexity)
-    case 3: return executeStep1(project, settings.youtubeTranscriptApiKey);     // Transcripts → oude stap 1
-    case 4: return executeStep2(project, llmKeys);                              // Trending Clips Research → Perplexity research
-    case 5: return executeStep2(project, llmKeys);                              // Style Profile → oude stap 2
-    case 6: return executeStep3(project, llmKeys);                              // Script Schrijven → oude stap 3
-    case 7: return executeStep4(project, settings);                             // Voice Over → oude stap 4
-    case 8: throw new Error('Avatar/Spokesperson nog niet geïmplementeerd');    // Avatar → HeyGen (TODO)
-    case 9: return executeStep5(project, settings);                             // Timestamps → oude stap 5
-    case 10: return executeStep6(project, llmKeys);                             // Scene Prompts → oude stap 6
-    case 11: return executeStep7(project, settings);                            // Assets Zoeken → oude stap 7
-    case 12: return executeStep8(project, settings);                            // Clips Downloaden → oude stap 8
-    case 13: return executeStep6b(project, settings);                           // Images Genereren → oude stap 6b
-    case 14: return executeStep9(project, settings);                            // Video Scenes → oude stap 9
-    case 15: throw new Error('Orchestrator nog niet geïmplementeerd');          // Orchestrator (TODO)
-    case 16: throw new Error('Achtergrondmuziek nog niet geïmplementeerd');     // Muziek (TODO)
-    case 17: return executeStep11(project, settings);                           // Color Grading → oude stap 11
-    case 18: return executeStep12(project, settings);                           // Subtitles → oude stap 12
-    case 19: throw new Error('Overlay nog niet geïmplementeerd');               // Overlay (TODO)
-    case 20: return executeStep10(project, settings);                           // Sound Effects → oude stap 10
-    case 21: return executeStep10(project, settings);                           // Video Effects → oude stap 10 (zelfde editor)
-    case 22: return executeStep13(project, settings);                           // Final Export → oude stap 13
-    case 23: throw new Error('Thumbnail nog niet geïmplementeerd');             // Thumbnail (TODO)
-    case 24: return executeStep14(project, settings);                           // Drive Upload → oude stap 14
+    case 0: {
+      const r = await executeStep0(project);
+      if (!r.valid) throw new Error(`Validatie fouten: ${r.errors.join(', ')}`);
+      return { projectPath: r.projectPath };
+    }
+    case 1: return executeStep1(project, settings.youtubeTranscriptApiKey);
+    case 2: return executeStep2(project, llmKeys);
+    case 3: return executeStep3(project, llmKeys);
+    case 4: return executeStep4(project, settings);
+    case 5: return executeStep5(project, settings);
+    case 6: return executeStep6(project, llmKeys);
+    case 13: return executeStep6b(project, settings);
+    case 7: return executeStep7(project, settings);
+    case 8: return executeStep8(project, settings);
+    case 9: return executeStep9(project, settings);
+    case 10: return executeStep10(project, settings);
+    case 11: return executeStep11(project, settings);
+    case 12: return executeStep12(project, settings);
+    case 13: return executeStep13(project, settings);
+    case 14: return executeStep14(project, settings);
     default: throw new Error(`Stap ${stepNumber} niet geïmplementeerd`);
   }
 }
@@ -620,44 +610,6 @@ export async function startPipeline(projectId: string, fromQueue: boolean = fals
   };
 
   activePipelines.set(projectId, state);
-
-  // ── Auto-skip disabled stappen op basis van enabledSteps ──
-  const enabledSteps: number[] = project.enabledSteps ? JSON.parse(project.enabledSteps) : [];
-  const hasEnabledSteps = Array.isArray(enabledSteps) && enabledSteps.length > 0;
-  
-  for (const stepNum of STEP_ORDER) {
-    if (state.completedSteps.has(stepNum) || state.skippedSteps.has(stepNum)) continue;
-    
-    // Skip als stap niet in enabledSteps zit (wanneer enabledSteps is ingesteld)
-    if (hasEnabledSteps && !enabledSteps.includes(stepNum)) {
-      state.skippedSteps.add(stepNum);
-      await updateStepInDb(projectId, stepNum, { status: 'skipped' });
-      await addLog(projectId, 'info', stepNum, 'App',
-        `${getStepName(stepNum)} overgeslagen (uitgeschakeld in project config)`);
-      continue;
-    }
-    
-    // Skip stappen die 'skip' als executor hebben in STEP_EXECUTOR_MAP (niet ready)
-    const executorMapping = STEP_EXECUTOR_MAP[stepNum];
-    if (executorMapping === 'skip') {
-      state.skippedSteps.add(stepNum);
-      await updateStepInDb(projectId, stepNum, { status: 'skipped' });
-      await addLog(projectId, 'info', stepNum, 'App',
-        `${getStepName(stepNum)} overgeslagen (nog niet geïmplementeerd)`);
-      continue;
-    }
-  }
-
-  // ── Stap 0 (Ideation) en 1 (Formulier) direct completed ──
-  // Deze stappen zijn al klaar als de pipeline start (het formulier is ingevuld)
-  for (const autoStep of [0, 1]) {
-    if (!state.completedSteps.has(autoStep) && !state.skippedSteps.has(autoStep)) {
-      state.completedSteps.add(autoStep);
-      await updateStepInDb(projectId, autoStep, { status: 'completed', duration: 0 });
-      await addLog(projectId, 'info', autoStep, 'App',
-        `${getStepName(autoStep)} automatisch voltooid`);
-    }
-  }
 
   await updateProjectStatus(projectId, 'running');
   await prisma.project.update({
