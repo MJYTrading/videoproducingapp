@@ -111,8 +111,8 @@ const STEP_CONFIG: Record<number, {
   18: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
   19: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
   20: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  21: { dependsOn: [17, 18, 19, 20], timeout: 3_600_000, maxRetries: 2, retryDelays: [15_000, 30_000] },
-  22: { dependsOn: [21],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  21: { dependsOn: [14], timeout: 3_600_000, maxRetries: 2, retryDelays: [15_000, 30_000] },
+  22: { dependsOn: [14],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
   23: { dependsOn: [22],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
   24: { dependsOn: [22],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
 };
