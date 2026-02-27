@@ -151,7 +151,7 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
           if (imgResult.skipped) {
             metadata = { skipped: true, reason: imgResult.reason };
           } else {
-            metadata = { scenesCompleted: imgResult.scenesCompleted, scenesFailed: imgResult.scenesFailed };
+            metadata = { generated: imgResult.generated, failed: imgResult.failed };
           }
           break;
         }
@@ -161,7 +161,7 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
           if (scenesResult.skipped) {
             metadata = { skipped: true, reason: scenesResult.reason };
           } else {
-            metadata = { scenesCompleted: scenesResult.scenesCompleted, scenesFailed: scenesResult.scenesFailed };
+            metadata = { generated: scenesResult.generated, failed: scenesResult.failed };
           }
           break;
         }

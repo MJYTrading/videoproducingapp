@@ -6,6 +6,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fetchTranscriptsBatch } from './youtube.js';
 import { llmJsonPrompt, llmSimplePrompt } from './llm.js';
+import { generateImages, generateVideos } from './media-generator.js';
 
 const WORKSPACE_BASE = '/root/.openclaw/workspace/projects';
 
@@ -646,183 +647,80 @@ export async function executeStep6(project: any, llmKeys: { elevateApiKey?: stri
 
 // ── Stap 13: Images Genereren (via N8N) ──
 
+// ── Stap 13: Images Genereren (direct API) ──
+
 export async function executeStep6b(project: any, settings: any) {
   const projPath = projectDir(project.name);
   const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
-  const imageOptionsDir = path.join(projPath, 'assets', 'image-options') + '/';
-  const selectionsPath = path.join(projPath, 'assets', 'image-selections.json');
 
   let scenePrompts: any;
   try {
     scenePrompts = await readJson(scenePromptsPath);
   } catch {
-    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 6 uit.');
+    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 10 uit.');
   }
 
-  // Filter alleen ai_video scenes die visual_prompt_variants hebben
   const aiScenes = (scenePrompts.scenes || []).filter(
-    (s: any) => (s.asset_type === 'ai_video' || s.type === 'ai_video') && s.visual_prompt_variants && s.visual_prompt_variants.length >= 3
+    (s: any) => (s.asset_type === 'ai_video' || s.type === 'ai_video')
+      && (s.visual_prompt_variants?.length > 0 || s.visual_prompt)
   );
 
   if (aiScenes.length === 0) {
-    console.log('[Step 13] Geen ai_video scenes met prompt varianten gevonden');
-    return { skipped: true, reason: 'Geen scenes met visual_prompt_variants in scene-prompts.json' };
+    console.log('[Step 13] Geen ai_video scenes gevonden');
+    return { skipped: true, reason: 'Geen scenes met visual prompts' };
   }
 
-  const isAutoMode = project.imageSelectionMode !== 'manual';
-  if (isAutoMode) {
-    console.log('[Step 13] Auto mode: 1 image per scene genereren, automatisch selecteren');
-  }
+  console.log(`[Step 13] ${aiScenes.length} images genereren via directe API...`);
 
-  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/image-options-generator';
-  const aspectRatio = project.output === 'youtube_short' ? 'portrait' : 'landscape';
+  const mediaSettings = {
+    elevateApiKey: settings.elevateApiKey || '',
+    genaiProApiKey: settings.genaiProApiKey || '',
+    genaiProEnabled: settings.genaiProEnabled || false,
+    genaiProImagesEnabled: settings.genaiProImagesEnabled || false,
+  };
 
-  console.log('[Step 13] ' + aiScenes.length + ' scenes, 3 images per scene genereren via ' + n8nUrl);
-
-  const allOptions: any[] = [];
-  let completed = 0;
-  let failed = 0;
-
-  // ── Stap 1: Alle webhooks tegelijk versturen ──
-  const sceneJobs: { sceneId: number; scene: any; statusPath: string; webhookOk: boolean }[] = [];
-
-  await Promise.all(aiScenes.map(async (scene: any, i: number) => {
-    const sceneId = scene.id;
-    const statusPath = path.join(projPath, 'assets', 'image-options', 'scene' + sceneId + '-status.json');
-
-    const prompts = isAutoMode
-      ? [scene.visual_prompt_variants[0] || scene.visual_prompt]
-      : scene.visual_prompt_variants.slice(0, 3);
-
-    const payload = {
-      project: project.name,
-      scene_id: sceneId,
-      visual_prompts: prompts,
-      aspect_ratio: aspectRatio,
-      output_dir: imageOptionsDir,
-      elevate_api_key: settings.elevateApiKey,
-      status_path: statusPath,
-    };
-
-    try {
-      try { await fs.unlink(statusPath); } catch {}
-
-      const response = await fetch(n8nUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error('Webhook mislukt (' + response.status + '): ' + body);
-      }
-
-      console.log('[Step 13] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') webhook verstuurd');
-      sceneJobs.push({ sceneId, scene, statusPath, webhookOk: true });
-    } catch (err: any) {
-      console.error('[Step 13] Scene ' + sceneId + ' webhook error: ' + err.message);
-      sceneJobs.push({ sceneId, scene, statusPath, webhookOk: false });
-      failed++;
-      allOptions.push({
-        scene_id: sceneId,
-        text: scene.text || '',
-        visual_prompt: scene.visual_prompt,
-        options: [],
-        error: err.message,
-      });
+  const results = await generateImages(
+    aiScenes,
+    projPath,
+    mediaSettings,
+    (done, total, sceneId) => {
+      console.log(`[Step 13] Voortgang: ${done}/${total} (scene ${sceneId})`);
     }
+  );
+
+  const selections = results.map(r => ({
+    scene_id: r.sceneId,
+    chosen_option: 1,
+    chosen_path: r.localPath,
+    chosen_url: r.imageUrl,
+    provider: r.provider,
+    prompt: r.prompt,
   }));
 
-  const activeJobs = sceneJobs.filter(j => j.webhookOk);
-  console.log('[Step 13] ' + activeJobs.length + '/' + aiScenes.length + ' webhooks verstuurd, parallel pollen...');
-
-  // ── Stap 2: Alle status files parallel pollen ──
-  await Promise.all(activeJobs.map(async (job) => {
-    try {
-      const status = await pollForStatus(job.statusPath, 5000, 180000);
-
-      if (status.status === 'completed') {
-        completed++;
-        allOptions.push({
-          scene_id: job.sceneId,
-          text: job.scene.text || '',
-          visual_prompt: job.scene.visual_prompt,
-          options: status.options || [],
-        });
-        console.log('[Step 13] Scene ' + job.sceneId + ' klaar! (' + completed + '/' + aiScenes.length + ')');
-      } else {
-        failed++;
-        allOptions.push({
-          scene_id: job.sceneId,
-          text: job.scene.text || '',
-          visual_prompt: job.scene.visual_prompt,
-          options: [],
-          error: status.error || 'Unknown',
-        });
-        console.warn('[Step 13] Scene ' + job.sceneId + ' mislukt: ' + (status.error || 'Unknown'));
-      }
-    } catch (err: any) {
-      failed++;
-      allOptions.push({
-        scene_id: job.sceneId,
-        text: job.scene.text || '',
-        visual_prompt: job.scene.visual_prompt,
-        options: [],
-        error: err.message,
-      });
-      console.error('[Step 13] Scene ' + job.sceneId + ' poll error: ' + err.message);
-    }
-  }));
-
-  // Schrijf alle opties naar image-options.json
-  const imageOptionsPath = path.join(projPath, 'assets', 'image-options.json');
-  await writeJson(imageOptionsPath, {
-    project: project.name,
-    total_scenes: aiScenes.length,
-    completed,
-    failed,
-    generated_at: new Date().toISOString(),
-    scenes: allOptions,
-  });
-
-  console.log('[Step 13] Klaar! ' + completed + ' scenes gelukt, ' + failed + ' mislukt');
-
-  // Auto mode: schrijf automatisch image-selections.json (altijd optie 1)
-  if (isAutoMode) {
-    const autoSelections = allOptions
-      .filter((s: any) => s.options && s.options.length > 0)
-      .map((s: any) => ({
-        scene_id: s.scene_id,
-        chosen_option: 1,
-        chosen_path: s.options[0]?.path || '',
-      }));
-
-    const selectionsPath = path.join(projPath, 'assets', 'image-selections.json');
-    await writeJson(selectionsPath, {
+  await writeJson(
+    path.join(projPath, 'assets', 'image-selections.json'),
+    {
       project: project.name,
       saved_at: new Date().toISOString(),
       auto_selected: true,
-      total_selections: autoSelections.length,
-      selections: autoSelections,
-    });
-    console.log('[Step 13] Auto mode: ' + autoSelections.length + ' images automatisch geselecteerd');
-  }
+      total_selections: selections.length,
+      selections,
+    }
+  );
 
-  // Als geen enkele scene gelukt is, throw error zodat de stap niet op completed komt
-  if (failed > 0) {
-    throw new Error('Alle ' + aiScenes.length + ' scenes mislukt. Geen images gegenereerd.');
+  console.log(`[Step 13] Klaar! ${results.length}/${aiScenes.length} images gegenereerd`);
+
+  if (results.length === 0 && aiScenes.length > 0) {
+    throw new Error('Alle scenes mislukt. Geen images gegenereerd.');
   }
 
   return {
     totalScenes: aiScenes.length,
-    scenesCompleted: completed,
-    scenesFailed: failed,
-    filePath: imageOptionsPath,
-    autoSelected: isAutoMode,
+    generated: results.length,
+    failed: aiScenes.length - results.length,
+    autoSelected: true,
   };
 }
-
 
 // ── Stap 4: Voiceover genereren (via N8N) ──
 
@@ -1321,140 +1219,72 @@ export async function executeStep8(project: any, settings: any) {
 
 // ── Stap 9: Video scenes genereren (VEO 3 image-to-video) via N8N ──
 
+// ── Stap 14: Video Scenes Genereren (direct API) ──
+
 export async function executeStep9(project: any, settings: any) {
   const projPath = projectDir(project.name);
   const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
   const selectionsPath = path.join(projPath, 'assets', 'image-selections.json');
-  const statusPath = path.join(projPath, 'assets', 'scenes-status.json');
-  const outputDir = path.join(projPath, 'assets', 'scenes') + '/';
 
   let scenePrompts: any;
   try {
     scenePrompts = await readJson(scenePromptsPath);
   } catch {
-    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 6 uit.');
+    throw new Error('scene-prompts.json niet gevonden.');
   }
 
-  // Lees image selecties (van stap 13)
   let imageSelections: any = { selections: [] };
   try {
     imageSelections = await readJson(selectionsPath);
-    console.log('[Step 9] ' + (imageSelections.selections?.length || 0) + ' image selecties geladen');
   } catch {
-    throw new Error('image-selections.json niet gevonden. Voer eerst stap 13 (Images Genereren) uit.');
+    console.log('[Step 14] Geen image selecties gevonden — text-to-video mode');
   }
-
-  const selections = imageSelections.selections || [];
 
   const aiScenes = (scenePrompts.scenes || []).filter(
     (s: any) => s.asset_type === 'ai_video' || s.type === 'ai_video'
   );
 
   if (aiScenes.length === 0) {
-    console.log('[Step 9] Geen ai_video scenes gevonden — stap overgeslagen');
-    return { skipped: true, reason: 'Geen scenes met asset_type "ai_video" in scene-prompts.json' };
+    return { skipped: true, reason: 'Geen ai_video scenes' };
   }
 
-  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/video-scene-generator';
-  const aspectRatio = project.output === 'youtube_short' ? 'portrait' : 'landscape';
+  console.log(`[Step 14] ${aiScenes.length} video scenes genereren via directe API...`);
 
-  console.log('[Step 9] ' + aiScenes.length + ' scenes genereren via image-to-video, PARALLEL via ' + n8nUrl);
+  const mediaSettings = {
+    elevateApiKey: settings.elevateApiKey || '',
+    genaiProApiKey: settings.genaiProApiKey || '',
+    genaiProEnabled: settings.genaiProEnabled || false,
+    genaiProImagesEnabled: settings.genaiProImagesEnabled || false,
+  };
 
-  const results: any[] = [];
-  let completed = 0;
-  let failed = 0;
-
-  // ── Alle webhooks tegelijk versturen ──
-  const sceneJobs: { sceneId: number; scene: any; statusPath: string; webhookOk: boolean }[] = [];
-
-  await Promise.all(aiScenes.map(async (scene: any, i: number) => {
-    const sceneId = scene.id;
-    const sceneStatusPath = path.join(projPath, 'assets', 'scenes', 'scene' + sceneId + '-status.json');
-
-    const selection = selections.find((s: any) => s.scene_id === sceneId || String(s.scene_id) === String(sceneId));
-    const sourceImagePath = selection?.chosen_path || '';
-
-    if (!sourceImagePath) {
-      console.warn('[Step 9] Scene ' + sceneId + ': geen source image, overgeslagen');
-      failed++;
-      results.push({ scene_id: sceneId, status: 'failed', error: 'Geen source image geselecteerd' });
-      return;
+  const results = await generateVideos(
+    aiScenes,
+    imageSelections.selections || [],
+    projPath,
+    mediaSettings,
+    (done, total, sceneId) => {
+      console.log(`[Step 14] Voortgang: ${done}/${total} (scene ${sceneId})`);
     }
+  );
 
-    const payload = {
-      project: project.name,
-      scene_id: sceneId,
-      visual_prompt: scene.visual_prompt,
-      duration: scene.duration || 5,
-      aspect_ratio: aspectRatio,
-      output_dir: outputDir,
-      elevate_api_key: settings.elevateApiKey,
-      source_image_path: sourceImagePath,
-      genai_pro_api_key: settings.genaiProApiKey || '',
-      genai_pro_enabled: settings.genaiProEnabled || false,
-    };
+  await writeJson(
+    path.join(projPath, 'assets', 'scenes', 'video-results.json'),
+    { results, generated_at: new Date().toISOString() }
+  );
 
-    try {
-      try { await fs.unlink(sceneStatusPath); } catch {}
+  console.log(`[Step 14] Klaar! ${results.length}/${aiScenes.length} videos gegenereerd`);
 
-      const response = await fetch(n8nUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error('Webhook mislukt (' + response.status + '): ' + body);
-      }
-
-      console.log('[Step 9] Scene ' + sceneId + ' (' + (i + 1) + '/' + aiScenes.length + ') webhook verstuurd');
-      sceneJobs.push({ sceneId, scene, statusPath: sceneStatusPath, webhookOk: true });
-    } catch (err: any) {
-      console.error('[Step 9] Scene ' + sceneId + ' webhook error: ' + err.message);
-      failed++;
-      results.push({ scene_id: sceneId, status: 'failed', error: err.message });
-    }
-  }));
-
-  const activeJobs = sceneJobs.filter(j => j.webhookOk);
-  console.log('[Step 9] ' + activeJobs.length + '/' + aiScenes.length + ' webhooks verstuurd, parallel pollen...');
-
-  // ── Alle status files parallel pollen ──
-  await Promise.all(activeJobs.map(async (job) => {
-    try {
-      const status = await pollForStatus(job.statusPath, 10000, 600000);
-
-      if (status.status === 'completed') {
-        completed++;
-        results.push({ scene_id: job.sceneId, status: 'success', file_path: status.file_path });
-        console.log('[Step 9] Scene ' + job.sceneId + ' klaar! (' + completed + '/' + aiScenes.length + ')');
-      } else {
-        failed++;
-        results.push({ scene_id: job.sceneId, status: 'failed', error: status.error || 'Unknown' });
-        console.log('[Step 9] Scene ' + job.sceneId + ' mislukt: ' + (status.error || 'Unknown'));
-      }
-    } catch (err: any) {
-      failed++;
-      results.push({ scene_id: job.sceneId, status: 'failed', error: err.message });
-      console.log('[Step 9] Scene ' + job.sceneId + ' poll error: ' + err.message);
-    }
-  }));
-
-  console.log('[Step 9] Klaar! ' + completed + '/' + aiScenes.length + ' geslaagd, ' + failed + ' mislukt');
-
-  if (failed > 0) {
-    throw new Error(failed + ' van ' + aiScenes.length + ' video scenes mislukt.');
+  if (results.length === 0 && aiScenes.length > 0) {
+    throw new Error('Alle video scenes mislukt.');
   }
 
   return {
-    skipped: false,
-    scenesCompleted: completed,
-    scenesFailed: failed,
     totalScenes: aiScenes.length,
-    results,
+    generated: results.length,
+    failed: aiScenes.length - results.length,
   };
 }
+
 
 // ============================================================
 // STAP 10: VIDEO EDITING
