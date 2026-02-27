@@ -948,63 +948,179 @@ export async function executeStep5(project: any, settings: any) {
   const projPath = projectDir(project.name);
   const audioPath = path.join(projPath, 'audio', 'voiceover.mp3');
   const scriptPath = path.join(projPath, 'script', 'script.txt');
-  const outputDir = path.join(projPath, 'audio') + '/';
-  const statusPath = path.join(projPath, 'audio', 'timestamps-status.json');
   const timestampsPath = path.join(projPath, 'audio', 'timestamps.json');
+  const clipPositionsPath = path.join(projPath, 'audio', 'clip-positions.json');
+
+  const apiKey = settings.assemblyAiApiKey;
+  if (!apiKey) throw new Error('AssemblyAI API key niet ingesteld. Ga naar Instellingen.');
 
   // Check of voiceover bestaat
   try {
     const stat = await fs.stat(audioPath);
     if (stat.size === 0) throw new Error('Bestand is leeg');
   } catch {
-    throw new Error('voiceover.mp3 niet gevonden. Voer eerst stap 4 uit.');
+    throw new Error('voiceover.mp3 niet gevonden. Voer eerst stap 7 (Voice Over) uit.');
   }
 
-  // Verwijder oude bestanden zodat polling schoon is
-  try { await fs.unlink(statusPath); } catch {}
+  // Verwijder oude bestanden
   try { await fs.unlink(timestampsPath); } catch {}
-  try { await fs.unlink(path.join(projPath, 'audio', 'clip-positions.json')); } catch {}
+  try { await fs.unlink(clipPositionsPath); } catch {}
 
-  // Stuur webhook naar N8N — met API key in payload
-  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/timestamp-generator';
+  const headers = { 'Authorization': apiKey, 'Content-Type': 'application/json' };
 
-  const payload = {
-    project: project.name,
-    audio_path: audioPath,
-    script_path: scriptPath,
-    output_dir: outputDir,
-    assemblyai_api_key: settings.assemblyAiApiKey,
+  // 1. Upload audio naar AssemblyAI
+  console.log('[Timestamps] Audio uploaden naar AssemblyAI...');
+  const audioBuffer = await fs.readFile(audioPath);
+  const uploadResp = await fetch('https://api.assemblyai.com/v2/upload', {
+    method: 'POST',
+    headers: { 'Authorization': apiKey },
+    body: audioBuffer,
+  });
+  if (!uploadResp.ok) throw new Error('AssemblyAI upload mislukt: ' + (await uploadResp.text()).slice(0, 200));
+  const uploadData = await uploadResp.json();
+  const uploadUrl = uploadData.upload_url;
+  console.log('[Timestamps] Audio geüpload, URL ontvangen');
+
+  // 2. Start transcriptie
+  console.log('[Timestamps] Transcriptie starten...');
+  const transcriptResp = await fetch('https://api.assemblyai.com/v2/transcript', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ audio_url: uploadUrl, punctuate: true, format_text: true }),
+  });
+  if (!transcriptResp.ok) throw new Error('AssemblyAI transcript start mislukt: ' + (await transcriptResp.text()).slice(0, 200));
+  const transcriptData = await transcriptResp.json();
+  const transcriptId = transcriptData.id;
+  console.log('[Timestamps] Transcript ID: ' + transcriptId);
+
+  // 3. Poll tot completed (max 10 minuten)
+  let transcript: any = null;
+  const maxPolls = 60;
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise(r => setTimeout(r, 10000)); // 10s wachten
+    const pollResp = await fetch('https://api.assemblyai.com/v2/transcript/' + transcriptId, {
+      headers: { 'Authorization': apiKey },
+    });
+    const pollData = await pollResp.json();
+
+    if (pollData.status === 'completed') {
+      transcript = pollData;
+      console.log('[Timestamps] Transcriptie voltooid! Duur: ' + Math.round(pollData.audio_duration) + 's');
+      break;
+    } else if (pollData.status === 'error') {
+      throw new Error('AssemblyAI transcriptie mislukt: ' + (pollData.error || 'onbekende fout'));
+    }
+    // Nog bezig, poll opnieuw
+    if (i % 6 === 5) console.log('[Timestamps] Nog bezig... (' + ((i + 1) * 10) + 's)');
+  }
+
+  if (!transcript) throw new Error('AssemblyAI timeout: transcriptie duurde langer dan 10 minuten');
+
+  // 4. Haal sentences op
+  console.log('[Timestamps] Sentences ophalen...');
+  const sentencesResp = await fetch('https://api.assemblyai.com/v2/transcript/' + transcriptId + '/sentences', {
+    headers: { 'Authorization': apiKey },
+  });
+  if (!sentencesResp.ok) throw new Error('AssemblyAI sentences ophalen mislukt');
+  const sentencesData = await sentencesResp.json();
+
+  // 5. Bouw timestamps.json
+  const timestamps = {
+    words: (transcript.words || []).map((w: any) => ({
+      text: w.text,
+      start: w.start / 1000,
+      end: w.end / 1000,
+      confidence: w.confidence,
+    })),
+    sentences: (sentencesData.sentences || []).map((s: any) => ({
+      text: s.text,
+      start: s.start / 1000,
+      end: s.end / 1000,
+    })),
+    duration: transcript.audio_duration,
+    audio_file: 'voiceover.mp3',
   };
 
-  console.log('[Step 5] Webhook sturen naar ' + n8nUrl + '...');
+  await writeJson(timestampsPath, timestamps);
+  console.log('[Timestamps] timestamps.json opgeslagen (' + timestamps.words.length + ' woorden, ' + timestamps.sentences.length + ' zinnen)');
 
-  const response = await fetch(n8nUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  // 6. Bereken clip posities (als er clips in het script staan)
+  let clipCount = 0;
+  try {
+    const script = await readText(scriptPath);
+    const clipRegex = /\[CLIP:\s*(https?:\/\/\S+)\s+(\d{2}:\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}:\d{2})\s*\]/g;
+    const clips: any[] = [];
+    let match;
+    let clipId = 1;
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+    while ((match = clipRegex.exec(script)) !== null) {
+      const url = match[1];
+      const startParts = match[2].split(':').map(Number);
+      const endParts = match[3].split(':').map(Number);
+      const startSec = startParts[0] * 3600 + startParts[1] * 60 + startParts[2];
+      const endSec = endParts[0] * 3600 + endParts[1] * 60 + endParts[2];
+      const clipDuration = endSec - startSec;
+
+      // Zoek timestamp waar clip moet beginnen
+      const textBefore = script.substring(0, match.index).trim();
+      const wordsBeforeMarker = textBefore
+        .replace(/\[CLIP:[^\]]*\]/g, '')
+        .split(/\s+/)
+        .filter((w: string) => w.length > 0)
+        .slice(-8)
+        .map((w: string) => w.toLowerCase().replace(/[^a-zA-Z0-9'-]/g, ''));
+
+      let bestMatchEnd = 0;
+      let bestScore = 0;
+      for (let i = 0; i < timestamps.words.length; i++) {
+        let score = 0;
+        let lastIdx = i;
+        for (let j = 0; j < wordsBeforeMarker.length && (i + j) < timestamps.words.length; j++) {
+          const tsWord = timestamps.words[i + j].text.toLowerCase().replace(/[^a-zA-Z0-9'-]/g, '');
+          if (tsWord === wordsBeforeMarker[j] || tsWord.includes(wordsBeforeMarker[j])) {
+            score++;
+            lastIdx = i + j;
+          }
+        }
+        if (score >= Math.ceil(wordsBeforeMarker.length * 0.6) && score > bestScore) {
+          bestScore = score;
+          bestMatchEnd = timestamps.words[lastIdx].end;
+        }
+      }
+
+      clips.push({
+        clip_id: clipId++, url,
+        source_start: match[2], source_end: match[3],
+        clip_duration: clipDuration,
+        voiceover_pause_at: bestMatchEnd,
+        timeline_start: bestMatchEnd,
+        timeline_end: bestMatchEnd + clipDuration,
+      });
+    }
+
+    if (clips.length > 0) {
+      const clipPositions = {
+        clips,
+        voiceover_duration: transcript.audio_duration,
+        total_duration_with_clips: transcript.audio_duration + clips.reduce((s: number, c: any) => s + c.clip_duration, 0),
+      };
+      await writeJson(clipPositionsPath, clipPositions);
+      console.log('[Timestamps] ' + clips.length + ' clips gevonden en opgeslagen');
+      clipCount = clips.length;
+    }
+  } catch (err: any) {
+    console.log('[Timestamps] Clip detectie overgeslagen: ' + err.message);
   }
 
-  const webhookResult = await response.json();
-  console.log('[Step 5] N8N response: ' + JSON.stringify(webhookResult));
-
-  // Poll status.json (max 5 minuten)
-  console.log('[Step 5] Wachten op status: ' + statusPath);
-  const status = await pollForStatus(statusPath, 5000, 300000);
-
-  console.log('[Step 5] Timestamps klaar! ' + (status.word_count || 0) + ' woorden, ' + Math.round(status.duration || 0) + 's, ' + (status.clip_count || 0) + ' clips');
+  console.log('[Timestamps] Klaar! ' + timestamps.words.length + ' woorden, ' + Math.round(transcript.audio_duration) + 's, ' + clipCount + ' clips');
 
   return {
     timestampsPath,
-    wordCount: status.word_count || 0,
-    duration: Math.round((status.duration || 0) * 10) / 10,
-    sentenceCount: status.sentence_count || 0,
-    clipCount: status.clip_count || 0,
-    totalDurationWithClips: status.total_duration_with_clips || status.duration || 0,
+    wordCount: timestamps.words.length,
+    duration: Math.round(transcript.audio_duration * 10) / 10,
+    sentenceCount: timestamps.sentences.length,
+    clipCount,
+    totalDurationWithClips: transcript.audio_duration,
   };
 }
 
