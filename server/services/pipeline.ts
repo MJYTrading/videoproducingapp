@@ -1138,13 +1138,12 @@ export async function executeStep5(project: any, settings: any) {
 export async function executeStep7(project: any, settings: any) {
   const projPath = projectDir(project.name);
   const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
-  const statusPath = path.join(projPath, 'assets', 'assets-status.json');
 
   let scenePrompts: any;
   try {
     scenePrompts = await readJson(scenePromptsPath);
   } catch {
-    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 6 uit.');
+    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 11 (Scene Prompts) uit.');
   }
 
   const realImageScenes = (scenePrompts.scenes || []).filter(
@@ -1152,7 +1151,7 @@ export async function executeStep7(project: any, settings: any) {
   );
 
   if (realImageScenes.length === 0) {
-    console.log('[Step 7] Geen real_image scenes gevonden — stap overgeslagen');
+    console.log('[Step 12] Geen real_image scenes gevonden — stap overgeslagen');
     return {
       skipped: true,
       reason: 'Geen scenes met asset_type "real_image" in scene-prompts.json',
@@ -1161,60 +1160,58 @@ export async function executeStep7(project: any, settings: any) {
     };
   }
 
-  const assets = realImageScenes.map((scene: any) => ({
-    scene_id: scene.id,
-    search_query: buildSearchQuery(scene),
-    search_query_fallback: buildFallbackQuery(scene),
-    sources: ['google', 'pexels', 'wikimedia'],
-    min_width: 1920,
-    ken_burns_type: pickKenBurnsType(scene),
-    duration: scene.duration || 5,
-  }));
+  // Gebruik AssetSearchService
+  const { AssetSearchService } = await import('./asset-search.js');
+  const { getLlmKeys } = await import('./pipeline-engine.js');
 
-  try { await fs.unlink(statusPath); } catch {}
-
-  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/asset-downloader';
-
-  const payload = {
-    project: project.name,
-    output_dir: path.join(projPath, 'assets', 'images') + '/',
-    scenes_dir: path.join(projPath, 'assets', 'scenes') + '/',
-    pexels_api_key: settings.pexelsApiKey || 'dCnXQyimW0Ds7Vw7OjvB2xDxAfeqQbhkOZpD9ZcS3lDbBtuIFVk7om43',
-    output_format: project.output === 'youtube_short' ? 'portrait' : 'landscape',
-    assets,
-  };
-
-  console.log(`[Step 7] ${assets.length} assets sturen naar ${n8nUrl}...`);
-
-  const response = await fetch(n8nUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+  const assetService = new AssetSearchService({
+    n8nBaseUrl: settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud',
+    pexelsApiKey: settings.pexelsApiKey || 'dCnXQyimW0Ds7Vw7OjvB2xDxAfeqQbhkOZpD9ZcS3lDbBtuIFVk7om43',
+    twelveLabsApiKey: settings.twelveLabsApiKey || '',
+    enableTwelveLabsValidation: !!settings.twelveLabsApiKey,
   });
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
-  }
+  const sceneRequests = realImageScenes.map((scene: any) => ({
+    sceneId: scene.id,
+    text: scene.text || '',
+    visualPrompt: scene.visual_prompt || scene.text || '',
+    duration: scene.duration || 5,
+    assetType: scene.asset_type || 'real_image',
+  }));
 
-  const webhookResult = await response.json();
-  console.log('[Step 7] N8N response: ' + JSON.stringify(webhookResult));
+  const outputFormat = project.output === 'youtube_short' ? 'portrait' : 'landscape';
+  const llmKeys = getLlmKeys(settings);
 
-  console.log('[Step 7] Wachten op status: ' + statusPath);
-  const status = await pollForStatus(statusPath, 5000, 600000);
+  console.log(`[Step 12] ${sceneRequests.length} assets zoeken via AssetSearchService...`);
 
-  console.log(`[Step 7] Assets klaar! ${status.assets_found || 0}/${status.total || 0} gevonden`);
+  const results = await assetService.searchForScenes(sceneRequests, projPath, outputFormat, llmKeys);
+
+  // Sla asset-map op
+  const assetMap = {
+    scenes: results.map(r => ({
+      scene_id: r.sceneId,
+      asset_path: r.assetPath,
+      source: r.source,
+      asset_clip_id: r.assetClipId || null,
+      quality_score: r.qualityScore,
+      is_video: r.isVideo,
+    })),
+  };
+
+  await writeJson(path.join(projPath, 'assets', 'asset-map.json'), assetMap);
+
+  const found = results.filter(r => r.assetPath).length;
+  const fromLibrary = results.filter(r => r.source === 'library').length;
+
+  console.log(`[Step 12] Assets klaar! ${found}/${results.length} gevonden (${fromLibrary} uit library)`);
 
   return {
     skipped: false,
-    assetsFound: status.assets_found || 0,
-    assetsFailed: status.assets_failed || 0,
-    total: status.total || 0,
-    fromGoogle: status.from_google || 0,
-    fromPexels: status.from_pexels || 0,
-    fromWikimedia: status.from_wikimedia || 0,
-    failedScenes: status.failed_scenes || '',
-    results: status.results || [],
+    assetsFound: found,
+    assetsFailed: results.length - found,
+    total: results.length,
+    fromLibrary,
+    fromDownload: found - fromLibrary,
   };
 }
 

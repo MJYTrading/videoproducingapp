@@ -12,6 +12,7 @@ import stylesRoutes from './routes/styles.js';
 import channelRoutes from './routes/channels.js';
 import voiceRoutes from './routes/voices.js';
 import ideationRoutes from './routes/ideation.js';
+import assetClipRoutes from './routes/asset-clips.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +39,7 @@ app.use('/api/styles', stylesRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/voices', voiceRoutes);
 app.use('/api/ideation', ideationRoutes);
+app.use('/api/asset-clips', assetClipRoutes);
 
 const frontendPath = path.join(__dirname, '..', 'dist-frontend');
 app.use(express.static(frontendPath));

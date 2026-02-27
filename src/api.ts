@@ -373,3 +373,46 @@ export const ideation = {
     return res.json();
   },
 };
+
+// ── Asset Clips (Clip Library) API ──
+
+export const assetClips = {
+  async getAll(params?: { search?: string; category?: string; limit?: number }): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (params?.search) query.set('search', params.search);
+    if (params?.category) query.set('category', params.category);
+    if (params?.limit) query.set('limit', String(params.limit));
+    const res = await apiFetch(`/asset-clips?${query}`);
+    if (!res.ok) throw new Error('Kon clips niet ophalen');
+    return res.json();
+  },
+  async create(data: any): Promise<any> {
+    const res = await apiFetch('/asset-clips', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Aanmaken mislukt'); }
+    return res.json();
+  },
+  async update(id: string, data: any): Promise<any> {
+    const res = await apiFetch(`/asset-clips/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Bijwerken mislukt'); }
+    return res.json();
+  },
+  async delete(id: string): Promise<void> {
+    const res = await apiFetch(`/asset-clips/${id}`, { method: 'DELETE' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Verwijderen mislukt'); }
+  },
+  async markUsed(id: string): Promise<any> {
+    const res = await apiFetch(`/asset-clips/${id}/use`, { method: 'POST' });
+    if (!res.ok) throw new Error('Markeren mislukt');
+    return res.json();
+  },
+  async search(params: { query?: string; tags?: string[]; category?: string; mood?: string; excludeIds?: string[]; limit?: number }): Promise<any[]> {
+    const res = await apiFetch('/asset-clips/search', { method: 'POST', body: JSON.stringify(params) });
+    if (!res.ok) throw new Error('Zoeken mislukt');
+    return res.json();
+  },
+  async getStats(): Promise<any> {
+    const res = await apiFetch('/asset-clips/stats/overview');
+    if (!res.ok) throw new Error('Stats ophalen mislukt');
+    return res.json();
+  },
+};

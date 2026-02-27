@@ -157,7 +157,7 @@ async function getSettings() {
   return settings;
 }
 
-function getLlmKeys(settings: any) {
+export function getLlmKeys(settings: any) {
   return { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey };
 }
 
