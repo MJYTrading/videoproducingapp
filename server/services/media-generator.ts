@@ -431,9 +431,13 @@ export async function generateImages(
 
         if (!imageUrl) throw new Error('Geen image URL in response');
 
-        const ext = imageUrl.includes('.png') ? '.png' : '.jpg';
+        // Download eerst naar temp, detecteer type, sla op met juiste extensie
+        const tempPath = path.join(outputDir, `scene${sceneId}-option1.tmp`);
+        await downloadFile(imageUrl, tempPath);
+        const dlBuffer = await fs.readFile(tempPath);
+        const ext = (dlBuffer[0] === 0x89 && dlBuffer[1] === 0x50) ? '.png' : '.jpg';
         const localPath = path.join(outputDir, `scene${sceneId}-option1${ext}`);
-        await downloadFile(imageUrl, localPath);
+        await fs.rename(tempPath, localPath);
 
         const imgResult: ImageResult = { sceneId, provider, imageUrl, localPath, prompt: currentPrompt };
         results.push(imgResult);
@@ -518,9 +522,13 @@ export async function generateImages(
 
         if (!imageUrl) throw new Error('Geen image URL');
 
-        const ext = imageUrl.includes('.png') ? '.png' : '.jpg';
+        // Download eerst naar temp, detecteer type, sla op met juiste extensie
+        const tempPath = path.join(outputDir, `scene${sceneId}-option1.tmp`);
+        await downloadFile(imageUrl, tempPath);
+        const dlBuffer = await fs.readFile(tempPath);
+        const ext = (dlBuffer[0] === 0x89 && dlBuffer[1] === 0x50) ? '.png' : '.jpg';
         const localPath = path.join(outputDir, `scene${sceneId}-option1${ext}`);
-        await downloadFile(imageUrl, localPath);
+        await fs.rename(tempPath, localPath);
 
         results.push({ sceneId, provider, imageUrl, localPath, prompt: currentPrompt } as any);
         if (onProgress) onProgress(results.length, scenes.length, sceneId);
@@ -681,7 +689,9 @@ export async function generateVideos(
         }
 
         const imgBuffer = await fs.readFile(selection.chosen_path);
-        const ext = selection.chosen_path.endsWith('.png') ? 'png' : 'jpeg';
+        // Detecteer echt MIME type op basis van magic bytes, niet extensie
+        const isPng = imgBuffer[0] === 0x89 && imgBuffer[1] === 0x50;
+        const ext = isPng ? 'png' : 'jpeg';
         const sourceImage = `data:image/${ext};base64,${imgBuffer.toString('base64')}`;
 
         const task = await elevateCreateMedia(settings.elevateApiKey, 'video', prompt, {
@@ -806,7 +816,8 @@ export async function generateVideos(
         try {
           console.log(`[Videos] Scene ${sceneId} Elevate sequentieel retry...`);
           const imgBuffer = await fs.readFile(sel.chosen_path);
-          const ext = sel.chosen_path.endsWith('.png') ? 'png' : 'jpeg';
+          const selBuffer = await fs.readFile(sel.chosen_path);
+          const ext = (selBuffer[0] === 0x89 && selBuffer[1] === 0x50) ? 'png' : 'jpeg';
           const sourceImage = `data:image/${ext};base64,${imgBuffer.toString('base64')}`;
           const task = await elevateCreateMedia(settings.elevateApiKey, 'video', vPrompt, { aspectRatio: 'landscape', sourceImage });
           const status = await elevatePollStatus(settings.elevateApiKey, task.id, 'video', 600_000);
