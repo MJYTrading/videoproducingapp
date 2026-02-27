@@ -1,8 +1,16 @@
 /**
  * LLM Service met automatische fallback
  * 
- * Probeert eerst Elevate Chat API, bij falen → Anthropic API direct.
- * Beide gebruiken Claude Sonnet 4.5.
+ * Modellen via Elevate Chat API:
+ * - claude-opus-4.5      → Script Orchestrator, complexe taken
+ * - claude-sonnet-4.5    → Script schrijven, style profiles, scene prompts
+ * - sonar-deep-research  → Research JSON, Trending Clips Research
+ * - gemini-3-pro         → Beschikbaar als alternatief
+ * - gpt-5                → Beschikbaar als alternatief
+ * - deepseek-v3.1        → Beschikbaar als alternatief
+ * 
+ * Fallback: Anthropic API direct (voor Claude modellen)
+ * Fallback research: Perplexity API direct (voor Sonar)
  */
 
 interface LLMMessage {
@@ -13,12 +21,13 @@ interface LLMMessage {
 interface LLMOptions {
   maxTokens?: number;
   temperature?: number;
+  model?: string;  // Nieuw: model selectie
 }
 
 interface LLMResponse {
   content: string;
   model: string;
-  provider: 'elevate' | 'anthropic';
+  provider: 'elevate' | 'anthropic' | 'perplexity';
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -29,7 +38,18 @@ interface LLMResponse {
 interface LLMKeys {
   elevateApiKey?: string;
   anthropicApiKey?: string;
+  perplexityApiKey?: string;
 }
+
+// Default modellen per use case
+export const LLM_MODELS = {
+  OPUS: 'claude-opus-4.5',
+  SONNET: 'claude-sonnet-4.5',
+  SONAR: 'sonar-deep-research',
+  GEMINI: 'gemini-3-pro',
+  GPT5: 'gpt-5',
+  DEEPSEEK: 'deepseek-v3.1',
+} as const;
 
 // ─── Elevate Chat API (OpenAI-compatible) ───
 async function callElevate(
@@ -37,6 +57,9 @@ async function callElevate(
   messages: LLMMessage[],
   options: LLMOptions
 ): Promise<LLMResponse> {
+  const model = options.model || LLM_MODELS.SONNET;
+  console.log(`[LLM] Elevate call met model: ${model}`);
+
   const response = await fetch('https://chat-api.elevate.uno/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -44,7 +67,7 @@ async function callElevate(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4.5',
+      model,
       max_tokens: options.maxTokens ?? 8192,
       temperature: options.temperature ?? 0.7,
       messages,
@@ -64,13 +87,13 @@ async function callElevate(
 
   return {
     content: data.choices[0].message.content,
-    model: data.model || 'claude-sonnet-4.5',
+    model: data.model || model,
     provider: 'elevate',
     usage: data.usage,
   };
 }
 
-// ─── Anthropic API (native) ───
+// ─── Anthropic API (native) — fallback voor Claude modellen ───
 async function callAnthropic(
   apiKey: string,
   messages: LLMMessage[],
@@ -125,23 +148,78 @@ async function callAnthropic(
   };
 }
 
+// ─── Perplexity API (direct) — fallback voor Sonar research ───
+async function callPerplexity(
+  apiKey: string,
+  messages: LLMMessage[],
+  options: LLMOptions
+): Promise<LLMResponse> {
+  const model = 'sonar-deep-research';
+  console.log(`[LLM] Perplexity fallback met model: ${model}`);
+
+  const response = await fetch('https://api.perplexity.ai/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Perplexity API fout (${response.status}): ${errorText.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || '';
+
+  return {
+    content,
+    model,
+    provider: 'perplexity',
+    usage: data.usage,
+  };
+}
+
 // ─── Hoofdfunctie met fallback ───
 export async function callLLM(
   keys: LLMKeys,
   messages: LLMMessage[],
   options: LLMOptions = {}
 ): Promise<LLMResponse> {
+  const requestedModel = options.model || LLM_MODELS.SONNET;
+  const isSonarModel = requestedModel === LLM_MODELS.SONAR;
+  const isClaudeModel = requestedModel.startsWith('claude-');
+
+  // Primair: Elevate (voor alle modellen)
   if (keys.elevateApiKey) {
     try {
       const result = await callElevate(keys.elevateApiKey, messages, options);
-      console.log(`[LLM] Elevate succesvol (${result.usage?.total_tokens || '?'} tokens)`);
+      console.log(`[LLM] Elevate succesvol (${result.model}, ${result.usage?.total_tokens || '?'} tokens)`);
       return result;
     } catch (error: any) {
-      console.log(`[LLM] Elevate gefaald: ${error.message}`);
+      console.log(`[LLM] Elevate gefaald (${requestedModel}): ${error.message}`);
     }
   }
 
-  if (keys.anthropicApiKey) {
+  // Fallback voor Sonar: Perplexity direct
+  if (isSonarModel && keys.perplexityApiKey) {
+    try {
+      const result = await callPerplexity(keys.perplexityApiKey, messages, options);
+      console.log(`[LLM] Perplexity fallback succesvol (${result.usage?.total_tokens || '?'} tokens)`);
+      return result;
+    } catch (error: any) {
+      console.log(`[LLM] Perplexity fallback gefaald: ${error.message}`);
+      throw new Error(`Zowel Elevate als Perplexity gefaald voor research. Perplexity: ${error.message}`);
+    }
+  }
+
+  // Fallback voor Claude modellen: Anthropic direct
+  if (isClaudeModel && keys.anthropicApiKey) {
     try {
       const result = await callAnthropic(keys.anthropicApiKey, messages, options);
       console.log(`[LLM] Anthropic fallback succesvol (${result.usage?.total_tokens || '?'} tokens)`);
@@ -151,7 +229,7 @@ export async function callLLM(
     }
   }
 
-  throw new Error('Geen LLM API key beschikbaar. Stel Elevate of Anthropic key in via Instellingen.');
+  throw new Error(`Geen API key beschikbaar voor model ${requestedModel}. Stel Elevate key in via Instellingen.`);
 }
 
 // ─── Helper functies ───
@@ -197,6 +275,14 @@ export async function llmJsonPrompt<T = any>(
   try {
     return JSON.parse(jsonStr);
   } catch (error) {
+    // Probeer array te parsen
+    const firstBracket = jsonStr.indexOf('[');
+    const lastBracket = jsonStr.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      try {
+        return JSON.parse(jsonStr.slice(firstBracket, lastBracket + 1));
+      } catch {}
+    }
     throw new Error(`LLM response is geen geldige JSON. Eerste 500 chars: ${jsonStr.slice(0, 500)}`);
   }
 }

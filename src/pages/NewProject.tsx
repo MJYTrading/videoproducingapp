@@ -16,29 +16,30 @@ import * as api from '../api';
 const STEP_DEFS: Record<number, { name: string; executor: string; icon: string; readyToUse: boolean }> = {
   0:  { name: 'Ideation',              executor: 'App',              icon: '💡', readyToUse: false },
   1:  { name: 'Project Formulier',     executor: 'App',              icon: '📋', readyToUse: true },
-  2:  { name: 'Research JSON',         executor: 'Perplexity',       icon: '🔍', readyToUse: false },
+  2:  { name: 'Research JSON',         executor: 'Elevate Sonar',    icon: '🔍', readyToUse: true },
   3:  { name: 'Transcripts Ophalen',   executor: 'App',              icon: '📝', readyToUse: true },
-  4:  { name: 'Trending Clips Research', executor: 'Perplexity',     icon: '📊', readyToUse: false },
+  4:  { name: 'Trending Clips Research', executor: 'Elevate Sonar',  icon: '📊', readyToUse: true },
   5:  { name: 'Style Profile',         executor: 'Elevate AI',       icon: '🎨', readyToUse: true },
-  6:  { name: 'Script Schrijven',      executor: 'Elevate AI',       icon: '✍️', readyToUse: true },
-  7:  { name: 'Voice Over',            executor: 'Elevate',          icon: '🎙️', readyToUse: true },
-  8:  { name: 'Avatar / Spokesperson', executor: 'HeyGen',           icon: '🧑', readyToUse: false },
-  9:  { name: 'Timestamps Ophalen',    executor: 'Assembly AI',      icon: '⏱️', readyToUse: true },
-  10: { name: 'Scene Prompts',         executor: 'Elevate AI',       icon: '🖼️', readyToUse: true },
-  11: { name: 'Assets Zoeken',         executor: 'TwelveLabs + N8N', icon: '🔎', readyToUse: true },
-  12: { name: 'Clips Downloaden',      executor: 'N8N',              icon: '⬇️', readyToUse: true },
-  13: { name: 'Images Genereren',      executor: 'Elevate',          icon: '🖌️', readyToUse: true },
-  14: { name: 'Video Scenes Genereren', executor: 'Elevate',         icon: '🎥', readyToUse: true },
-  15: { name: 'Orchestrator',          executor: 'Claude Opus',      icon: '🎼', readyToUse: false },
-  16: { name: 'Achtergrondmuziek',     executor: 'FFMPEG',           icon: '🎵', readyToUse: false },
-  17: { name: 'Color Grading',         executor: 'FFMPEG',           icon: '🌈', readyToUse: true },
-  18: { name: 'Subtitles',             executor: 'FFMPEG',           icon: '💬', readyToUse: true },
-  19: { name: 'Overlay',               executor: 'FFMPEG',           icon: '📐', readyToUse: false },
-  20: { name: 'Sound Effects',         executor: 'FFMPEG',           icon: '🔊', readyToUse: true },
-  21: { name: 'Video Effects',         executor: 'FFMPEG',           icon: '✨', readyToUse: true },
-  22: { name: 'Final Export',          executor: 'FFMPEG',           icon: '📦', readyToUse: true },
-  23: { name: 'Thumbnail',             executor: 'App',              icon: '🖼️', readyToUse: false },
-  24: { name: 'Drive Upload',          executor: 'App',              icon: '☁️', readyToUse: true },
+  6:  { name: 'Script Orchestrator',   executor: 'Elevate Opus',     icon: '🎯', readyToUse: true },
+  7:  { name: 'Script Schrijven',      executor: 'Elevate AI',       icon: '✍️', readyToUse: true },
+  8:  { name: 'Voice Over',            executor: 'Elevate',          icon: '🎙️', readyToUse: true },
+  9:  { name: 'Avatar / Spokesperson', executor: 'HeyGen',           icon: '🧑', readyToUse: false },
+  10: { name: 'Timestamps Ophalen',    executor: 'Assembly AI',      icon: '⏱️', readyToUse: true },
+  11: { name: 'Scene Prompts',         executor: 'Elevate AI',       icon: '🖼️', readyToUse: true },
+  12: { name: 'Assets Zoeken',         executor: 'TwelveLabs + N8N', icon: '🔎', readyToUse: true },
+  13: { name: 'Clips Downloaden',      executor: 'N8N',              icon: '⬇️', readyToUse: true },
+  14: { name: 'Images Genereren',      executor: 'Elevate',          icon: '🖌️', readyToUse: true },
+  15: { name: 'Video Scenes Genereren', executor: 'Elevate',         icon: '🎥', readyToUse: true },
+  16: { name: "Director's Cut",        executor: 'Claude Opus',      icon: '🎼', readyToUse: false },
+  17: { name: 'Achtergrondmuziek',     executor: 'FFMPEG',           icon: '🎵', readyToUse: false },
+  18: { name: 'Color Grading',         executor: 'FFMPEG',           icon: '🌈', readyToUse: true },
+  19: { name: 'Subtitles',             executor: 'FFMPEG',           icon: '💬', readyToUse: true },
+  20: { name: 'Overlay',               executor: 'FFMPEG',           icon: '📐', readyToUse: false },
+  21: { name: 'Sound Effects',         executor: 'FFMPEG',           icon: '🔊', readyToUse: true },
+  22: { name: 'Video Effects',         executor: 'FFMPEG',           icon: '✨', readyToUse: true },
+  23: { name: 'Final Export',          executor: 'FFMPEG',           icon: '📦', readyToUse: true },
+  24: { name: 'Thumbnail',             executor: 'App',              icon: '🖼️', readyToUse: false },
+  25: { name: 'Drive Upload',          executor: 'App',              icon: '☁️', readyToUse: true },
 };
 
 export default function NewProject() {
@@ -76,7 +77,7 @@ export default function NewProject() {
   const [subtitles, setSubtitles] = useState(false);
   const [output, setOutput] = useState('youtube-1080p');
   const [aspectRatio, setAspectRatio] = useState('landscape');
-  const [checkpoints, setCheckpoints] = useState<number[]>([3, 4, 6, 9]);
+  const [checkpoints, setCheckpoints] = useState<number[]>([3, 4, 6, 7, 10]);
 
   useEffect(() => {
     api.channels.getAll().then(setChannels).catch(() => {});

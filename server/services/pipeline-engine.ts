@@ -14,7 +14,7 @@
 
 import prisma from '../db.js';
 import {
-  executeStepResearch, executeStepTrendingClips,
+  executeStepResearch, executeStepTrendingClips, executeStepScriptOrchestrator,
   executeStep0, executeStep1, executeStep2, executeStep3,
   executeStep4, executeStep5, executeStep6, executeStep6b,
   executeStep7, executeStep8, executeStep9, executeStep10,
@@ -24,31 +24,32 @@ import {
 // Mapping: nieuwe stepNumbers → oude executors
 // Stappen die nog niet ready zijn worden automatisch geskipped
 const STEP_EXECUTOR_MAP: Record<number, string> = {
-  0: 'auto-complete',   // Ideation - direct completed bij start
-  1: 'executeStep0',   // Project Formulier (was stap 0)
-  2: 'executeStepResearch',  // Research JSON - Perplexity Deep Research
-  3: 'executeStep1',   // Transcripts (was stap 1)
-  4: 'executeStepTrendingClips',  // Trending Clips - Perplexity
-  5: 'executeStep2',   // Style Profile (was stap 2)
-  6: 'executeStep3',   // Script (was stap 3)
-  7: 'executeStep4',   // Voice Over (was stap 4)
-  8: 'skip',           // Avatar - niet ready
-  9: 'executeStep5',   // Timestamps (was stap 5)
-  10: 'executeStep6',  // Scene Prompts (was stap 6)
-  11: 'executeStep7',  // Assets (was stap 7)
-  12: 'executeStep8',  // Clips (was stap 8)
-  13: 'executeStep6b', // Images (was stap 65/6b)
-  14: 'executeStep9',  // Video Scenes (was stap 9)
-  15: 'skip',          // Orchestrator - niet ready
-  16: 'skip',          // Achtergrondmuziek - niet ready
-  17: 'executeStep11', // Color Grading (was stap 11)
-  18: 'executeStep12', // Subtitles (was stap 12)
-  19: 'skip',          // Overlay - niet ready
-  20: 'skip',          // Sound Effects - niet ready (was stap 10 - video editing)
-  21: 'skip',          // Video Effects - niet ready (was stap 10 - video editing)
-  22: 'executeStep13', // Final Export (was stap 13)
-  23: 'skip',          // Thumbnail - niet ready
-  24: 'executeStep14', // Drive Upload (was stap 14)
+  0: 'auto-complete',             // Ideation - direct completed bij start
+  1: 'executeStep0',             // Project Formulier
+  2: 'executeStepResearch',      // Research JSON - Elevate Sonar / Perplexity
+  3: 'executeStep1',             // Transcripts
+  4: 'executeStepTrendingClips', // Trending Clips - Elevate Sonar / Perplexity
+  5: 'executeStep2',             // Style Profile
+  6: 'executeStepScriptOrchestrator', // Script Orchestrator - Elevate Opus (NIEUW)
+  7: 'executeStep3',             // Script Schrijven
+  8: 'executeStep4',             // Voice Over
+  9: 'skip',                     // Avatar - niet ready
+  10: 'executeStep5',            // Timestamps
+  11: 'executeStep6',            // Scene Prompts
+  12: 'executeStep7',            // Assets Zoeken
+  13: 'executeStep8',            // Clips Downloaden
+  14: 'executeStep6b',           // Images Genereren
+  15: 'executeStep9',            // Video Scenes
+  16: 'skip',                    // Director's Cut - niet ready
+  17: 'skip',                    // Achtergrondmuziek - niet ready
+  18: 'executeStep11',           // Color Grading
+  19: 'executeStep12',           // Subtitles
+  20: 'skip',                    // Overlay - niet ready
+  21: 'skip',                    // Sound Effects - niet ready
+  22: 'skip',                    // Video Effects - niet ready
+  23: 'executeStep13',           // Final Export
+  24: 'skip',                    // Thumbnail - niet ready
+  25: 'executeStep14',           // Drive Upload
 };
 
 // ── Types ──
@@ -91,39 +92,41 @@ const STEP_CONFIG: Record<number, {
 }> = {
   0:  { dependsOn: [],         timeout: 30_000,     maxRetries: 1, retryDelays: [0] },
   1:  { dependsOn: [0],        timeout: 30_000,     maxRetries: 1, retryDelays: [0] },
-  2:  { dependsOn: [1],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  2:  { dependsOn: [1],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   3:  { dependsOn: [1],        timeout: 120_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  4:  { dependsOn: [1],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  4:  { dependsOn: [1],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   5:  { dependsOn: [3],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  6:  { dependsOn: [5],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  7:  { dependsOn: [6],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  8:  { dependsOn: [6],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  9:  { dependsOn: [7],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  10: { dependsOn: [9],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
+  6:  { dependsOn: [2, 4, 5],  timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
+        isCheckpoint: true },
+  7:  { dependsOn: [6],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  8:  { dependsOn: [7],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  9:  { dependsOn: [7],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  10: { dependsOn: [8],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  11: { dependsOn: [10],       timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
         checkpointCondition: 'manual_image_mode' },
-  11: { dependsOn: [10],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  12: { dependsOn: [10],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  13: { dependsOn: [10],       timeout: 3600_000,    maxRetries: 2, retryDelays: [10_000, 30_000],
+  12: { dependsOn: [11],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  13: { dependsOn: [11],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  14: { dependsOn: [11],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [10_000, 30_000],
         checkpointCondition: 'manual_image_mode' },
-  14: { dependsOn: [13],       timeout: 3600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  15: { dependsOn: [14],       timeout: 300_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  16: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  17: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
-  18: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
-  19: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  20: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  21: { dependsOn: [14], timeout: 3_600_000, maxRetries: 2, retryDelays: [15_000, 30_000] },
-  22: { dependsOn: [14],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
-  23: { dependsOn: [22],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  24: { dependsOn: [22],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  15: { dependsOn: [14],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  16: { dependsOn: [15],       timeout: 300_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  17: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  18: { dependsOn: [16],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  19: { dependsOn: [16],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  20: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  21: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  22: { dependsOn: [15],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [15_000, 30_000] },
+  23: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  24: { dependsOn: [23],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  25: { dependsOn: [23],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
 };
 
 // Stap volgorde voor display(stepNumber waarden)
-const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
+const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
 
 // Parallel groep: stappen 65, 7, 8 mogen tegelijk starten zodra stap 6 klaar is
 // Parallel groepen: stappen die tegelijk mogen draaien na hun dependencies
-const PARALLEL_GROUPS = [[11, 12, 13], [17, 18, 19, 20], [23, 24]];
+const PARALLEL_GROUPS = [[12, 13, 14], [18, 19, 20, 21], [24, 25]];
 
 // ── Actieve pipelines in memory ──
 
@@ -178,12 +181,13 @@ async function updateProjectStatus(projectId: string, status: string) {
 
 function getExecutorName(stepNumber: number): string {
   const map: Record<number, string> = {
-    0: 'App', 1: 'App', 2: 'Perplexity', 3: 'App',
-    4: 'Perplexity', 5: 'Elevate AI', 6: 'Elevate AI', 7: 'Elevate',
-    8: 'HeyGen', 9: 'Assembly AI', 10: 'Elevate AI', 11: 'TwelveLabs + N8N',
-    12: 'N8N', 13: 'Elevate', 14: 'Elevate', 15: 'Claude Opus',
-    16: 'FFMPEG', 17: 'FFMPEG', 18: 'FFMPEG', 19: 'FFMPEG',
-    20: 'FFMPEG', 21: 'FFMPEG', 22: 'FFMPEG', 23: 'App', 24: 'App',
+    0: 'App', 1: 'App', 2: 'Elevate Sonar', 3: 'App',
+    4: 'Elevate Sonar', 5: 'Elevate AI', 6: 'Elevate Opus', 7: 'Elevate AI',
+    8: 'Elevate', 9: 'HeyGen', 10: 'Assembly AI', 11: 'Elevate AI',
+    12: 'TwelveLabs + N8N', 13: 'N8N', 14: 'Elevate', 15: 'Elevate',
+    16: 'Claude Opus', 17: 'FFMPEG', 18: 'FFMPEG', 19: 'FFMPEG',
+    20: 'FFMPEG', 21: 'FFMPEG', 22: 'FFMPEG', 23: 'FFMPEG',
+    24: 'App', 25: 'App',
   };
   return map[stepNumber] || 'App';
 }
@@ -192,12 +196,13 @@ function getStepName(stepNumber: number): string {
   const map: Record<number, string> = {
     0: 'Ideation', 1: 'Project Formulier', 2: 'Research JSON',
     3: 'Transcripts Ophalen', 4: 'Trending Clips Research', 5: 'Style Profile',
-    6: 'Script Schrijven', 7: 'Voice Over', 8: 'Avatar / Spokesperson',
-    9: 'Timestamps Ophalen', 10: 'Scene Prompts', 11: 'Assets Zoeken',
-    12: 'Clips Downloaden', 13: 'Images Genereren', 14: 'Video Scenes Genereren',
-    15: 'Orchestrator', 16: 'Achtergrondmuziek', 17: 'Color Grading',
-    18: 'Subtitles', 19: 'Overlay', 20: 'Sound Effects',
-    21: 'Video Effects', 22: 'Final Export', 23: 'Thumbnail', 24: 'Drive Upload',
+    6: 'Script Orchestrator', 7: 'Script Schrijven', 8: 'Voice Over',
+    9: 'Avatar / Spokesperson', 10: 'Timestamps Ophalen', 11: 'Scene Prompts',
+    12: 'Assets Zoeken', 13: 'Clips Downloaden', 14: 'Images Genereren',
+    15: 'Video Scenes Genereren', 16: "Director's Cut", 17: 'Achtergrondmuziek',
+    18: 'Color Grading', 19: 'Subtitles', 20: 'Overlay',
+    21: 'Sound Effects', 22: 'Video Effects', 23: 'Final Export',
+    24: 'Thumbnail', 25: 'Drive Upload',
   };
   return map[stepNumber] || `Stap ${stepNumber}`;
 }
@@ -332,30 +337,31 @@ async function executeStepFunction(
   switch (stepNumber) {
     // Stap 0: Ideation → direct completed bij start
     // Stap 1: Project Formulier → direct completed bij start
-    case 2: return executeStepResearch(project, settings);                         // Research JSON → Perplexity Deep Research
-    case 3: return executeStep1(project, settings.youtubeTranscriptApiKey);     // Transcripts → oude stap 1
-    case 4: return executeStepTrendingClips(project, settings);                    // Trending Clips → Perplexity
-    case 5: return executeStep2(project, llmKeys);                              // Style Profile → oude stap 2
-    case 6: return executeStep3(project, llmKeys);                              // Script Schrijven → oude stap 3
-    case 7: return executeStep4(project, settings);                             // Voice Over → oude stap 4
-    case 8: throw new Error('Avatar/Spokesperson nog niet geïmplementeerd');    // Avatar → HeyGen (TODO)
-    case 9: return executeStep5(project, settings);                             // Timestamps → oude stap 5
-    case 10: return executeStep6(project, llmKeys);                             // Scene Prompts → oude stap 6
-    case 11: return executeStep7(project, settings);                            // Assets Zoeken → oude stap 7
-    case 12: return executeStep8(project, settings);                            // Clips Downloaden → oude stap 8
-    case 13: return executeStep6b(project, settings);                           // Images Genereren → oude stap 6b
-    case 14: return executeStep9(project, settings);                            // Video Scenes → oude stap 9
-    case 15: throw new Error('Orchestrator nog niet geïmplementeerd');          // Orchestrator (TODO)
-    case 16: throw new Error('Achtergrondmuziek nog niet geïmplementeerd');     // Muziek (TODO)
-    case 17: return executeStep11(project, settings);                           // Color Grading → oude stap 11
-    case 18: return executeStep12(project, settings);                           // Subtitles → oude stap 12
-    case 19: throw new Error('Overlay nog niet geïmplementeerd');               // Overlay (TODO)
-    case 20: return executeStep10(project, settings);                           // Sound Effects → oude stap 10
-    case 21: return executeStep10(project, settings);                           // Video Effects → oude stap 10 (zelfde editor)
-    case 22: return executeStep13(project, settings);                           // Final Export → oude stap 13
-    case 23: throw new Error('Thumbnail nog niet geïmplementeerd');             // Thumbnail (TODO)
-    case 24: return executeStep14(project, settings);                           // Drive Upload → oude stap 14
-    default: throw new Error(`Stap ${stepNumber} niet geïmplementeerd`);
+    case 2: return executeStepResearch(project, settings);                         // Research JSON → Elevate Sonar / Perplexity
+    case 3: return executeStep1(project, settings.youtubeTranscriptApiKey);        // Transcripts
+    case 4: return executeStepTrendingClips(project, settings);                    // Trending Clips → Elevate Sonar / Perplexity
+    case 5: return executeStep2(project, llmKeys);                                 // Style Profile
+    case 6: return executeStepScriptOrchestrator(project, settings, llmKeys);      // Script Orchestrator → Elevate Opus
+    case 7: return executeStep3(project, llmKeys);                                 // Script Schrijven
+    case 8: return executeStep4(project, settings);                                // Voice Over
+    case 9: throw new Error('Avatar/Spokesperson nog niet geïmplementeerd');       // Avatar → HeyGen (TODO)
+    case 10: return executeStep5(project, settings);                               // Timestamps
+    case 11: return executeStep6(project, llmKeys);                                // Scene Prompts
+    case 12: return executeStep7(project, settings);                               // Assets Zoeken
+    case 13: return executeStep8(project, settings);                               // Clips Downloaden
+    case 14: return executeStep6b(project, settings);                              // Images Genereren
+    case 15: return executeStep9(project, settings);                               // Video Scenes
+    case 16: throw new Error("Director's Cut nog niet geïmplementeerd");           // Director's Cut (TODO)
+    case 17: throw new Error('Achtergrondmuziek nog niet geïmplementeerd');        // Muziek (TODO)
+    case 18: return executeStep11(project, settings);                              // Color Grading
+    case 19: return executeStep12(project, settings);                              // Subtitles
+    case 20: throw new Error('Overlay nog niet geïmplementeerd');                  // Overlay (TODO)
+    case 21: return executeStep10(project, settings);                              // Sound Effects
+    case 22: return executeStep10(project, settings);                              // Video Effects
+    case 23: return executeStep13(project, settings);                              // Final Export
+    case 24: throw new Error('Thumbnail nog niet geïmplementeerd');                // Thumbnail (TODO)
+    case 25: return executeStep14(project, settings);                              // Drive Upload
+    default: throw new Error(\`Stap \${stepNumber} niet geïmplementeerd\`);
   }
 }
 

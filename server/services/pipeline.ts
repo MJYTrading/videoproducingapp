@@ -1982,3 +1982,169 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
 
   return { success: true, clipsFile: 'research/clips-research.json', totalClips: result.total_clips_found || result.clips?.length || 0 };
 }
+
+// ══════════════════════════════════════════════════
+// STAP 6: SCRIPT ORCHESTRATOR (Elevate Claude Opus 4.5)
+// Verzamelt alle data en maakt een gedetailleerde outline/blueprint
+// ══════════════════════════════════════════════════
+
+import { LLM_MODELS } from './llm.js';
+
+export async function executeStepScriptOrchestrator(project: any, settings: any, llmKeys: any): Promise<any> {
+  const projPath = projectDir(project.name);
+
+  // 1. Verzamel ALLE beschikbare data
+  const dataParts: string[] = [];
+
+  // Research JSON (stap 2)
+  try {
+    const research = await readJson(path.join(projPath, 'research', 'research.json'));
+    dataParts.push(`=== RESEARCH DATA ===\n${JSON.stringify(research, null, 2)}`);
+  } catch { dataParts.push('=== RESEARCH DATA ===\nNiet beschikbaar'); }
+
+  // Clips Research (stap 4)
+  try {
+    const clips = await readJson(path.join(projPath, 'research', 'clips-research.json'));
+    dataParts.push(`=== TRENDING CLIPS ===\n${JSON.stringify(clips, null, 2)}`);
+  } catch { dataParts.push('=== TRENDING CLIPS ===\nNiet beschikbaar'); }
+
+  // Style Profile (stap 5)
+  try {
+    const style = await readText(path.join(projPath, 'style_profile.txt'));
+    dataParts.push(`=== STYLE PROFILE ===\n${style}`);
+  } catch { dataParts.push('=== STYLE PROFILE ===\nNiet beschikbaar'); }
+
+  // Transcripts (stap 3)
+  try {
+    const transcriptsDir = path.join(projPath, 'transcripts');
+    const files = await fs.readdir(transcriptsDir).catch(() => []);
+    for (const file of files.slice(0, 5)) {
+      if (file.endsWith('.txt')) {
+        const content = await readText(path.join(transcriptsDir, file));
+        dataParts.push(`=== REFERENTIE TRANSCRIPT: ${file} ===\n${content.substring(0, 3000)}`);
+      }
+    }
+  } catch {}
+
+  // Kanaal instructies
+  let channelInstructions = '';
+  if (project.channelId) {
+    const prismaImport = await import('../db.js');
+    const prismaClient = prismaImport.default;
+    const channel = await prismaClient.channel.findUnique({ where: { id: project.channelId } });
+    if (channel) {
+      if (channel.styleExtraInstructions) channelInstructions += `\nKanaal stijl instructies: ${channel.styleExtraInstructions}`;
+      if (channel.baseStyleProfile) {
+        try {
+          const profile = JSON.parse(channel.baseStyleProfile);
+          dataParts.push(`=== KANAAL STYLE PROFILE ===\n${JSON.stringify(profile, null, 2)}`);
+        } catch {}
+      }
+    }
+  }
+
+  // Project config
+  const config = typeof project.config === 'string' ? JSON.parse(project.config) : project.config;
+  const scriptLength = config?.scriptLength || 5000;
+  const videoType = project.videoType || 'ai';
+
+  // 2. LLM Call met Claude Opus 4.5
+  const { llmSimplePrompt } = await import('./llm.js');
+
+  const systemPrompt = `Je bent een expert video regisseur en script planner. Je maakt een gedetailleerde OUTLINE/BLUEPRINT voor een YouTube video.
+
+Je ontvangt uitgebreide research data, clips, style profile, en referentie transcripts. Jouw taak is om dit allemaal te analyseren en een complete video structuur te maken.
+
+De outline bevat:
+1. HOOFD NARRATIEF: De rode draad en kernboodschap van de video
+2. STRUCTUUR: Exacte secties met tijdsindicatie (intro, hoofddelen, conclusie)  
+3. PER SECTIE:
+   - Kernboodschap
+   - Specifieke feiten/data uit research die gebruikt moeten worden
+   - Toon en energie (opbouwend, dramatisch, informatief, etc.)
+   - Clip suggesties: welke trending clips hier passen (met URL + timestamp)
+   - Overgangen naar volgende sectie
+4. PACING: Tempo-indicatie per deel (snel, medium, langzaam)
+5. HOOKS: Opening hook en cliffhangers voor viewer retention
+6. CALL TO ACTION: Waar en hoe
+7. SPECIFIEKE INSTRUCTIES voor de scriptschrijver
+
+Maak de outline zo gedetailleerd en specifiek mogelijk. De scriptschrijver moet hier direct mee aan de slag kunnen zonder zelf nog research te hoeven doen.
+
+Geef de outline in het volgende JSON format:
+{
+  "title": "Video titel",
+  "hook": "De openingszin/hook die de kijker pakt",
+  "narrative_thread": "De rode draad van de video in 2-3 zinnen",
+  "target_length_words": ${scriptLength},
+  "tone": "De algehele toon (bijv. 'urgent en informatief met dramatische spanning')",
+  "sections": [
+    {
+      "id": 1,
+      "title": "Sectie titel",
+      "type": "intro|main|climax|conclusion",
+      "duration_percent": 15,
+      "key_message": "Wat de kijker hier moet leren/voelen",
+      "facts_to_include": ["Specifiek feit 1 uit research", "Feit 2"],
+      "tone": "opbouwend",
+      "pacing": "medium",
+      "clip_suggestions": [
+        {"url": "https://...", "timestamp": "00:32-00:47", "reason": "Waarom deze clip hier past"}
+      ],
+      "transition_to_next": "Hoe je naar de volgende sectie overgaat",
+      "script_instructions": "Specifieke instructies voor de schrijver voor deze sectie"
+    }
+  ],
+  "call_to_action": "Subscribe/like instructie",
+  "writer_instructions": "Algemene instructies voor de scriptschrijver"
+}`;
+
+  const userPrompt = `VIDEO: ${project.title}
+BESCHRIJVING: ${project.description || 'Geen beschrijving'}
+VIDEO TYPE: ${videoType}
+GEWENSTE SCRIPTLENGTE: ${scriptLength} woorden
+${channelInstructions}
+
+${dataParts.join('\n\n')}
+
+Maak een gedetailleerde outline/blueprint voor deze video. Gebruik ALLE beschikbare research data, clips, en stijlinformatie.`;
+
+  console.log(`[Pipeline] Stap 6: Script Orchestrator starten (Claude Opus 4.5)...`);
+
+  const response = await llmSimplePrompt(llmKeys, systemPrompt, userPrompt, {
+    model: LLM_MODELS.OPUS,
+    maxTokens: 8192,
+    temperature: 0.6,
+  });
+
+  // 3. Parse en opslaan
+  let outline: any;
+  try {
+    outline = JSON.parse(response);
+  } catch {
+    const match = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (match) {
+      outline = JSON.parse(match[1].trim());
+    } else {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        outline = JSON.parse(jsonMatch[0]);
+      } else {
+        // Sla raw response op als fallback
+        await writeText(path.join(projPath, 'script_outline.txt'), response);
+        console.log('[Pipeline] Stap 6: Outline als tekst opgeslagen (geen JSON)');
+        return { success: true, outlineFile: 'script_outline.txt', format: 'text' };
+      }
+    }
+  }
+
+  await writeJson(path.join(projPath, 'script_outline.json'), outline);
+  console.log(`[Pipeline] Stap 6: Script outline opgeslagen (${outline.sections?.length || 0} secties)`);
+
+  return {
+    success: true,
+    outlineFile: 'script_outline.json',
+    sections: outline.sections?.length || 0,
+    format: 'json',
+  };
+}
