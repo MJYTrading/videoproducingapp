@@ -22,11 +22,30 @@ router.get('/', async (_req: Request, res: Response) => {
 
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { name, driveFolderId, description } = req.body;
+    const { name, driveFolderId, description, ...rest } = req.body;
     if (!name) return res.status(400).json({ error: 'Naam is verplicht' });
-    const channel = await prisma.channel.create({
-      data: { name, driveFolderId: driveFolderId || '', description: description || null },
-    });
+
+    const data: any = {
+      name,
+      driveFolderId: driveFolderId || '',
+      description: description || null,
+    };
+
+    // Nieuwe velden overnemen indien meegegeven
+    const optionalFields = [
+      'youtubeChannelId', 'defaultVideoType', 'competitors',
+      'maxClipDurationSeconds',
+      'baseStyleProfile', 'baseResearchTemplate',
+      'styleReferenceUrls', 'styleExtraInstructions',
+      'usedClips',
+      'overlayPresetId', 'sfxEnabled', 'specialEditsEnabled',
+    ];
+
+    for (const field of optionalFields) {
+      if (rest[field] !== undefined) data[field] = rest[field];
+    }
+
+    const channel = await prisma.channel.create({ data });
     res.status(201).json(channel);
   } catch (error: any) {
     if (error.code === 'P2002') return res.status(400).json({ error: 'Kanaalnaam bestaat al' });
@@ -37,14 +56,24 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.put('/:id', async (req: Request, res: Response) => {
   try {
-    const { name, driveFolderId, description } = req.body;
+    const updateData: any = {};
+    const allowedFields = [
+      'name', 'driveFolderId', 'description',
+      'youtubeChannelId', 'defaultVideoType', 'competitors',
+      'maxClipDurationSeconds',
+      'baseStyleProfile', 'baseResearchTemplate',
+      'styleReferenceUrls', 'styleExtraInstructions',
+      'usedClips',
+      'overlayPresetId', 'sfxEnabled', 'specialEditsEnabled',
+    ];
+
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) updateData[field] = req.body[field];
+    }
+
     const channel = await prisma.channel.update({
-      where: { id: req.params.id },
-      data: {
-        ...(name !== undefined && { name }),
-        ...(driveFolderId !== undefined && { driveFolderId }),
-        ...(description !== undefined && { description }),
-      },
+      where: { id: req.params.id as string },
+      data: updateData,
     });
     res.json(channel);
   } catch (error: any) {
@@ -56,7 +85,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    await prisma.channel.delete({ where: { id: req.params.id } });
+    await prisma.channel.delete({ where: { id: req.params.id as string } });
     res.json({ success: true });
   } catch (error: any) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Kanaal niet gevonden' });

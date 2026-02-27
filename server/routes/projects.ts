@@ -94,6 +94,7 @@ router.post('/', async (req: Request, res: Response) => {
         aspectRatio: data.aspectRatio || 'landscape',
         priority: data.priority || 0,
         channelId: data.channelId || null,
+        videoType: data.videoType || 'ai',
         status: 'config',
         enabledSteps: JSON.stringify(data.enabledSteps || []),
         steps: {
@@ -128,6 +129,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
       'uniformTransition', 'useClips', 'stockImages', 'colorGrading',
       'subtitles', 'output', 'status', 'startedAt', 'completedAt',
       'aspectRatio', 'priority', 'queuePosition', 'channelId', 'enabledSteps',
+      'videoType',
     ];
     for (const field of directFields) {
       if (data[field] !== undefined) updateData[field] = data[field];

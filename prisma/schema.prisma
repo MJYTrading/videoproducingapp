@@ -7,6 +7,8 @@ datasource db {
   url      = "file:../data/video-producer.db"
 }
 
+// ─── Auth ───────────────────────────────────────────────
+
 model User {
   id           String   @id @default(cuid())
   username     String   @unique
@@ -22,29 +24,79 @@ model Session {
   createdAt DateTime @default(now())
 }
 
+// ─── Settings ───────────────────────────────────────────
+
 model Settings {
-  id                  String  @id @default("singleton")
-  elevateApiKey       String  @default("")
-  n8nBaseUrl          String  @default("https://n8n.srv1275252.hstgr.cloud")
-  assemblyAiApiKey    String  @default("")
-  discordWebhookUrl   String  @default("")
-  discordUserId       String  @default("1154154714699665418")
-  openClawUrl         String  @default("http://127.0.0.1:18789")
-  openClawHooksToken  String  @default("")
-  defaultVoice        String  @default("Brody — Crime Narrator")
-  defaultVisualStyle  String  @default("ai-3d-render")
-  defaultLanguage     String  @default("EN")
-  defaultScriptLength Int     @default(5000)
-  defaultSubtitles    Boolean @default(true)
-  defaultColorGrading String  @default("cinematic_dark")
+  id                    String  @id @default("singleton")
+  elevateApiKey         String  @default("")
+  n8nBaseUrl            String  @default("https://n8n.srv1275252.hstgr.cloud")
+  assemblyAiApiKey      String  @default("")
+  discordWebhookUrl     String  @default("")
+  discordUserId         String  @default("1154154714699665418")
+  openClawUrl           String  @default("http://127.0.0.1:18789")
+  openClawHooksToken    String  @default("")
+  defaultVoice          String  @default("Brody — Crime Narrator")
+  defaultVisualStyle    String  @default("ai-3d-render")
+  defaultLanguage       String  @default("EN")
+  defaultScriptLength   Int     @default(5000)
+  defaultSubtitles      Boolean @default(true)
+  defaultColorGrading   String  @default("cinematic_dark")
   youtubeTranscriptApiKey String @default("")
-  anthropicApiKey      String  @default("")
-  // GenAIPro integratie
-  genaiProApiKey       String  @default("")
-  genaiProEnabled      Boolean @default(false)
+  anthropicApiKey       String  @default("")
+  genaiProApiKey        String  @default("")
+  genaiProEnabled       Boolean @default(false)
   genaiProImagesEnabled Boolean @default(false)
   videoDownloadApiKey   String  @default("")
+
+  // NIEUW — Extra API keys
+  perplexityApiKey      String  @default("")
+  twelveLabsApiKey      String  @default("")
+  nexlevApiKey          String  @default("")
 }
+
+// ─── Channel ────────────────────────────────────────────
+
+model Channel {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  driveFolderId String    @default("")
+  description   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Basis configuratie
+  youtubeChannelId    String  @default("")
+  defaultVideoType    String  @default("ai")
+  competitors         String  @default("[]")
+
+  // Spokesperson configuratie
+  maxClipDurationSeconds Int?
+
+  // Style Profile & Research op kanaal-level
+  baseStyleProfile       String?
+  baseResearchTemplate   String?
+  styleReferenceUrls     String  @default("[]")
+  styleExtraInstructions String  @default("")
+
+  // Clip historie
+  usedClips String @default("[]")
+
+  // Media presets
+  overlayPresetId       String?
+  sfxEnabled            Boolean @default(true)
+  specialEditsEnabled   Boolean @default(true)
+
+  // Relaties
+  projects              Project[]
+  ideas                 Idea[]
+  musicSelections       ChannelMusicSelection[]
+  sfxSelections         ChannelSfxSelection[]
+  specialEditSelections ChannelSpecialEditSelection[]
+  editingKnowledge      EditingKnowledge[]
+  overlayPreset         OverlayPreset? @relation(fields: [overlayPresetId], references: [id])
+}
+
+// ─── Project ────────────────────────────────────────────
 
 model Project {
   id                  String    @id @default(cuid())
@@ -81,18 +133,22 @@ model Project {
   completedAt         DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
-  // Nieuwe velden: aspect ratio + wachtrij
   aspectRatio         String    @default("landscape")
   priority            Int       @default(0)
   queuePosition       Int?
-  // Google Drive kanaal
   enabledSteps        String    @default("[]")
   channelId           String?
   driveUrl            String?
+
+  // NIEUW
+  videoType           String    @default("ai")
+
   channel             Channel?  @relation(fields: [channelId], references: [id])
   steps               Step[]
   logs                LogEntry[]
 }
+
+// ─── Pipeline ───────────────────────────────────────────
 
 model Step {
   id             String    @id @default(cuid())
@@ -125,15 +181,7 @@ model LogEntry {
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
-model Channel {
-  id            String    @id @default(cuid())
-  name          String    @unique
-  driveFolderId String    @default("")
-  description   String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  projects      Project[]
-}
+// ─── Voices ─────────────────────────────────────────────
 
 model Voice {
   id          String   @id @default(cuid())
@@ -142,4 +190,191 @@ model Voice {
   description String
   language    String
   createdAt   DateTime @default(now())
+}
+
+// ─── Ideation ───────────────────────────────────────────
+
+model Idea {
+  id              String   @id @default(cuid())
+  title           String
+  description     String
+  videoType       String
+  channelId       String
+  sourceData      String   @default("{}")
+  referenceVideos String   @default("[]")
+  status          String   @default("saved")
+  projectId       String?
+  createdAt       DateTime @default(now())
+
+  channel         Channel  @relation(fields: [channelId], references: [id])
+}
+
+// ─── Research Templates ─────────────────────────────────
+
+model ResearchTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  videoType   String
+  template    String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── Clip Library (gedeeld over alle kanalen) ───────────
+
+model AssetClip {
+  id            String    @id @default(cuid())
+  sourceUrl     String
+  videoId       String
+  title         String
+  startTime     String
+  endTime       String
+  localPath     String
+  thumbnailPath String?
+  tags          String    @default("[]")
+  description   String
+  category      String
+  subjects      String    @default("[]")
+  mood          String?
+  quality       Float?
+  timesUsed     Int       @default(0)
+  lastUsedAt    DateTime?
+  createdAt     DateTime  @default(now())
+}
+
+// ─── Music Library ──────────────────────────────────────
+
+model MusicTrack {
+  id              String   @id @default(cuid())
+  title           String
+  filePath        String
+  duration        Float
+  mood            String   @default("[]")
+  genre           String
+  bpm             Int?
+  energyProfile   String?
+  hasVocals       Boolean  @default(false)
+  loopable        Boolean  @default(false)
+  tags            String   @default("[]")
+  createdAt       DateTime @default(now())
+
+  channelSelections ChannelMusicSelection[]
+}
+
+model ChannelMusicSelection {
+  id           String @id @default(cuid())
+  channelId    String
+  musicTrackId String
+
+  channel      Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  musicTrack   MusicTrack @relation(fields: [musicTrackId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, musicTrackId])
+}
+
+// ─── Overlay Library ────────────────────────────────────
+
+model OverlayFile {
+  id          String   @id @default(cuid())
+  name        String
+  filePath    String
+  resolution  String?
+  framerate   Int?
+  duration    Float?
+  category    String
+  tags        String   @default("[]")
+  previewUrl  String?
+  createdAt   DateTime @default(now())
+}
+
+model OverlayPreset {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  layers      String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  channels    Channel[]
+}
+
+// ─── Sound Effects Library ──────────────────────────────
+
+model SoundEffect {
+  id          String   @id @default(cuid())
+  name        String
+  filePath    String
+  duration    Float
+  category    String
+  intensity   String   @default("medium")
+  tags        String   @default("[]")
+  usageGuide  String?
+  createdAt   DateTime @default(now())
+
+  channelSelections ChannelSfxSelection[]
+}
+
+model SfxUsageRule {
+  id               String   @id @default(cuid())
+  name             String
+  description      String
+  sfxCategory      String
+  triggerCondition String
+  isDefault        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+}
+
+model ChannelSfxSelection {
+  id            String @id @default(cuid())
+  channelId     String
+  soundEffectId String
+
+  channel       Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  soundEffect   SoundEffect @relation(fields: [soundEffectId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, soundEffectId])
+}
+
+// ─── Special Edits Library ──────────────────────────────
+
+model SpecialEdit {
+  id            String   @id @default(cuid())
+  name          String
+  description   String
+  scriptPath    String
+  parameters    String   @default("{}")
+  applicableFor String   @default("[]")
+  usageGuide    String?
+  previewUrl    String?
+  createdAt     DateTime @default(now())
+
+  channelSelections ChannelSpecialEditSelection[]
+}
+
+model ChannelSpecialEditSelection {
+  id            String @id @default(cuid())
+  channelId     String
+  specialEditId String
+
+  channel       Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  specialEdit   SpecialEdit @relation(fields: [specialEditId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, specialEditId])
+}
+
+// ─── Editing Knowledge ──────────────────────────────────
+
+model EditingKnowledge {
+  id            String   @id @default(cuid())
+  projectId     String
+  videoType     String
+  channelId     String
+  directorsCut  String
+  userFeedback  String?
+  effectsUsed   String   @default("[]")
+  score         Int?
+  createdAt     DateTime @default(now())
+
+  channel       Channel  @relation(fields: [channelId], references: [id])
 }

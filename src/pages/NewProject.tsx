@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
-import { Language, ScriptSource, MontageClip } from '../types';
+import { Language, ScriptSource, MontageClip, VideoType, VIDEO_TYPE_LABELS } from '../types';
 
 import { COLOR_GRADES } from '../data/color-grades';
 import { OUTPUT_FORMATS } from '../data/output-formats';
@@ -49,6 +49,7 @@ export default function NewProject() {
   const [showStepToggles, setShowStepToggles] = useState(false);
   const [channels, setChannels] = useState<Array<{id: string; name: string}>>([]);
   const [channelId, setChannelId] = useState('');
+  const [videoType, setVideoType] = useState<VideoType>('ai');
   const [VOICES, setVOICES] = useState<Array<{id: string; name: string; voiceId: string; description: string; language: string}>>([]);
   const [name, setName] = useState('');
   const [title, setTitle] = useState('');
@@ -175,6 +176,7 @@ export default function NewProject() {
       colorGrading: (selectedColorGrade?.name || 'Geen') as any,
       subtitles, output: (selectedOutput?.name || 'YouTube 1080p') as any,
       aspectRatio, enabledSteps, channelId: channelId || undefined,
+      videoType,
     });
     navigate(`/project/${project.id}`);
   };
@@ -213,12 +215,20 @@ export default function NewProject() {
             <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Beschrijving</label>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} className="input-base resize-none" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Taal</label>
               <select value={language} onChange={(e) => setLanguage(e.target.value as Language)} className="input-base">
                 <option value="EN">EN</option>
                 <option value="NL">NL</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Video Type</label>
+              <select value={videoType} onChange={(e) => setVideoType(e.target.value as VideoType)} className="input-base">
+                {(['ai', 'spokesperson_ai', 'trending', 'documentary', 'compilation', 'spokesperson'] as VideoType[]).map(vt => (
+                  <option key={vt} value={vt}>{VIDEO_TYPE_LABELS[vt]}</option>
+                ))}
               </select>
             </div>
             <div>

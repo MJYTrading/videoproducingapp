@@ -8,6 +8,8 @@ export type Language = 'EN' | 'NL';
 
 export type ScriptSource = 'new' | 'existing';
 
+export type VideoType = 'ai' | 'spokesperson_ai' | 'trending' | 'documentary' | 'compilation' | 'spokesperson';
+
 export type VisualStyle = '3D Render' | 'Stickman' | '2D Animatie' | 'History' | 'Realistisch' | 'Custom';
 
 export type ColorGrading = 'Geen' | 'Cinematic Dark' | 'History Warm' | 'Vibrant' | 'Clean Neutral' | 'Cold Blue' | 'Noir';
@@ -119,6 +121,8 @@ export interface Project {
   queuePosition?: number;
   channelId?: string;
   driveUrl?: string;
+  // NIEUW
+  videoType: VideoType;
 }
 
 export interface Settings {
@@ -141,6 +145,33 @@ export interface Settings {
   genaiProEnabled: boolean;
   genaiProImagesEnabled: boolean;
   videoDownloadApiKey: string;
+  // NIEUW
+  perplexityApiKey: string;
+  twelveLabsApiKey: string;
+  nexlevApiKey: string;
+}
+
+export interface Channel {
+  id: string;
+  name: string;
+  driveFolderId: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+  projectCount?: number;
+  // NIEUW
+  youtubeChannelId: string;
+  defaultVideoType: VideoType;
+  competitors: string; // JSON array
+  maxClipDurationSeconds?: number;
+  baseStyleProfile?: string;
+  baseResearchTemplate?: string;
+  styleReferenceUrls: string; // JSON array
+  styleExtraInstructions: string;
+  usedClips: string; // JSON array
+  overlayPresetId?: string;
+  sfxEnabled: boolean;
+  specialEditsEnabled: boolean;
 }
 
 export interface ConnectionStatus {
@@ -148,3 +179,128 @@ export interface ConnectionStatus {
   status: 'connected' | 'error' | 'testing' | 'untested';
   lastChecked?: string;
 }
+
+// ─── Nieuwe types voor libraries ────────────────────────
+
+export interface Idea {
+  id: string;
+  title: string;
+  description: string;
+  videoType: VideoType;
+  channelId: string;
+  sourceData: string;
+  referenceVideos: string;
+  status: 'saved' | 'converted';
+  projectId?: string;
+  createdAt: string;
+}
+
+export interface ResearchTemplate {
+  id: string;
+  name: string;
+  videoType: VideoType;
+  template: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssetClip {
+  id: string;
+  sourceUrl: string;
+  videoId: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  localPath: string;
+  thumbnailPath?: string;
+  tags: string;
+  description: string;
+  category: string;
+  subjects: string;
+  mood?: string;
+  quality?: number;
+  timesUsed: number;
+  lastUsedAt?: string;
+  createdAt: string;
+}
+
+export interface MusicTrack {
+  id: string;
+  title: string;
+  filePath: string;
+  duration: number;
+  mood: string;
+  genre: string;
+  bpm?: number;
+  energyProfile?: string;
+  hasVocals: boolean;
+  loopable: boolean;
+  tags: string;
+  createdAt: string;
+}
+
+export interface OverlayFile {
+  id: string;
+  name: string;
+  filePath: string;
+  resolution?: string;
+  framerate?: number;
+  duration?: number;
+  category: string;
+  tags: string;
+  previewUrl?: string;
+  createdAt: string;
+}
+
+export interface OverlayPreset {
+  id: string;
+  name: string;
+  description?: string;
+  layers: string; // JSON
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface SoundEffect {
+  id: string;
+  name: string;
+  filePath: string;
+  duration: number;
+  category: string;
+  intensity: string;
+  tags: string;
+  usageGuide?: string;
+  createdAt: string;
+}
+
+export interface SfxUsageRule {
+  id: string;
+  name: string;
+  description: string;
+  sfxCategory: string;
+  triggerCondition: string;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface SpecialEdit {
+  id: string;
+  name: string;
+  description: string;
+  scriptPath: string;
+  parameters: string;
+  applicableFor: string;
+  usageGuide?: string;
+  previewUrl?: string;
+  createdAt: string;
+}
+
+export const VIDEO_TYPE_LABELS: Record<VideoType, string> = {
+  ai: 'AI',
+  spokesperson_ai: 'Spokesperson AI',
+  trending: 'Trending',
+  documentary: 'Documentary',
+  compilation: 'Compilatie',
+  spokesperson: 'Spokesperson',
+};

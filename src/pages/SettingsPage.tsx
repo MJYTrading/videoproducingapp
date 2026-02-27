@@ -105,6 +105,9 @@ export default function SettingsPage() {
               <ConnectionField id="assembly" label="AssemblyAI" description="Audio transcriptie en timestamps" field="assemblyAiApiKey" value={localSettings.assemblyAiApiKey} type="password" />
               <ConnectionField id="youtube-transcript" label="YouTube Transcript API" description="youtubetranscript.dev — Transcripts ophalen van referentie video's" field="youtubeTranscriptApiKey" value={localSettings.youtubeTranscriptApiKey || ''} type="password" />
               <ConnectionField id="video-download" label="Video Download API" description="video-download-api.com — Clips downloaden voor montage" field="videoDownloadApiKey" value={(localSettings as any).videoDownloadApiKey || ''} type="password" />
+              <ConnectionField id="perplexity" label="Perplexity API" description="Deep Research voor onderzoek en trending clips" field="perplexityApiKey" value={(localSettings as any).perplexityApiKey || ''} type="password" />
+              <ConnectionField id="twelvelabs" label="TwelveLabs API" description="Video kwaliteitscheck bij asset zoeken" field="twelveLabsApiKey" value={(localSettings as any).twelveLabsApiKey || ''} type="password" />
+              <ConnectionField id="nexlev" label="NexLev API" description="Kanaalanalyse en ideation via N8N" field="nexlevApiKey" value={(localSettings as any).nexlevApiKey || ''} type="password" />
               <ConnectionField id="discord-webhook" label="Discord Webhook" description="Meldingen" field="discordWebhookUrl" value={localSettings.discordWebhookUrl} />
               <ConnectionField id="discord-user" label="Discord User ID" description="Je Discord ID voor mentions" field="discordUserId" value={localSettings.discordUserId} />
             </div>
