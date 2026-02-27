@@ -211,6 +211,16 @@ Let op:
     { maxTokens: 4096, temperature: 0.5 }
   );
 
+  // Bereken sections en avg_words_per_section op basis van target scriptLength
+  const targetWords = project.scriptLength || 5000;
+  const sections = styleProfile.script_formatting_rules?.sections || Math.max(3, Math.round(targetWords / 1200));
+  const avgWordsPerSection = Math.round(targetWords / sections);
+  if (!styleProfile.script_formatting_rules) styleProfile.script_formatting_rules = {};
+  styleProfile.script_formatting_rules.sections = sections;
+  styleProfile.script_formatting_rules.avg_words_per_section = avgWordsPerSection;
+  styleProfile.script_formatting_rules.total_target_words = targetWords;
+  console.log(`[Style Profile] Target: ${targetWords} woorden, ${sections} secties x ${avgWordsPerSection} woorden`);
+
   await writeJson(path.join(projPath, 'script', 'style-profile.json'), styleProfile);
 
   try {
