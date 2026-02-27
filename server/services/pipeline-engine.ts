@@ -22,6 +22,58 @@ import {
   executeStep11, executeStep12, executeStep13, executeStep14,
 } from './pipeline.js';
 
+
+// ── VideoType-based stap activatie matrix ──
+// Per videotype: welke stappen actief zijn (true = actief, false = skip)
+// Stappen 0 (Ideation) en 1 (Formulier) zijn ALTIJD actief
+const VIDEO_TYPE_STEPS: Record<string, Record<number, boolean>> = {
+  ai: {
+    0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
+    8: true, 9: false, 10: true, 11: true, 12: false, 13: false, 14: true,
+    15: true, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  spokesperson_ai: {
+    0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
+    8: false, 9: true, 10: true, 11: true, 12: false, 13: false, 14: true,
+    15: true, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  trending: {
+    0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
+    8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
+    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  documentary: {
+    0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
+    8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
+    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  compilation: {
+    0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
+    8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
+    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  spokesperson: {
+    0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
+    8: false, 9: true, 10: true, 11: false, 12: true, 13: true, 14: false,
+    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+};
+
+/**
+ * Bepaal of een stap overgeslagen moet worden op basis van videoType
+ */
+function shouldSkipForVideoType(stepNumber: number, videoType: string): boolean {
+  const matrix = VIDEO_TYPE_STEPS[videoType];
+  if (!matrix) return false; // Onbekend type → niet skippen
+  return matrix[stepNumber] === false;
+}
+
 // Mapping: nieuwe stepNumbers → oude executors
 // Stappen die nog niet ready zijn worden automatisch geskipped
 const STEP_EXECUTOR_MAP: Record<number, string> = {
@@ -333,7 +385,12 @@ async function executeStepWithRetry(
 async function executeStepFunction(
   stepNumber: number, project: any, settings: any, llmKeys: any
 ): Promise<any> {
-  // Mapping: nieuwe stepNumbers (0-24) → oude executor functies
+  
+// ── VideoType-based stap activatie matrix ──
+// Per videotype: welke stappen actief zijn (true = actief, false = skip)
+// Stappen 0 (Ideation) en 1 (Formulier) zijn ALTIJD actief
+
+// Mapping: nieuwe stepNumbers (0-24) → oude executor functies
   // Stap 0 en 1 worden direct completed bij pipeline start (niet hier)
   switch (stepNumber) {
     // Stap 0: Ideation → direct completed bij start
@@ -601,6 +658,16 @@ export async function startPipeline(projectId: string, fromQueue: boolean = fals
   for (const stepNum of STEP_ORDER) {
     if (state.completedSteps.has(stepNum) || state.skippedSteps.has(stepNum)) continue;
     
+    // Skip op basis van videoType matrix
+    const videoType = project.videoType || 'ai';
+    if (shouldSkipForVideoType(stepNum, videoType)) {
+      state.skippedSteps.add(stepNum);
+      await updateStepInDb(projectId, stepNum, { status: 'skipped' });
+      await addLog(projectId, 'info', stepNum, 'App',
+        `${getStepName(stepNum)} overgeslagen (niet actief voor ${videoType})`);
+      continue;
+    }
+
     // Skip als stap niet in enabledSteps zit (wanneer enabledSteps is ingesteld)
     if (hasEnabledSteps && !enabledSteps.includes(stepNum)) {
       state.skippedSteps.add(stepNum);

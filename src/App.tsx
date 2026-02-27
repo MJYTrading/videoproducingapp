@@ -43,6 +43,12 @@ function AppContent() {
           <Route path="channels" element={<ChannelsPage />} />
           <Route path="voices" element={<VoicesPage />} />
           <Route path="ideation" element={<IdeationPage />} />
+          <Route path="music" element={<MusicLibraryPage />} />
+          <Route path="sfx" element={<SfxLibraryPage />} />
+          <Route path="overlays" element={<OverlayLibraryPage />} />
+          <Route path="special-edits" element={<SpecialEditsPage />} />
+          <Route path="clip-library" element={<ClipLibraryPage />} />
+          <Route path="ideation" element={<IdeationPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -2,7 +2,7 @@ export type ProjectStatus = 'config' | 'running' | 'completed' | 'failed' | 'pau
 
 export type StepStatus = 'waiting' | 'running' | 'completed' | 'failed' | 'skipped' | 'review';
 
-export type Executor = 'App' | 'N8N' | 'Elevate AI' | 'OpenClaw';
+export type Executor = 'App' | 'N8N' | 'Elevate AI' | 'Elevate Opus' | 'Elevate Sonar' | 'Elevate' | 'Assembly AI' | 'Claude Opus' | 'HeyGen' | 'TwelveLabs + N8N' | 'FFMPEG';
 
 export type Language = 'EN' | 'NL';
 
