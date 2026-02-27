@@ -1599,9 +1599,10 @@ export async function executeStep13(project: any, settings: any) {
     }
 
     try {
-      // Compenseer crossfade: elke clip 0.5s langer zodat totaal klopt
+      // Clip duur: +crossfade voor overlap, BEHALVE laatste clip
       const baseDur = scene.duration || 5;
-      const dur = crossfadeDuration > 0 ? baseDur + crossfadeDuration : baseDur;
+      const isLastClip = i === scenes.length - 1;
+      const dur = (crossfadeDuration > 0 && !isLastClip) ? baseDur + crossfadeDuration : baseDur;
       execSync(
         'ffmpeg -y -i "' + videoPath + '"' +
         ' -t ' + dur +
