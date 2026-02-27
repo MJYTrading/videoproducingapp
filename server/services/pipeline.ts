@@ -768,8 +768,18 @@ export async function executeStep6b(project: any, settings: any) {
     aiScenes,
     projPath,
     mediaSettings,
-    (done, total, sceneId) => {
+    async (done, total, sceneId) => {
       console.log(`[Step 13] Voortgang: ${done}/${total} (scene ${sceneId})`);
+      if (done % 10 === 0 || done === total) {
+        try {
+          const prisma = (await import('../db.js')).default;
+          await prisma.pipelineLog.create({ data: {
+            projectId: project.id, level: 'info', stepNumber: 13,
+            source: 'Elevate', message: `Images: ${done}/${total} klaar`,
+            timestamp: new Date(),
+          }});
+        } catch {}
+      }
     }
   );
 
@@ -1347,8 +1357,18 @@ export async function executeStep9(project: any, settings: any) {
     imageSelections.selections || [],
     projPath,
     mediaSettings,
-    (done, total, sceneId) => {
+    async (done, total, sceneId) => {
       console.log(`[Step 14] Voortgang: ${done}/${total} (scene ${sceneId})`);
+      if (done % 5 === 0 || done === total) {
+        try {
+          const prisma = (await import('../db.js')).default;
+          await prisma.pipelineLog.create({ data: {
+            projectId: project.id, level: 'info', stepNumber: 14,
+            source: 'Elevate', message: `Videos: ${done}/${total} klaar`,
+            timestamp: new Date(),
+          }});
+        } catch {}
+      }
     }
   );
 
