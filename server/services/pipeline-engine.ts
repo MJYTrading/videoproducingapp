@@ -361,7 +361,7 @@ async function executeStepFunction(
     case 23: return executeStep13(project, settings);                              // Final Export
     case 24: throw new Error('Thumbnail nog niet geïmplementeerd');                // Thumbnail (TODO)
     case 25: return executeStep14(project, settings);                              // Drive Upload
-    default: throw new Error(\`Stap \${stepNumber} niet geïmplementeerd\`);
+    default: throw new Error(`Stap ${stepNumber} niet geïmplementeerd`);
   }
 }
 
