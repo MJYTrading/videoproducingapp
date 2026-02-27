@@ -70,7 +70,11 @@ async function elevateCreateMedia(
   }
 
   const data = await resp.json();
-  return data.data;
+  if (!data?.data?.id && !data?.id) {
+    console.error('[Elevate] Onverwachte response:', JSON.stringify(data).slice(0, 300));
+    throw new Error('Elevate response bevat geen task id: ' + JSON.stringify(data).slice(0, 200));
+  }
+  return data.data || data;
 }
 
 async function elevatePollStatus(
@@ -89,7 +93,7 @@ async function elevatePollStatus(
 
     if (!resp.ok) throw new Error(`Elevate poll failed: ${resp.status}`);
     const data = await resp.json();
-    const task = data.data;
+    const task = data.data || data;
 
     if (task.status === 'completed') {
       return { resultUrl: task.result_url, status: 'completed' };
@@ -114,17 +118,15 @@ async function genaiProCreateImage(
   aspectRatio: string = 'IMAGE_ASPECT_RATIO_LANDSCAPE',
   count: number = 1
 ): Promise<{ fileUrls: string[] }> {
-  const formData = new URLSearchParams({
-    prompt,
-    aspect_ratio: aspectRatio,
-    number_of_images: String(count),
-  });
+  const formData = new FormData();
+  formData.append('prompt', prompt);
+  formData.append('aspect_ratio', aspectRatio);
+  formData.append('number_of_images', String(count));
 
   const resp = await fetch(`${GENAIPRO_BASE}/veo/create-image`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: formData,
   });
@@ -143,17 +145,17 @@ async function genaiProTextToVideo(
   aspectRatio: string = 'VIDEO_ASPECT_RATIO_LANDSCAPE',
   count: number = 1
 ): Promise<{ fileUrl: string }> {
+  const formData = new FormData();
+  formData.append('prompt', prompt);
+  formData.append('aspect_ratio', aspectRatio);
+  formData.append('number_of_videos', String(count));
+
   const resp = await fetch(`${GENAIPRO_BASE}/veo/text-to-video`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      prompt,
-      aspect_ratio: aspectRatio,
-      number_of_videos: count,
-    }),
+    body: formData,
   });
 
   if (!resp.ok) {
@@ -161,7 +163,7 @@ async function genaiProTextToVideo(
     throw new Error(`GenAIPro video failed (${resp.status}): ${err.slice(0, 200)}`);
   }
 
-  return await readSSEResponse(resp);
+  return await readStreamingSSE(resp, 600_000);
 }
 
 async function genaiProFrameToVideo(
@@ -190,7 +192,7 @@ async function genaiProFrameToVideo(
     throw new Error(`GenAIPro frame-to-video failed (${resp.status}): ${err.slice(0, 200)}`);
   }
 
-  return await readSSEResponse(resp);
+  return await readStreamingSSE(resp, 600_000);
 }
 
 // ── SSE Stream Reader ──
@@ -198,26 +200,120 @@ async function genaiProFrameToVideo(
 async function readSSEResponse(resp: Response): Promise<any> {
   const text = await resp.text();
 
+  // GenAIPro SSE format: "event:<type>\ndata:<json>\n\n"
+  // We zoeken het laatste succesvolle data event met JSON
   const lines = text.split('\n');
   let lastData: any = null;
+  let lastEvent: string = '';
+  let hasError = false;
+  let errorMsg = '';
 
   for (const line of lines) {
-    if (line.startsWith('data: ')) {
-      try {
-        lastData = JSON.parse(line.slice(6));
-      } catch {}
+    const trimmed = line.trim();
+    if (trimmed.startsWith('event:')) {
+      lastEvent = trimmed.slice(6).trim();
+    } else if (trimmed.startsWith('data:')) {
+      const dataStr = trimmed.slice(5).trim();
+      if (lastEvent === 'error' || lastEvent === 'generation_error') {
+        hasError = true;
+        try { errorMsg = JSON.parse(dataStr).error || dataStr; } catch { errorMsg = dataStr; }
+      } else if (dataStr.startsWith('{') || dataStr.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(dataStr);
+          // Alleen opslaan als het een resultaat is (heeft file_urls, fileUrl, id, etc.)
+          if (parsed.file_urls || parsed.fileUrls || parsed.id || parsed.url) {
+            lastData = parsed;
+          }
+        } catch {}
+      }
+    } else if (trimmed.startsWith('data: ')) {
+      // Alternatief format met spatie na data:
+      const dataStr = trimmed.slice(6).trim();
+      if (dataStr.startsWith('{') || dataStr.startsWith('[')) {
+        try {
+          lastData = JSON.parse(dataStr);
+        } catch {}
+      }
     }
   }
 
-  if (!lastData) {
+  // Als we data hebben gevonden, gebruik dat
+  if (lastData) return lastData;
+
+  // Als er een error event was, gooi die
+  if (hasError) throw new Error('GenAIPro API error: ' + errorMsg);
+
+  // Probeer hele response als JSON te parsen (geen SSE)
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('Kon GenAIPro response niet parsen: ' + text.slice(0, 300));
+  }
+}
+
+// ── Streaming SSE Reader (voor langlopende video generatie) ──
+
+async function readStreamingSSE(resp: Response, timeoutMs: number = 600_000): Promise<any> {
+  return new Promise(async (resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('SSE stream timeout na ' + (timeoutMs / 1000) + 's'));
+    }, timeoutMs);
+
     try {
-      lastData = JSON.parse(text);
-    } catch {
-      throw new Error('Kon GenAIPro response niet parsen: ' + text.slice(0, 200));
-    }
-  }
+      const text = await resp.text();
+      clearTimeout(timeout);
 
-  return lastData;
+      const lines = text.split('\n');
+      let lastData: any = null;
+      let lastEvent: string = '';
+      let hasError = false;
+      let errorMsg = '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('event:')) {
+          lastEvent = trimmed.slice(6).trim();
+        } else if (trimmed.startsWith('data:')) {
+          const dataStr = trimmed.slice(5).trim();
+
+          if (lastEvent === 'error' || lastEvent === 'generation_error') {
+            hasError = true;
+            try { errorMsg = JSON.parse(dataStr).error || dataStr; } catch { errorMsg = dataStr; }
+          } else if (lastEvent.includes('complete') || lastEvent.includes('finished')) {
+            // Dit is het eindresultaat
+            if (dataStr.startsWith('{') || dataStr.startsWith('[')) {
+              try { lastData = JSON.parse(dataStr); } catch {}
+            }
+          } else if (dataStr.startsWith('{') || dataStr.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(dataStr);
+              // Direct object met file_url(s)
+              if (parsed.file_urls || parsed.fileUrls || parsed.file_url || parsed.fileUrl || parsed.video_url || parsed.videoUrl) {
+                lastData = parsed;
+              }
+              // Array response: [{file_url: "..."}]
+              if (Array.isArray(parsed) && parsed.length > 0 && (parsed[0].file_url || parsed[0].file_urls)) {
+                lastData = parsed;
+              }
+            } catch {}
+          }
+        }
+      }
+
+      if (lastData) return resolve(lastData);
+      if (hasError) return reject(new Error('GenAIPro API error: ' + errorMsg));
+
+      // Probeer hele response als JSON
+      try {
+        return resolve(JSON.parse(text));
+      } catch {
+        reject(new Error('Kon GenAIPro streaming response niet parsen: ' + text.slice(0, 300)));
+      }
+    } catch (err: any) {
+      clearTimeout(timeout);
+      reject(err);
+    }
+  });
 }
 
 // ── File Download Helper ──
@@ -262,7 +358,7 @@ export async function generateImages(
 
       if (useGenAIPro) {
         const result = await genaiProCreateImage(settings.genaiProApiKey, prompt, 'IMAGE_ASPECT_RATIO_LANDSCAPE');
-        imageUrl = result.fileUrls?.[0] || (result as any).file_urls?.[0];
+        imageUrl = result.file_urls?.[0] || (result as any).fileUrls?.[0];
         provider = 'genaipro';
       } else if (useElevate) {
         const task = await elevateCreateMedia(settings.elevateApiKey, 'image', prompt, { aspectRatio: 'landscape' });
@@ -339,13 +435,13 @@ export async function generateVideos(
     try {
       let videoUrl: string;
 
-      if (selection?.chosen_path) {
-        const result = await genaiProFrameToVideo(settings.genaiProApiKey, selection.chosen_path, prompt);
-        videoUrl = result.fileUrl || (result as any).file_url;
-      } else {
-        const result = await genaiProTextToVideo(settings.genaiProApiKey, prompt);
-        videoUrl = result.fileUrl || (result as any).file_url;
+      if (!selection?.chosen_path) {
+        console.warn(`[Videos] Scene ${sceneId}: geen source image, overgeslagen`);
+        return;
       }
+
+      const result = await genaiProFrameToVideo(settings.genaiProApiKey, selection.chosen_path, prompt);
+      videoUrl = Array.isArray(result) ? result[0]?.file_url : (result.file_url || result.fileUrl);
 
       const localPath = path.join(outputDir, `scene${sceneId}.mp4`);
       await downloadFile(videoUrl, localPath);
@@ -377,13 +473,14 @@ export async function generateVideos(
       );
 
       try {
-        let sourceImage: string | undefined;
-
-        if (selection?.chosen_path) {
-          const imgBuffer = await fs.readFile(selection.chosen_path);
-          const ext = selection.chosen_path.endsWith('.png') ? 'png' : 'jpeg';
-          sourceImage = `data:image/${ext};base64,${imgBuffer.toString('base64')}`;
+        if (!selection?.chosen_path) {
+          console.warn(`[Videos] Scene ${sceneId}: geen source image, overgeslagen`);
+          continue;
         }
+
+        const imgBuffer = await fs.readFile(selection.chosen_path);
+        const ext = selection.chosen_path.endsWith('.png') ? 'png' : 'jpeg';
+        const sourceImage = `data:image/${ext};base64,${imgBuffer.toString('base64')}`;
 
         const task = await elevateCreateMedia(settings.elevateApiKey, 'video', prompt, {
           aspectRatio: 'landscape',
