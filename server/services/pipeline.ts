@@ -1539,48 +1539,242 @@ export async function executeStep12(project: any, settings: any) {
 }
 
 // ============================================================
-// STAP 13: FINAL EXPORT
+// STAP 13: FINAL EXPORT (Direct FFmpeg, geen N8N)
 // ============================================================
 
 export async function executeStep13(project: any, settings: any) {
   const projPath = projectDir(project.name);
-  const statusPath = path.join(projPath, 'edit', 'export-status.json');
-  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/final-exporter';
+  const { execSync } = await import('child_process');
 
-  const payload = {
-    project: project.name,
-    project_dir: projPath,
-    subtitles: project.subtitles !== false,
-    output_format: project.output === 'youtube_short' ? 'youtube_short' : 'youtube_1080p',
-  };
+  console.log('[Final Export] Gestart...');
 
-  console.log(`[Step 13] Final export via ${n8nUrl}...`);
+  // 1. Laad scene data
+  const scenePrompts = await readJson<any>(path.join(projPath, 'assets', 'scene-prompts.json'));
+  const scenes = scenePrompts.scenes || [];
+  const audioPath = path.join(projPath, 'audio', 'voiceover.mp3');
+  const editDir = path.join(projPath, 'edit');
+  await fs.mkdir(editDir, { recursive: true });
 
-  try { await fs.unlink(statusPath); } catch {}
+  // 2. Project settings
+  const transitionType = project.uniformTransition || 'crossfade';
+  const crossfadeDuration = transitionType === 'crossfade' ? 0.5 : 0;
+  const resolution = '1920:1080';
+  const fps = 30;
 
-  const response = await fetch(n8nUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  console.log('[Final Export] ' + scenes.length + ' scenes, transitie: ' + transitionType);
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+  // 3. Prepareer clips — trim en schaal naar 1080p
+  const preparedDir = path.join(editDir, 'prepared-clips');
+  await fs.mkdir(preparedDir, { recursive: true });
+
+  const scenesDir = path.join(projPath, 'assets', 'scenes');
+  const preparedClips: string[] = [];
+  const clipDurations: number[] = [];
+
+  for (let i = 0; i < scenes.length; i++) {
+    const scene = scenes[i];
+    const videoPath = path.join(scenesDir, 'scene' + scene.id + '.mp4');
+    const outClip = path.join(preparedDir, 'clip' + String(i).padStart(4, '0') + '.mp4');
+
+    try {
+      await fs.access(videoPath);
+    } catch {
+      console.warn('[Final Export] Scene ' + scene.id + ': geen video, overgeslagen');
+      continue;
+    }
+
+    try {
+      const dur = scene.duration || 5;
+      execSync(
+        'ffmpeg -y -i "' + videoPath + '"' +
+        ' -t ' + dur +
+        ' -vf "scale=' + resolution + ':force_original_aspect_ratio=decrease,pad=' + resolution + ':(ow-iw)/2:(oh-ih)/2:black,fps=' + fps + '"' +
+        ' -c:v libx264 -preset fast -crf 23 -an -movflags +faststart' +
+        ' "' + outClip + '"',
+        { timeout: 120000, stdio: 'pipe' }
+      );
+      preparedClips.push(outClip);
+      clipDurations.push(dur);
+    } catch (err: any) {
+      console.error('[Final Export] Scene ' + scene.id + ' clip prep mislukt: ' + (err.message || '').slice(0, 200));
+    }
+
+    if ((i + 1) % 25 === 0 || i === scenes.length - 1) {
+      console.log('[Final Export] Clips voorbereid: ' + (i + 1) + '/' + scenes.length);
+    }
   }
 
-  console.log('[Step 13] Wachten op export-status.json...');
-  const status = await pollForStatus(statusPath, 10000, 1800000);
+  console.log('[Final Export] ' + preparedClips.length + ' clips voorbereid');
 
-  console.log(`[Step 13] Export klaar! ${status.duration}s, ${status.file_size_mb} MB`);
+  if (preparedClips.length === 0) {
+    throw new Error('Geen clips voorbereid voor export');
+  }
+
+  // 4. Samenvoegen
+  const videoOnly = path.join(editDir, project.name + '-video.mp4');
+  const outputFile = path.join(editDir, project.name + '-final.mp4');
+
+  if (crossfadeDuration > 0 && preparedClips.length > 1) {
+    // Crossfade in batches van 15 (FFmpeg filter graph limiet)
+    const BATCH_SIZE = 15;
+    const batchOutputs: string[] = [];
+
+    for (let b = 0; b < preparedClips.length; b += BATCH_SIZE) {
+      const batch = preparedClips.slice(b, b + BATCH_SIZE);
+      const batchDurs = clipDurations.slice(b, b + BATCH_SIZE);
+      const batchOut = path.join(preparedDir, 'batch' + String(Math.floor(b / BATCH_SIZE)).padStart(3, '0') + '.mp4');
+
+      if (batch.length === 1) {
+        await fs.copyFile(batch[0], batchOut);
+        batchOutputs.push(batchOut);
+        continue;
+      }
+
+      // Bouw crossfade filter
+      const inputs = batch.map((c, i) => '-i "' + c + '"').join(' ');
+      let filter = '';
+      const n = batch.length;
+
+      for (let i = 0; i < n; i++) {
+        filter += '[' + i + ':v]setpts=PTS-STARTPTS[v' + i + ']; ';
+      }
+
+      let lastLabel = 'v0';
+      let cumulativeOffset = 0;
+      for (let i = 1; i < n; i++) {
+        cumulativeOffset += batchDurs[i - 1] - crossfadeDuration;
+        const outLabel = i < n - 1 ? 'cf' + i : 'vout';
+        filter += '[' + lastLabel + '][v' + i + ']xfade=transition=fade:duration=' + crossfadeDuration + ':offset=' + Math.max(0, cumulativeOffset).toFixed(3) + '[' + outLabel + ']; ';
+        lastLabel = outLabel;
+      }
+
+      filter = filter.trim().replace(/;\s*$/, '');
+
+      try {
+        execSync(
+          'ffmpeg -y ' + inputs +
+          " -filter_complex '" + filter + "'" +
+          ' -map "[vout]" -c:v libx264 -preset fast -crf 23 -movflags +faststart' +
+          ' "' + batchOut + '"',
+          { timeout: 600000, stdio: 'pipe', maxBuffer: 50 * 1024 * 1024 }
+        );
+        batchOutputs.push(batchOut);
+      } catch (err: any) {
+        console.error('[Final Export] Batch ' + Math.floor(b / BATCH_SIZE) + ' crossfade mislukt: ' + (err.message || '').slice(0, 300));
+        // Fallback: concat zonder crossfade voor deze batch
+        const concatFile = path.join(preparedDir, 'batch' + String(Math.floor(b / BATCH_SIZE)).padStart(3, '0') + '.txt');
+        await fs.writeFile(concatFile, batch.map(f => "file '" + f + "'").join('\n'));
+        execSync(
+          'ffmpeg -y -f concat -safe 0 -i "' + concatFile + '" -c:v libx264 -preset fast -crf 23 -movflags +faststart "' + batchOut + '"',
+          { timeout: 300000, stdio: 'pipe' }
+        );
+        batchOutputs.push(batchOut);
+      }
+
+      console.log('[Final Export] Batch ' + (Math.floor(b / BATCH_SIZE) + 1) + '/' + Math.ceil(preparedClips.length / BATCH_SIZE) + ' samengevoegd');
+    }
+
+    // Merge alle batches
+    if (batchOutputs.length === 1) {
+      await fs.copyFile(batchOutputs[0], videoOnly);
+    } else {
+      // Batches samenvoegen met crossfade
+      const inputs = batchOutputs.map((c, i) => '-i "' + c + '"').join(' ');
+      // Haal batch duren op
+      const bDurs: number[] = [];
+      for (const bo of batchOutputs) {
+        try {
+          const d = execSync('ffprobe -v error -show_entries format=duration -of csv=p=0 "' + bo + '"', { encoding: 'utf-8', timeout: 10000 }).trim();
+          bDurs.push(parseFloat(d) || 60);
+        } catch { bDurs.push(60); }
+      }
+
+      let bFilter = '';
+      const bn = batchOutputs.length;
+      for (let i = 0; i < bn; i++) {
+        bFilter += '[' + i + ':v]setpts=PTS-STARTPTS[bv' + i + ']; ';
+      }
+      let bLast = 'bv0';
+      let bOffset = 0;
+      for (let i = 1; i < bn; i++) {
+        bOffset += bDurs[i - 1] - crossfadeDuration;
+        const bOut = i < bn - 1 ? 'bcf' + i : 'vout';
+        bFilter += '[' + bLast + '][bv' + i + ']xfade=transition=fade:duration=' + crossfadeDuration + ':offset=' + Math.max(0, bOffset).toFixed(3) + '[' + bOut + ']; ';
+        bLast = bOut;
+      }
+      bFilter = bFilter.trim().replace(/;\s*$/, '');
+
+      try {
+        execSync(
+          'ffmpeg -y ' + inputs +
+          " -filter_complex '" + bFilter + "'" +
+          ' -map "[vout]" -c:v libx264 -preset fast -crf 23 -movflags +faststart' +
+          ' "' + videoOnly + '"',
+          { timeout: 900000, stdio: 'pipe', maxBuffer: 50 * 1024 * 1024 }
+        );
+      } catch {
+        // Fallback: simpele concat
+        const concatFile = path.join(preparedDir, 'final-concat.txt');
+        await fs.writeFile(concatFile, batchOutputs.map(f => "file '" + f + "'").join('\n'));
+        execSync(
+          'ffmpeg -y -f concat -safe 0 -i "' + concatFile + '" -c copy -movflags +faststart "' + videoOnly + '"',
+          { timeout: 600000, stdio: 'pipe' }
+        );
+      }
+    }
+  } else {
+    // Simpele concat zonder transities
+    const concatFile = path.join(preparedDir, 'concat.txt');
+    await fs.writeFile(concatFile, preparedClips.map(f => "file '" + f + "'").join('\n'));
+    execSync(
+      'ffmpeg -y -f concat -safe 0 -i "' + concatFile + '" -c:v libx264 -preset fast -crf 23 -movflags +faststart "' + videoOnly + '"',
+      { timeout: 600000, stdio: 'pipe' }
+    );
+  }
+
+  console.log('[Final Export] Video samengevoegd, audio toevoegen...');
+
+  // 5. Voiceover toevoegen
+  try {
+    await fs.access(audioPath);
+    execSync(
+      'ffmpeg -y -i "' + videoOnly + '" -i "' + audioPath + '"' +
+      ' -c:v copy -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -shortest -movflags +faststart' +
+      ' "' + outputFile + '"',
+      { timeout: 300000, stdio: 'pipe' }
+    );
+    // Verwijder video-only versie
+    try { await fs.unlink(videoOnly); } catch {}
+  } catch {
+    // Geen audio, gebruik video-only
+    await fs.rename(videoOnly, outputFile);
+    console.warn('[Final Export] Geen voiceover gevonden, video zonder audio');
+  }
+
+  // 6. Stats
+  const stats = await fs.stat(outputFile);
+  const fileSizeMb = Math.round(stats.size / 1024 / 1024 * 10) / 10;
+
+  let duration = 0;
+  try {
+    const d = execSync('ffprobe -v error -show_entries format=duration -of csv=p=0 "' + outputFile + '"', { encoding: 'utf-8', timeout: 30000 }).trim();
+    duration = Math.round(parseFloat(d));
+  } catch {}
+
+  // Cleanup prepared clips
+  try { await fs.rm(preparedDir, { recursive: true, force: true }); } catch {}
+
+  console.log('[Final Export] Klaar! ' + duration + 's, ' + fileSizeMb + ' MB');
 
   return {
-    outputFile: status.output_file,
-    duration: status.duration,
-    fileSizeMb: status.file_size_mb,
-    format: status.format,
+    outputFile,
+    duration,
+    fileSizeMb,
+    format: 'YouTube 1080p',
+    totalScenes: preparedClips.length,
   };
 }
+
 
 // ── Stap 14: Google Drive Upload ──
 
