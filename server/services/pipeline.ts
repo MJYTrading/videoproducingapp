@@ -1159,7 +1159,7 @@ export async function executeStep7(project: any, settings: any) {
   try {
     scenePrompts = await readJson(scenePromptsPath);
   } catch {
-    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 11 (Scene Prompts) uit.');
+    console.log('[Step 12] scene-prompts.json niet gevonden, skip...'); return { skipped: true, reason: 'Geen scene-prompts.json (stap 11 niet actief voor dit video type)' };
   }
 
   const realImageScenes = (scenePrompts.scenes || []).filter(
