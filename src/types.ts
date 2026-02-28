@@ -18,7 +18,7 @@ export type OutputFormat = 'YouTube 1080p' | 'YouTube 4K' | 'Shorts';
 
 export type SubtitleStyle = 'classic' | 'modern' | 'karaoke' | 'minimal' | 'bold';
 
-export type LogLevel = 'info' | 'warn' | 'error';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface MontageClip {
   id: string;
@@ -53,6 +53,8 @@ export interface LogEntry {
   step: number;
   source: Executor;
   message: string;
+  detail?: string | null;
+  durationMs?: number | null;
 }
 
 export interface AIResponse {
