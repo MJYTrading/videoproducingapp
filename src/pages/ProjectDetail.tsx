@@ -160,7 +160,7 @@ export default function ProjectDetail() {
 
   return (
     <div className="p-8 animate-fade-in">
-      <div className="max-w-6xl mx-auto">
+      <div className="w-full px-6">
         {/* Header card */}
         <div className="glass rounded-2xl p-6 mb-6">
           <div className="flex items-start justify-between mb-5">

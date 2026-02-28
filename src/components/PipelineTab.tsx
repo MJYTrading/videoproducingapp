@@ -198,14 +198,55 @@ export default function PipelineTab({ project }: PipelineTabProps) {
               )}
 
               {/* Result preview */}
-              {step.result && (
-                <div className="p-3 bg-surface-200 border border-white/[0.04] rounded-lg mb-3">
-                  <p className="text-[11px] text-zinc-500 font-semibold mb-1">Resultaat</p>
-                  <pre className="text-xs text-zinc-400 overflow-x-auto max-h-32 overflow-y-auto font-mono">
-                    {typeof step.result === 'string' ? step.result : JSON.stringify(step.result, null, 2)}
-                  </pre>
-                </div>
-              )}
+              {step.result && (() => {
+                let parsed: any = step.result;
+                try { parsed = typeof parsed === 'string' ? JSON.parse(parsed) : parsed; } catch {}
+
+                // Bepaal of dit een JSON bestand resultaat is (research, clips, orchestrator, style profile)
+                const isFileResult = parsed?.researchFile || parsed?.clipsFile || parsed?.outlineFile || parsed?._source;
+                const hasScript = parsed?.script || parsed?.scriptVoiceover;
+
+                // Toon uitgebreide preview voor data-rijke stappen
+                const renderValue = (val: any, depth = 0): string => {
+                  if (val === null || val === undefined) return '';
+                  if (typeof val === 'string') return val.length > 500 ? val.slice(0, 500) + '...' : val;
+                  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+                  if (Array.isArray(val)) return val.length > 0 ? `[${val.length} items]` : '[]';
+                  if (typeof val === 'object' && depth < 2) {
+                    return Object.entries(val).map(([k, v]) => `${k}: ${renderValue(v, depth + 1)}`).join('\n');
+                  }
+                  return JSON.stringify(val).slice(0, 200);
+                };
+
+                return (
+                  <div className="p-4 bg-surface-200 border border-white/[0.04] rounded-lg mb-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs text-zinc-500 font-semibold">Resultaat</p>
+                      <button
+                        onClick={() => {
+                          const el = document.getElementById(`result-${step.id}`);
+                          if (el) el.classList.toggle('max-h-48');
+                          if (el) el.classList.toggle('max-h-[600px]');
+                        }}
+                        className="text-[11px] text-brand-400 hover:text-brand-300"
+                      >
+                        Expand / Collapse
+                      </button>
+                    </div>
+                    <pre
+                      id={`result-${step.id}`}
+                      className="text-sm text-zinc-300 overflow-x-auto max-h-48 overflow-y-auto font-mono whitespace-pre-wrap leading-relaxed"
+                    >
+                      {hasScript
+                        ? (parsed.script || parsed.scriptVoiceover || '').slice(0, 2000) + (((parsed.script || '').length > 2000) ? '\n\n... [truncated]' : '')
+                        : typeof parsed === 'object'
+                          ? JSON.stringify(parsed, null, 2)
+                          : String(parsed)
+                      }
+                    </pre>
+                  </div>
+                );
+              })()}
 
               {/* Review panel */}
               {step.status === 'review' && step.id !== 13 && (
