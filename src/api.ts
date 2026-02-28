@@ -212,6 +212,22 @@ export const scriptChecker = {
   },
 };
 
+export const clipSearch = {
+  async search(projectId: string, data: { clipUrl: string; startTime: string; endTime: string; feedback: string; scriptContext: string; language?: string }) {
+    const res = await apiFetch(`/projects/${projectId}/clip-search`, { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Clip zoeken mislukt'); }
+    return res.json();
+  },
+};
+
+export const clipReview = {
+  async save(projectId: string, data: { clips: any[] }) {
+    const res = await apiFetch(`/projects/${projectId}/clip-review`, { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Clip review opslaan mislukt'); }
+    return res.json();
+  },
+};
+
 export const pipelineEngine = {
   async start(projectId: string): Promise<any> {
     const res = await apiFetch(`/pipeline/${projectId}/start`, { method: 'POST' });
@@ -681,6 +697,14 @@ export const analytics = {
       method: 'PATCH', body: JSON.stringify({ rpm }),
     });
     if (!res.ok) throw new Error('RPM bijwerken mislukt');
+    return res.json();
+  },
+};
+
+export const scriptRewrite = {
+  async rewrite(projectId: string, data: { paragraph: string; feedback: string; context?: string; language?: string }) {
+    const res = await apiFetch(`/projects/${projectId}/script-rewrite`, { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Herschrijven mislukt'); }
     return res.json();
   },
 };

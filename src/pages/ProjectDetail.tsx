@@ -6,16 +6,17 @@ import { ProjectStatus } from '../types';
 import PipelineTab from '../components/PipelineTab';
 import PreviewTab from '../components/PreviewTab';
 import ReviewPanel from '../components/ReviewPanel';
-// ScriptTab removed
+import ScriptTab from '../components/ScriptTab';
 import LogsTab from '../components/LogsTab';
 import StatsTab from '../components/StatsTab';
 import ConfigTab from '../components/ConfigTab';
 
-type TabType = 'pipeline' | 'preview' | 'review' | 'logs' | 'stats' | 'config';
+type TabType = 'pipeline' | 'preview' | 'script' | 'review' | 'logs' | 'stats' | 'config';
 
 const TABS: Array<{ key: TabType; label: string; icon?: string }> = [
   { key: 'pipeline', label: 'Pipeline' },
   { key: 'preview', label: 'Preview' },
+  { key: 'script', label: 'Script', icon: '📝' },
   { key: 'review', label: 'Review' },
   { key: 'logs', label: 'Logs' },
   { key: 'stats', label: 'Stats', icon: '📊' },
@@ -285,6 +286,7 @@ export default function ProjectDetail() {
             <div className="flex-1 min-w-0">
               {activeTab === 'pipeline' && <PipelineTab project={project} />}
               {activeTab === 'preview' && <PreviewTab project={project} />}
+              {activeTab === 'script' && <ScriptTab project={project} onRefresh={() => loadProject()} />}
               {activeTab === 'review' && <ReviewPanel project={project} />}
               {activeTab === 'logs' && <LogsTab project={project} />}
               {activeTab === 'stats' && <StatsTab project={project} />}

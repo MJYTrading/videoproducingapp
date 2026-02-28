@@ -18,6 +18,8 @@ import mediaLibraryRoutes from './routes/media-library.js';
 import fileServeRoutes from './routes/file-serve.js';
 import analyticsRoutes, { startViewsCron } from './routes/analytics.js';
 import assetReviewRoutes from './routes/asset-review.js';
+import clipSearchRoutes from './routes/clip-search.js';
+import scriptRewriteRoutes from './routes/script-rewrite.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +49,8 @@ app.use('/api/ideation', ideationRoutes);
 app.use('/api/asset-clips', assetClipRoutes);
 app.use('/api/asset-images', assetImageRoutes);
 app.use('/api/assets', assetReviewRoutes);
+app.use('/api/projects', clipSearchRoutes);
+app.use('/api/projects', scriptRewriteRoutes);
 app.use('/api/media', mediaLibraryRoutes);
 app.use('/api/files', fileServeRoutes);
 app.use('/api/analytics', analyticsRoutes);
