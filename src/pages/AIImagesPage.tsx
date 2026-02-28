@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trash2, BrainCircuit, Search, Grid3x3, List, X, ExternalLink } from 'lucide-react';
-import { assetImages } from '../api';
+import { assetImages, getFileUrl } from '../api';
 
 export default function AIImagesPage() {
   const [images, setImages] = useState<any[]>([]);
@@ -60,7 +60,7 @@ export default function AIImagesPage() {
               <div key={img.id} className="group relative bg-surface-100 rounded-xl border border-white/[0.06] overflow-hidden hover:border-white/[0.12] transition-all cursor-pointer"
                 onClick={() => setSelectedImage(img)}>
                 <div className="aspect-video bg-surface-200 flex items-center justify-center overflow-hidden">
-                  {img.sourceUrl ? <img src={img.sourceUrl} alt={img.title} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} /> : <BrainCircuit className="w-8 h-8 text-zinc-700" />}
+                  {img.sourceUrl ? <img src={getFileUrl(img.sourceUrl, img.localPath)} alt={img.title} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} /> : <BrainCircuit className="w-8 h-8 text-zinc-700" />}
                 </div>
                 <div className="p-2.5">
                   <p className="text-xs font-medium truncate">{img.title}</p>
@@ -83,7 +83,7 @@ export default function AIImagesPage() {
                 onClick={() => setSelectedImage(img)}>
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-12 h-8 rounded-lg bg-surface-200 overflow-hidden shrink-0 border border-white/[0.04]">
-                    {img.sourceUrl && <img src={img.sourceUrl} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
+                    {img.sourceUrl && <img src={getFileUrl(img.sourceUrl, img.localPath)} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
                   </div>
                   <div className="min-w-0">
                     <h3 className="text-sm font-medium truncate">{img.title}</h3>
@@ -109,7 +109,7 @@ export default function AIImagesPage() {
             </div>
             <div className="p-5">
               <div className="aspect-video bg-surface-200 rounded-xl overflow-hidden mb-4 border border-white/[0.06]">
-                {selectedImage.sourceUrl && <img src={selectedImage.sourceUrl} alt={selectedImage.title} className="w-full h-full object-contain" />}
+                {selectedImage.sourceUrl && <img src={getFileUrl(selectedImage.sourceUrl, selectedImage.localPath)} alt={selectedImage.title} className="w-full h-full object-contain" />}
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-surface-100 rounded-lg p-3 border border-white/[0.04]"><p className="text-[10px] text-zinc-600 mb-0.5">Stijl</p><p className="text-xs font-medium">{selectedImage.style || '—'}</p></div>

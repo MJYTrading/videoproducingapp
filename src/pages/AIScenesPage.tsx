@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trash2, Clapperboard, Search, Grid3x3, List, X } from 'lucide-react';
-import { assetImages } from '../api';
+import { assetImages, getFileUrl } from '../api';
 
 export default function AIScenesPage() {
   const [scenes, setScenes] = useState<any[]>([]);
@@ -60,7 +60,7 @@ export default function AIScenesPage() {
               <div key={scene.id} className="group relative bg-surface-100 rounded-xl border border-white/[0.06] overflow-hidden hover:border-white/[0.12] transition-all cursor-pointer"
                 onClick={() => setSelectedScene(scene)}>
                 <div className="aspect-video bg-surface-200 flex items-center justify-center overflow-hidden">
-                  {scene.thumbnailPath ? <img src={scene.thumbnailPath} alt={scene.title} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} /> : <Clapperboard className="w-8 h-8 text-zinc-700" />}
+                  {scene.thumbnailPath ? <img src={getFileUrl(scene.thumbnailPath || "", scene.thumbnailPath)} alt={scene.title} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} /> : <Clapperboard className="w-8 h-8 text-zinc-700" />}
                 </div>
                 <div className="p-2.5">
                   <p className="text-xs font-medium truncate">{scene.title}</p>
@@ -107,7 +107,7 @@ export default function AIScenesPage() {
             </div>
             <div className="p-5">
               <div className="aspect-video bg-surface-200 rounded-xl overflow-hidden mb-4 border border-white/[0.06] flex items-center justify-center">
-                {selectedScene.sourceUrl ? <video src={selectedScene.sourceUrl} controls className="w-full h-full" /> : <Clapperboard className="w-12 h-12 text-zinc-700" />}
+                {selectedScene.sourceUrl ? <video src={getFileUrl(selectedScene.sourceUrl, selectedScene.localPath)} controls className="w-full h-full" /> : <Clapperboard className="w-12 h-12 text-zinc-700" />}
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-surface-100 rounded-lg p-3 border border-white/[0.04]"><p className="text-[10px] text-zinc-600 mb-0.5">Stijl</p><p className="text-xs font-medium">{selectedScene.style || '—'}</p></div>
