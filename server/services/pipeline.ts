@@ -352,10 +352,8 @@ export async function executeStep3(project: any, llmKeys: { elevateApiKey?: stri
     throw new Error('Style profile niet gevonden. Voer eerst stap 2 uit.');
   }
 
-  const wordCount = project.scriptLength || 5000;
+  const targetTotalWords = project.scriptLength || 5000;
   const sections = styleProfile.script_formatting_rules?.sections || 8;
-  await log(`Script parameters: ${wordCount} woorden, ${sections} secties, taal: ${project.language || 'EN'}`);
-  const wordsPerSection = Math.round(wordCount / sections);
 
   let clipInfo = '';
   const clips = project.referenceClips || [];
@@ -367,6 +365,27 @@ export async function executeStep3(project: any, llmKeys: { elevateApiKey?: stri
     const clipsResearch = await readJson(path.join(projPath, 'research', 'clips-research.json'));
     trendingClips = (clipsResearch.clips || []).filter((c: any) => c.validated !== false);
   } catch {}
+
+  // Bereken totale clip-duur en trek af van narration target
+  const WPM = 150; // woorden per minuut
+  let totalClipSeconds = 0;
+  const parseTime = (t: string): number => {
+    const p = (t || '0:00').split(':').map(Number);
+    return p.length === 3 ? p[0]*3600+p[1]*60+p[2] : p.length === 2 ? p[0]*60+p[1] : p[0]||0;
+  };
+  for (const c of montageClips) {
+    if (c.startTime && c.endTime) totalClipSeconds += parseTime(c.endTime) - parseTime(c.startTime);
+  }
+  for (const c of trendingClips) {
+    const start = c.timestamp_start || '00:00';
+    const end = c.timestamp_end || '00:15';
+    totalClipSeconds += parseTime(end) - parseTime(start);
+  }
+  const clipMinutes = totalClipSeconds / 60;
+  const targetNarrationMinutes = (targetTotalWords / WPM) - clipMinutes;
+  const wordCount = Math.max(Math.round(targetNarrationMinutes * WPM), Math.round(targetTotalWords * 0.3)); // minimum 30% narration
+  await log(`Script parameters: ${wordCount} narration woorden (target ${targetTotalWords} totaal, ${Math.round(clipMinutes * 10) / 10} min clips afgetrokken), ${sections} secties`);
+  const wordsPerSection = Math.round(wordCount / sections);
 
   // Trending clips altijd meenemen als ze beschikbaar zijn (ongeacht useClips flag)
   const hasAnyClips = clips.length > 0 || montageClips.length > 0 || trendingClips.length > 0;
@@ -400,7 +419,8 @@ ${JSON.stringify(styleProfile, null, 2)}
 ONDERWERP: ${project.title}
 ${project.description ? `BESCHRIJVING: ${project.description}` : ''}
 TAAL: ${project.language === 'NL' ? 'Nederlands' : 'Engels'}
-TOTAAL WOORDENAANTAL: EXACT ${wordCount} woorden (ABSOLUUT MINIMUM: ${Math.floor(wordCount * 0.9)} woorden, ABSOLUUT MAXIMUM: ${Math.ceil(wordCount * 1.1)} woorden)
+TOTAAL NARRATION WOORDENAANTAL: EXACT ${wordCount} woorden (ABSOLUUT MINIMUM: ${Math.floor(wordCount * 0.9)} woorden, ABSOLUUT MAXIMUM: ${Math.ceil(wordCount * 1.1)} woorden)
+BELANGRIJK: Dit is ALLEEN de narration tekst. De [CLIP] markers tellen NIET mee als woorden. De clips duren ~${Math.round(clipMinutes * 10) / 10} minuten, dus de narration moet ~${Math.round(targetNarrationMinutes * 10) / 10} minuten zijn om op ${Math.round(targetTotalWords / WPM)} minuten totaal uit te komen.
 BELANGRIJK: Tel je woorden. Het script MOET minstens ${Math.floor(wordCount * 0.9)} woorden bevatten. Schrijf gedetailleerd en uitgebreid.
 AANTAL SECTIES: ${sections} (uit style profile)
 WOORDEN PER SECTIE: ~${wordsPerSection}
