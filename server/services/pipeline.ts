@@ -1262,7 +1262,7 @@ export async function executeStep8(project: any, settings: any) {
   const statusPath = path.join(projPath, 'assets', 'clips-status.json');
 
   if (!project.useClips) {
-    console.log('[Step 8] Clips niet ingeschakeld — stap overgeslagen');
+    console.log('[Step 13] Clips niet ingeschakeld — stap overgeslagen');
     return { skipped: true, reason: 'YouTube clips zijn niet ingeschakeld voor dit project' };
   }
 
@@ -1273,7 +1273,7 @@ export async function executeStep8(project: any, settings: any) {
     clips = clipData.clips || clipData || [];
     if (!Array.isArray(clips)) clips = [];
   } catch {
-    console.log('[Step 8] clip-positions.json niet gevonden, check scene-prompts.json...');
+    console.log('[Step 13] clip-positions.json niet gevonden, check scene-prompts.json...');
     try {
       const scenePrompts = await readJson<any>(path.join(projPath, 'assets', 'scene-prompts.json'));
       const clipScenes = (scenePrompts.scenes || []).filter((s: any) => s.type === 'clip');
@@ -1282,12 +1282,13 @@ export async function executeStep8(project: any, settings: any) {
         url: s.clip_url || '',
         start: s.clip_start || '00:00',
         end: s.clip_end || '00:10',
+        description: s.text || s.description || '',
       })).filter((c: any) => c.url);
     } catch {}
   }
 
   if (clips.length === 0) {
-    console.log('[Step 8] Geen clips gevonden — stap overgeslagen');
+    console.log('[Step 13] Geen clips gevonden — stap overgeslagen');
     return { skipped: true, reason: 'Geen clips gevonden in clip-positions.json of scene-prompts.json' };
   }
 
@@ -1296,6 +1297,7 @@ export async function executeStep8(project: any, settings: any) {
     url: c.url || c.source_url || '',
     start: c.start || c.source_start || '00:00',
     end: c.end || c.source_end || '00:10',
+    description: c.description || c.context_for_script || '',
   }));
 
   try { await fs.unlink(statusPath); } catch {}
@@ -1309,7 +1311,7 @@ export async function executeStep8(project: any, settings: any) {
     clips,
   };
 
-  console.log(`[Step 8] ${clips.length} clips sturen naar ${n8nUrl}...`);
+  console.log(`[Step 13] ${clips.length} clips sturen naar ${n8nUrl}...`);
 
   const response = await fetch(n8nUrl, {
     method: 'POST',
@@ -1323,12 +1325,82 @@ export async function executeStep8(project: any, settings: any) {
   }
 
   const webhookResult = await response.json();
-  console.log('[Step 8] N8N response: ' + JSON.stringify(webhookResult));
+  console.log('[Step 13] N8N response: ' + JSON.stringify(webhookResult));
 
-  console.log('[Step 8] Wachten op status: ' + statusPath);
+  console.log('[Step 13] Wachten op status: ' + statusPath);
   const status = await pollForStatus(statusPath, 5000, 600000);
 
-  console.log(`[Step 8] Clips klaar! ${status.clips_downloaded || 0}/${status.total_clips || 0} gedownload`);
+  const clipsDownloaded = status.clips_downloaded || 0;
+  console.log(`[Step 13] Clips klaar! ${clipsDownloaded}/${status.total_clips || 0} gedownload`);
+
+  // ── Twelve Labs validatie op gedownloade clips ──
+  let validationResults: any[] = [];
+  if (settings.twelveLabsApiKey && clipsDownloaded > 0) {
+    try {
+      const { TwelveLabsService } = await import('./twelvelabs.js');
+      const tl = new TwelveLabsService({ apiKey: settings.twelveLabsApiKey });
+      
+      const healthy = await tl.healthCheck();
+      if (healthy) {
+        // Haal clips-research.json op voor verwachte beschrijvingen
+        let clipsResearch: any = null;
+        try {
+          clipsResearch = await readJson(path.join(projPath, 'research', 'clips-research.json'));
+        } catch {}
+
+        // Verzamel gedownloade clip bestanden
+        const clipsDir = path.join(projPath, 'assets', 'clips');
+        const downloadedFiles = status.results?.filter((r: any) => r.success && r.path) || [];
+        
+        if (downloadedFiles.length > 0) {
+          console.log(`[Step 13] Twelve Labs validatie op ${downloadedFiles.length} gedownloade clips...`);
+          
+          const videosToValidate = downloadedFiles.map((r: any) => {
+            // Zoek matching clip info voor de beschrijving
+            const clipInfo = clips.find((c: any) => c.clip_id === r.clip_id) || {};
+            const researchClip = clipsResearch?.clips?.find((c: any) => 
+              c.url && clipInfo.url && c.url.includes(clipInfo.url.split('v=')[1]?.slice(0, 11))
+            );
+            
+            return {
+              filePath: r.path,
+              expectedDescription: researchClip?.description || clipInfo.description || project.title,
+              id: r.clip_id || r.path,
+            };
+          }).filter((v: any) => v.filePath);
+
+          if (videosToValidate.length > 0) {
+            const results = await tl.validateBatch({
+              videos: videosToValidate,
+              projectName: project.name.slice(0, 30),
+            });
+
+            for (const [id, result] of results.entries()) {
+              validationResults.push({ id, ...result });
+              if (!result.matches) {
+                console.log(`[Step 13] ⚠ Clip ${id}: lage relevantie (score ${result.score.toFixed(2)})`);
+              }
+            }
+
+            const matchCount = validationResults.filter(r => r.matches).length;
+            console.log(`[Step 13] Twelve Labs: ${matchCount}/${validationResults.length} clips relevant`);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.log(`[Step 13] Twelve Labs validatie overgeslagen: ${e.message}`);
+    }
+  }
+
+  // Sla validatie resultaten op
+  if (validationResults.length > 0) {
+    await writeJson(path.join(projPath, 'assets', 'clips-validation.json'), {
+      validated_at: new Date().toISOString(),
+      results: validationResults,
+      total: validationResults.length,
+      relevant: validationResults.filter(r => r.matches).length,
+    });
+  }
 
   return {
     skipped: false,
@@ -1336,6 +1408,11 @@ export async function executeStep8(project: any, settings: any) {
     clipsFailed: status.clips_failed || 0,
     totalClips: status.total_clips || 0,
     results: status.results || [],
+    validation: validationResults.length > 0 ? {
+      total: validationResults.length,
+      relevant: validationResults.filter(r => r.matches).length,
+      lowRelevance: validationResults.filter(r => !r.matches).map(r => r.id),
+    } : null,
   };
 }
 
@@ -1898,12 +1975,14 @@ export async function executeStepResearch(project: any, settings: any): Promise<
   // Ultieme fallback: basis template
   if (!researchTemplate) {
     researchTemplate = {
-      topic: "",
-      summary: "",
-      key_facts: [],
-      timeline: [],
-      key_figures: [],
-      sources: []
+      research_brief: {
+        video_metadata: { working_title: '', topic_one_sentence: '', primary_emotion_to_evoke: '', target_length_minutes: '' },
+        key_facts: { what_happened: '', when: '', where: '', who_is_involved: [], why_it_matters: '', current_status: '' },
+        timeline_of_events: { events: [{ date: '', what_happened: '', significance: '', source: '' }] },
+        key_players: { players: [{ name: '', role: '', stance_or_position: '', notable_quotes: '' }] },
+        statistics_and_data: { figures: [{ number: '', what_it_represents: '', source: '' }] },
+        sources: { primary_sources: [{ type: '', title: '', url_or_reference: '', key_information_obtained: '' }] },
+      },
     };
   }
 
@@ -1914,7 +1993,7 @@ export async function executeStepResearch(project: any, settings: any): Promise<
     referenceVideoInfo = `Referentie video URLs: ${config.referenceVideos.filter((v: string) => v).join(', ')}`;
   }
 
-  // 3. Perplexity research uitvoeren
+  // 3. Perplexity research uitvoeren (met validatie + retry)
   const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
 
   const result = await perplexity.executeResearch({
@@ -1922,14 +2001,26 @@ export async function executeStepResearch(project: any, settings: any): Promise<
     description: project.description || '',
     researchTemplate,
     referenceVideoInfo,
+    maxRetries: 2,
   });
 
   // 4. Opslaan als research.json
   await writeJson(path.join(researchDir, 'research.json'), result);
 
-  console.log(`[Pipeline] Stap 2: Research JSON opgeslagen voor ${project.name}`);
+  // 5. Kwaliteitsrapport loggen
+  const brief = result.research_brief || result;
+  const statsCount = brief.statistics_and_data?.figures?.length || brief.statistics_and_facts?.figures?.length || 0;
+  const eventsCount = brief.timeline_of_events?.events?.length || brief.chronological_timeline?.events?.length || 0;
+  const sourcesCount = brief.sources?.primary_sources?.length || 0;
 
-  return { success: true, researchFile: 'research/research.json' };
+  console.log(`[Pipeline] Stap 2: Research opgeslagen voor "${project.name}"`);
+  console.log(`[Pipeline] Stap 2: ${eventsCount} events, ${statsCount} stats, ${sourcesCount} bronnen`);
+
+  return { 
+    success: true, 
+    researchFile: 'research/research.json',
+    quality: { events: eventsCount, statistics: statsCount, sources: sourcesCount },
+  };
 }
 
 // ══════════════════════════════════════════════════
@@ -1946,7 +2037,7 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
   }
 
   // 1. Bepaal max clip duur
-  let maxClipDuration = 15; // default
+  let maxClipDuration = 15;
   if (project.channelId) {
     const prismaImport = await import('../db.js');
     const prismaClient = prismaImport.default;
@@ -1972,11 +2063,10 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
   try {
     researchData = await readJson(path.join(researchDir, 'research.json'));
   } catch {
-    // research.json niet beschikbaar — geen probleem
     console.log('[Pipeline] Stap 4: Geen research.json gevonden, doorgaan zonder');
   }
 
-  // 4. Perplexity clips research
+  // 4. Perplexity clips research (met YouTube URL validatie)
   const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
 
   const result = await perplexity.executeTrendingClipsResearch({
@@ -1986,14 +2076,78 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
     usedClips,
     maxClipDuration,
     videoType: project.videoType || 'ai',
+    youtubeTranscriptApiKey: settings.youtubeTranscriptApiKey || '',
   });
 
-  // 5. Opslaan als clips-research.json
+  // 5. Optioneel: Twelve Labs validatie op gevonden clips
+  // Dit checkt of de clip content daadwerkelijk relevant is voor het onderwerp
+  if (settings.twelveLabsApiKey && result.clips && result.clips.length > 0) {
+    try {
+      const { TwelveLabsService } = await import('./twelvelabs.js');
+      const tl = new TwelveLabsService({ apiKey: settings.twelveLabsApiKey });
+      
+      // Health check eerst
+      const healthy = await tl.healthCheck();
+      if (healthy) {
+        console.log(`[Pipeline] Stap 4: Twelve Labs validatie op ${result.clips.length} clips...`);
+        
+        // We kunnen hier niet de video's uploaden (ze zijn nog niet gedownload),
+        // maar we slaan de verwachte beschrijvingen op zodat stap 13 ze kan valideren
+        result.twelve_labs_pending = true;
+        result.clips = result.clips.map((clip: any) => ({
+          ...clip,
+          expected_content: clip.description || clip.context_for_script || '',
+          twelve_labs_validated: false,
+        }));
+        console.log(`[Pipeline] Stap 4: Twelve Labs validatie wordt uitgevoerd na download (stap 13)`);
+      }
+    } catch (e: any) {
+      console.log(`[Pipeline] Stap 4: Twelve Labs check overgeslagen: ${e.message}`);
+    }
+  }
+
+  // 6. Opslaan als clips-research.json
   await writeJson(path.join(researchDir, 'clips-research.json'), result);
 
-  console.log(`[Pipeline] Stap 4: ${result.total_clips_found || result.clips?.length || 0} clips gevonden voor ${project.name}`);
+  // 7. Update kanaal usedClips
+  if (project.channelId && result.clips?.length > 0) {
+    try {
+      const prismaImport = await import('../db.js');
+      const prismaClient = prismaImport.default;
+      
+      const newUsedClips = [...usedClips];
+      for (const clip of result.clips) {
+        if (!clip.url) continue;
+        const existing = newUsedClips.find(c => c.url === clip.url);
+        if (existing) {
+          existing.timesUsed++;
+        } else {
+          newUsedClips.push({ url: clip.url, timesUsed: 1 });
+        }
+      }
+      
+      await prismaClient.channel.update({
+        where: { id: project.channelId },
+        data: { usedClips: JSON.stringify(newUsedClips) },
+      });
+      console.log(`[Pipeline] Stap 4: usedClips bijgewerkt (${newUsedClips.length} clips totaal)`);
+    } catch (e: any) {
+      console.log(`[Pipeline] Stap 4: usedClips update mislukt (niet-kritiek): ${e.message}`);
+    }
+  }
 
-  return { success: true, clipsFile: 'research/clips-research.json', totalClips: result.total_clips_found || result.clips?.length || 0 };
+  const validatedCount = result.clips?.filter((c: any) => c.validated).length || 0;
+  const totalClips = result.clips?.length || 0;
+
+  console.log(`[Pipeline] Stap 4: ${totalClips} clips gevonden${result.validated ? ` (${validatedCount} gevalideerd)` : ''} voor ${project.name}`);
+
+  return { 
+    success: true, 
+    clipsFile: 'research/clips-research.json', 
+    totalClips,
+    validatedClips: validatedCount,
+    validated: result.validated || false,
+  };
 }
 
 // ══════════════════════════════════════════════════

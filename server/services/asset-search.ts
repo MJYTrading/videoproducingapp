@@ -1,12 +1,16 @@
 /**
- * Asset Search Service — Intelligent B-roll zoeken
+ * Asset Search Service v2 — Intelligent B-roll zoeken
  * 
  * Zoekstrategie per scene:
  * 1. Clip Library (AssetClip model) — tags/subjects/category match
- * 2. Perplexity Sonar — relevante YouTube video's zoeken
- * 3. Download via video-download-api of N8N
- * 4. Optioneel: TwelveLabs validatie
- * 5. Opslaan in Clip Library voor hergebruik
+ * 2. Download via N8N (Google/Pexels/Wikimedia)
+ * 3. TwelveLabs validatie (upload → indexeer → analyseer → score)
+ * 4. Opslaan in Clip Library voor hergebruik
+ * 
+ * v2 — 28 feb 2026:
+ * - Correcte Twelve Labs flow (index → upload → analyze)
+ * - Batch validatie met gedeelde project index
+ * - Betere library search met scoring
  */
 
 import prisma from '../db.js';
@@ -44,7 +48,7 @@ export class AssetSearchService {
 
   constructor(config: AssetSearchConfig) {
     this.config = config;
-    if (config.twelveLabsApiKey) {
+    if (config.twelveLabsApiKey && config.enableTwelveLabsValidation) {
       this.twelvelabs = new TwelveLabsService({ apiKey: config.twelveLabsApiKey });
     }
   }
@@ -60,6 +64,7 @@ export class AssetSearchService {
   ): Promise<AssetResult[]> {
     const results: AssetResult[] = [];
 
+    // Download alle assets
     for (const scene of scenes) {
       console.log(`[AssetSearch] Scene ${scene.sceneId}: "${scene.text.slice(0, 60)}..."`);
 
@@ -75,6 +80,45 @@ export class AssetSearchService {
           qualityScore: null,
           isVideo: false,
         });
+      }
+    }
+
+    // Batch Twelve Labs validatie op alle gedownloade video assets
+    if (this.twelvelabs) {
+      const videoResults = results.filter(r => r.assetPath && r.isVideo && r.source !== 'library');
+
+      if (videoResults.length > 0) {
+        console.log(`[AssetSearch] Twelve Labs batch validatie op ${videoResults.length} video assets...`);
+
+        try {
+          const videosToValidate = videoResults.map(r => {
+            const scene = scenes.find(s => s.sceneId === r.sceneId);
+            return {
+              filePath: r.assetPath,
+              expectedDescription: scene?.visualPrompt || scene?.text || '',
+              id: r.sceneId,
+            };
+          });
+
+          const projectName = projectDir.split('/').pop() || 'project';
+          const validationMap = await this.twelvelabs.validateBatch({
+            videos: videosToValidate,
+            projectName: projectName.slice(0, 30),
+          });
+
+          // Update quality scores
+          for (const result of videoResults) {
+            const validation = validationMap.get(result.sceneId);
+            if (validation) {
+              result.qualityScore = validation.score;
+              if (!validation.matches) {
+                console.log(`[AssetSearch] Scene ${result.sceneId}: lage match score (${validation.score.toFixed(2)})`);
+              }
+            }
+          }
+        } catch (e: any) {
+          console.log(`[AssetSearch] Twelve Labs batch validatie fout (niet-kritiek): ${e.message}`);
+        }
       }
     }
 
@@ -120,20 +164,7 @@ export class AssetSearchService {
     const downloadResult = await this.downloadViaN8N(scene, searchTerms, projectDir, outputFormat);
 
     if (downloadResult) {
-      // Stap 4: Optioneel TwelveLabs validatie
-      if (this.config.enableTwelveLabsValidation && this.twelvelabs && downloadResult.isVideo) {
-        const validation = await this.twelvelabs.validateContent({
-          videoUrl: downloadResult.assetPath,
-          expectedDescription: scene.visualPrompt || scene.text,
-        });
-
-        if (!validation.matches) {
-          console.log(`[AssetSearch] Scene ${scene.sceneId}: TwelveLabs validatie gefaald (${validation.score}), maar gebruiken als fallback`);
-        }
-        downloadResult.qualityScore = validation.score;
-      }
-
-      // Stap 5: Sla op in Clip Library voor hergebruik
+      // Stap 4: Sla op in Clip Library voor hergebruik
       try {
         const clip = await prisma.assetClip.create({
           data: {
@@ -223,14 +254,14 @@ Alleen JSON, geen extra tekst.`;
   }
 
   /**
-   * Zoek in bestaande Clip Library
+   * Zoek in bestaande Clip Library met scoring
    */
   private async searchLibrary(
     searchTerms: { query: string; tags: string[]; category: string; mood: string },
     scene: SceneAssetRequest
   ): Promise<any | null> {
     try {
-      // Zoek op tags overlap
+      // Zoek op tags overlap + description + category
       const tagConditions = searchTerms.tags.map(tag => ({ tags: { contains: tag } }));
       
       const clips = await prisma.assetClip.findMany({
@@ -248,11 +279,41 @@ Alleen JSON, geen extra tekst.`;
           { quality: 'desc' },
           { timesUsed: 'asc' },
         ],
-        take: 5,
+        take: 10,
       });
 
-      // Geef de beste match terug (als die er is)
-      return clips.length > 0 ? clips[0] : null;
+      if (clips.length === 0) return null;
+
+      // Score kandidaten
+      const scored = clips.map((clip: any) => {
+        let score = 0;
+        const clipTags = (() => { try { return JSON.parse(clip.tags || '[]'); } catch { return []; } })();
+
+        // Tag overlap
+        const tagOverlap = searchTerms.tags.filter(t => 
+          clipTags.some((ct: string) => ct.toLowerCase().includes(t.toLowerCase()))
+        ).length;
+        score += tagOverlap * 3;
+
+        // Category match
+        if (clip.category === searchTerms.category) score += 5;
+
+        // Mood match
+        if (clip.mood === searchTerms.mood) score += 3;
+
+        // Quality bonus
+        if (clip.quality && clip.quality > 0.7) score += 2;
+
+        // Penaliseer veel gebruikte clips
+        score -= (clip.timesUsed || 0) * 0.5;
+
+        return { clip, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+
+      // Alleen teruggeven als score hoog genoeg is
+      return scored[0]?.score >= 5 ? scored[0].clip : null;
     } catch (error: any) {
       console.log(`[AssetSearch] Library search fout: ${error.message}`);
       return null;

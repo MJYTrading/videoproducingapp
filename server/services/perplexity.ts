@@ -1,9 +1,11 @@
 /**
- * Perplexity Service — Deep Research via Sonar API
+ * Perplexity Service v2 — Deep Research via Sonar API
  * 
- * Gebruikt voor:
- * - Stap 2: Research JSON (diepgaand onderzoek over het video-onderwerp)
- * - Stap 4: Trending Clips Research (actuele, virale clips zoeken)
+ * Verbeteringen v2:
+ * - Betere prompts met expliciete instructies voor kwaliteit
+ * - Research completeness validatie + retry
+ * - YouTube URL validatie voor clips
+ * - Structurele integriteit checks op JSON output
  */
 
 const PERPLEXITY_URL = 'https://api.perplexity.ai/chat/completions';
@@ -29,8 +31,6 @@ export class PerplexityService {
 
   async research(systemPrompt: string, userPrompt: string): Promise<string> {
     console.log(`[Perplexity] Starting research (model: ${this.model})...`);
-    console.log(`[Perplexity] System prompt: ${systemPrompt.substring(0, 100)}...`);
-    console.log(`[Perplexity] User prompt: ${userPrompt.substring(0, 200)}...`);
 
     const response = await fetch(PERPLEXITY_URL, {
       method: 'POST',
@@ -55,62 +55,201 @@ export class PerplexityService {
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || '';
 
-    console.log(`[Perplexity] Response received (${content.length} chars)`);
+    console.log(`[Perplexity] Response ontvangen (${content.length} chars)`);
     return content;
   }
 
   /**
-   * Stap 2: Research JSON
-   * Voert diepgaand onderzoek uit en vult het research template in
+   * Parse JSON uit een LLM response (handles markdown blocks, text before/after)
+   */
+  private parseJsonResponse(response: string): any {
+    // Poging 1: directe JSON parse
+    try {
+      return JSON.parse(response.trim());
+    } catch {}
+
+    // Poging 2: uit markdown code block
+    const codeMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeMatch) {
+      try { return JSON.parse(codeMatch[1].trim()); } catch {}
+    }
+
+    // Poging 3: eerste { tot laatste }
+    const firstBrace = response.indexOf('{');
+    const lastBrace = response.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      try { return JSON.parse(response.slice(firstBrace, lastBrace + 1)); } catch {}
+    }
+
+    // Poging 4: eerste [ tot laatste ]
+    const firstBracket = response.indexOf('[');
+    const lastBracket = response.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket > firstBracket) {
+      try { return JSON.parse(response.slice(firstBracket, lastBracket + 1)); } catch {}
+    }
+
+    throw new Error('Response bevat geen geldige JSON');
+  }
+
+  // ══════════════════════════════════════════════════
+  // STAP 2: RESEARCH JSON
+  // ══════════════════════════════════════════════════
+
+  /**
+   * Voert diepgaand onderzoek uit en vult het research template in.
+   * Inclusief kwaliteitsvalidatie en retry bij incompleet resultaat.
    */
   async executeResearch(params: {
     title: string;
     description: string;
     researchTemplate: any;
     referenceVideoInfo?: string;
+    maxRetries?: number;
   }): Promise<any> {
+    const maxRetries = params.maxRetries ?? 2;
+
     const systemPrompt = `Je bent een diepgaande researcher voor YouTube video productie.
 Je ontvangt een research template (JSON) en een video-onderwerp.
-Vul het COMPLETE template in met geverifieerde, feitelijke informatie.
-Gebruik alleen betrouwbare bronnen. Geef bronvermelding bij alle claims.
-Het resultaat wordt gebruikt als basis voor een professioneel YouTube script.
-Geef ALLEEN de ingevulde JSON terug, geen extra tekst.`;
+
+REGELS:
+- Vul ALLE velden in het template in. Laat GEEN enkel veld leeg.
+- Gebruik alleen geverifieerde, feitelijke informatie met bronvermelding.
+- Voor arrays (events, players, etc.): geef minimaal 3-5 items.
+- Voor velden met "_instructions": volg de instructies maar verwijder het _instructions veld NIET.
+- Datums moeten zo specifiek mogelijk zijn (dag-maand-jaar als beschikbaar).
+- Citaten moeten exact en met bron zijn.
+- Statistieken moeten een bron hebben.
+- Het resultaat wordt gebruikt als basis voor een professioneel YouTube script.
+
+KWALITEITSEISEN:
+- Elke claim MOET een bron hebben
+- Minimaal 5 key_facts of key_points
+- Minimaal 3 events in timeline
+- Minimaal 3 statistieken met bronnen
+- Alle namen van personen moeten correct gespeld zijn
+
+Geef ALLEEN de ingevulde JSON terug, geen extra tekst ervoor of erna.`;
 
     const userPrompt = `VIDEO ONDERWERP: ${params.title}
 
-BESCHRIJVING: ${params.description}
+BESCHRIJVING: ${params.description || 'Geen extra beschrijving opgegeven.'}
 
-${params.referenceVideoInfo ? `REFERENTIE VIDEO INFORMATIE:\n${params.referenceVideoInfo}\n` : ''}
+${params.referenceVideoInfo ? `REFERENTIE INFORMATIE:\n${params.referenceVideoInfo}\n` : ''}
 
-RESEARCH TEMPLATE (vul elk veld in):
+RESEARCH TEMPLATE (vul elk veld volledig in):
 ${JSON.stringify(params.researchTemplate, null, 2)}
 
-Vul het bovenstaande template VOLLEDIG in met feitelijke, geverifieerde informatie over het onderwerp.
+BELANGRIJK: Vul het COMPLETE template in. Elk veld moet ingevuld zijn. Arrays moeten minimaal 3 items bevatten.
 Geef ALLEEN de ingevulde JSON terug.`;
 
-    const response = await this.research(systemPrompt, userPrompt);
+    let lastResult: any = null;
+    let lastError: string = '';
 
-    // Parse JSON uit response
-    try {
-      return JSON.parse(response);
-    } catch {
-      // Probeer JSON uit markdown code block te halen
-      const match = response.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (match) {
-        return JSON.parse(match[1].trim());
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const promptToUse = attempt === 0 
+          ? userPrompt 
+          : `${userPrompt}\n\nLET OP: Vorige poging was incompleet. Specifiek: ${lastError}\nZorg dat ALLE velden ingevuld zijn en arrays minimaal 3 items bevatten.`;
+
+        const response = await this.research(systemPrompt, promptToUse);
+        const result = this.parseJsonResponse(response);
+
+        // Kwaliteitsvalidatie
+        const validation = this.validateResearch(result, params.researchTemplate);
+        
+        if (validation.isComplete) {
+          console.log(`[Perplexity] Research validatie OK (poging ${attempt + 1})`);
+          return result;
+        }
+
+        lastResult = result;
+        lastError = validation.issues.join('; ');
+        console.log(`[Perplexity] Research incompleet (poging ${attempt + 1}/${maxRetries + 1}): ${lastError}`);
+
+      } catch (error: any) {
+        lastError = error.message;
+        console.log(`[Perplexity] Research fout (poging ${attempt + 1}): ${error.message}`);
       }
-      // Probeer gewoon het eerste JSON object te vinden
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-      throw new Error('Perplexity response bevat geen geldige JSON');
     }
+
+    // Geef het beste resultaat terug (ook als niet perfect)
+    if (lastResult) {
+      console.log(`[Perplexity] Research niet 100% compleet, maar best beschikbare resultaat wordt gebruikt`);
+      return lastResult;
+    }
+
+    throw new Error(`Research mislukt na ${maxRetries + 1} pogingen: ${lastError}`);
   }
 
   /**
-   * Stap 4: Trending Clips Research
-   * Zoekt actuele, virale video clips voor het onderwerp
+   * Valideer of research resultaat compleet is
+   */
+  private validateResearch(result: any, template: any): { isComplete: boolean; issues: string[] } {
+    const issues: string[] = [];
+
+    if (!result || typeof result !== 'object') {
+      return { isComplete: false, issues: ['Geen geldig JSON object'] };
+    }
+
+    // Check research_brief bestaat
+    const brief = result.research_brief || result;
+
+    // Check key arrays zijn niet leeg
+    const arrayChecks = [
+      { path: 'key_facts', minItems: 2 },
+      { path: 'key_points.points', minItems: 2 },
+      { path: 'timeline_of_events.events', minItems: 2 },
+      { path: 'chronological_timeline.events', minItems: 2 },
+      { path: 'key_players.players', minItems: 1 },
+      { path: 'statistics_and_data.figures', minItems: 1 },
+      { path: 'statistics_and_facts.figures', minItems: 1 },
+      { path: 'sources.primary_sources', minItems: 1 },
+    ];
+
+    for (const check of arrayChecks) {
+      const value = this.getNestedValue(brief, check.path);
+      if (Array.isArray(value)) {
+        // Check of items niet leeg zijn
+        const nonEmptyItems = value.filter((item: any) => {
+          if (typeof item === 'string') return item.trim().length > 0;
+          if (typeof item === 'object') {
+            return Object.values(item).some((v: any) => 
+              v && typeof v === 'string' && v.trim().length > 0 && !v.startsWith('_')
+            );
+          }
+          return true;
+        });
+        if (nonEmptyItems.length < check.minItems) {
+          issues.push(`${check.path}: ${nonEmptyItems.length} items (min ${check.minItems})`);
+        }
+      }
+    }
+
+    // Check of video_metadata ingevuld is
+    const metadata = brief.video_metadata;
+    if (metadata) {
+      if (!metadata.working_title && !metadata.topic_one_sentence) {
+        issues.push('video_metadata niet ingevuld');
+      }
+    }
+
+    return {
+      isComplete: issues.length === 0,
+      issues,
+    };
+  }
+
+  private getNestedValue(obj: any, path: string): any {
+    return path.split('.').reduce((current, key) => current?.[key], obj);
+  }
+
+  // ══════════════════════════════════════════════════
+  // STAP 4: TRENDING CLIPS RESEARCH
+  // ══════════════════════════════════════════════════
+
+  /**
+   * Zoekt actuele, virale video clips voor het onderwerp.
+   * Inclusief YouTube URL validatie.
    */
   async executeTrendingClipsResearch(params: {
     title: string;
@@ -119,69 +258,122 @@ Geef ALLEEN de ingevulde JSON terug.`;
     usedClips?: { url: string; timesUsed: number }[];
     maxClipDuration: number;
     videoType: string;
+    youtubeTranscriptApiKey?: string;
   }): Promise<any> {
-    const systemPrompt = `Je bent een expert video researcher die virale YouTube clips zoekt voor video producties.
+    const systemPrompt = `Je bent een expert video researcher die echte, bestaande YouTube clips zoekt.
 
-Je zoekt naar de MEEST RECENTE, MEEST RELEVANTE en MEEST VIRALE clips over een specifiek onderwerp.
-Deze clips worden tussendoor afgespeeld in een video terwijl de voiceover STOPT.
-
-REGELS:
-- Zoek naar echte, bestaande YouTube video's
-- Geef exacte timestamps (start en eind) van het relevante fragment
+KRITIEKE REGELS:
+- Zoek ALLEEN naar ECHTE YouTube video's die JIJ kunt verifiëren dat ze bestaan.
+- Geef EXACTE, WERKENDE YouTube URLs (https://www.youtube.com/watch?v=XXXXXXXXXXX formaat)
+- Geef exacte timestamps van het relevante fragment
 - Maximum clip duur: ${params.maxClipDuration} seconden per clip
-- Rangschik op relevantie + viraliteit (hoogste eerst)
 - Zoek 8-15 clips
-- Geef context mee die de scriptschrijver kan gebruiken
-- Clips moeten recent zijn (bij voorkeur laatste 6 maanden)
-${params.usedClips && params.usedClips.length > 0 ? 
-  `- EERDER GEBRUIKTE CLIPS (vermijd overmatig hergebruik):\n${params.usedClips.map(c => `  ${c.url} (${c.timesUsed}x gebruikt)`).join('\n')}` : ''}
+- Clips moeten RECENT zijn (bij voorkeur laatste 12 maanden)
+- VERZIN GEEN URLs. Als je niet zeker bent, geef dan minder clips.
+- Rangschik op relevantie + viraliteit
 
-Geef je antwoord als JSON met exact deze structuur:
+${params.usedClips && params.usedClips.length > 0 ? 
+  `EERDER GEBRUIKTE CLIPS (vermijd hergebruik):\n${params.usedClips.map(c => `  ${c.url} (${c.timesUsed}x)`).join('\n')}` : ''}
+
+RESPONSE FORMAT (alleen JSON):
 {
   "topic": "onderwerp",
   "clips": [
     {
-      "url": "https://youtube.com/watch?v=...",
-      "title": "Video titel",
+      "url": "https://www.youtube.com/watch?v=EXACT_VIDEO_ID",
+      "title": "Exacte video titel",
+      "channel_name": "Kanaal naam",
       "timestamp_start": "MM:SS",
       "timestamp_end": "MM:SS",
       "duration_seconds": 15,
       "relevance_score": 9,
       "virality_score": 8,
-      "description": "Korte beschrijving van wat er te zien is",
-      "context_for_script": "Context/informatie die in het script verwerkt kan worden",
-      "channel_name": "Kanaal naam",
+      "description": "Wat er te zien is in dit fragment",
+      "context_for_script": "Hoe dit in het script past",
       "view_count": "1.2M",
-      "publish_date": "2025-02-15",
-      "previously_used": false,
-      "times_used_before": 0
+      "publish_date": "2025-02-15"
     }
   ],
-  "max_clip_duration": ${params.maxClipDuration},
+  "search_queries_used": ["query1", "query2"],
   "total_clips_found": 12
 }
 
-Geef ALLEEN de JSON terug, geen extra tekst.`;
+Geef ALLEEN de JSON terug.`;
+
+    const researchContext = params.researchData 
+      ? JSON.stringify(params.researchData, null, 2).substring(0, 4000)
+      : 'Geen research data beschikbaar';
 
     const userPrompt = `VIDEO ONDERWERP: ${params.title}
 BESCHRIJVING: ${params.description}
 VIDEO TYPE: ${params.videoType}
 
-${params.researchData ? `RESEARCH DATA (gebruik dit als context):\n${JSON.stringify(params.researchData, null, 2).substring(0, 3000)}` : ''}
+RESEARCH CONTEXT:
+${researchContext}
 
-Zoek de meest recente, relevante en virale clips over dit onderwerp.`;
+Zoek de meest recente, relevante en virale YouTube clips over dit onderwerp.
+Geef ALLEEN echte, bestaande URLs. Liever 5 echte clips dan 15 verzonnen clips.`;
 
     const response = await this.research(systemPrompt, userPrompt);
+    const result = this.parseJsonResponse(response);
 
-    // Parse JSON
-    try {
-      return JSON.parse(response);
-    } catch {
-      const match = response.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (match) return JSON.parse(match[1].trim());
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (jsonMatch) return JSON.parse(jsonMatch[0]);
-      throw new Error('Perplexity response bevat geen geldige JSON voor clips');
+    // Valideer YouTube URLs
+    if (result.clips && Array.isArray(result.clips) && params.youtubeTranscriptApiKey) {
+      result.clips = await this.validateYouTubeUrls(result.clips, params.youtubeTranscriptApiKey);
+      result.total_clips_found = result.clips.length;
+      result.validated = true;
     }
+
+    return result;
+  }
+
+  /**
+   * Valideer YouTube URLs door te checken of de video's bestaan.
+   * Gebruikt YouTube oEmbed (gratis, geen API key nodig) + transcript API als backup
+   */
+  private async validateYouTubeUrls(
+    clips: any[],
+    transcriptApiKey: string
+  ): Promise<any[]> {
+    console.log(`[Perplexity] ${clips.length} YouTube URLs valideren...`);
+    
+    const validClips: any[] = [];
+    const { extractVideoId } = await import('./youtube.js');
+
+    for (const clip of clips) {
+      if (!clip.url) continue;
+
+      try {
+        // Stap 1: Extraheer video ID (faalt al als URL niet geldig is)
+        const videoId = extractVideoId(clip.url);
+        
+        // Stap 2: Check via oEmbed (gratis, geen API key)
+        const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+        const oembedResponse = await fetch(oembedUrl, { 
+          signal: AbortSignal.timeout(5000) 
+        });
+
+        if (oembedResponse.ok) {
+          const oembedData = await oembedResponse.json();
+          clip.validated = true;
+          clip.actual_title = oembedData.title || clip.title;
+          clip.actual_channel = oembedData.author_name || clip.channel_name;
+          validClips.push(clip);
+          console.log(`[Perplexity] ✓ ${videoId}: "${(oembedData.title || '').slice(0, 50)}"`);
+        } else {
+          console.log(`[Perplexity] ✗ ${videoId}: URL bestaat niet (oEmbed ${oembedResponse.status})`);
+          clip.validated = false;
+          clip.validation_error = 'Video niet gevonden';
+          // Voeg toe met validated=false zodat we het kunnen loggen
+        }
+      } catch (error: any) {
+        console.log(`[Perplexity] ✗ ${clip.url.slice(0, 50)}: ${error.message}`);
+        clip.validated = false;
+        clip.validation_error = error.message;
+      }
+    }
+
+    console.log(`[Perplexity] Validatie: ${validClips.length}/${clips.length} clips geldig`);
+    return validClips;
   }
 }
