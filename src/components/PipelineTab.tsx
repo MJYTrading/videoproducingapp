@@ -204,9 +204,12 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                 let parsed: any = step.result;
                 try { parsed = typeof parsed === 'string' ? JSON.parse(parsed) : parsed; } catch {}
 
-                // Bepaal of dit een JSON bestand resultaat is (research, clips, orchestrator, style profile)
-                const isFileResult = parsed?.researchFile || parsed?.clipsFile || parsed?.outlineFile || parsed?._source;
                 const hasScript = parsed?.script || parsed?.scriptVoiceover;
+                const filePath = parsed?.researchFile ? 'research/research.json'
+                  : parsed?.clipsFile ? 'research/clips-research.json'
+                  : parsed?.outlineFile ? (String(parsed.outlineFile).endsWith('.json') ? parsed.outlineFile : 'script_outline.json')
+                  : parsed?._source ? 'script/style-profile.json'
+                  : null;
 
                 // Toon uitgebreide preview voor data-rijke stappen
                 const renderValue = (val: any, depth = 0): string => {
@@ -224,18 +227,7 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                   <div className="p-4 bg-surface-200 border border-white/[0.04] rounded-lg mb-3">
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-xs text-zinc-500 font-semibold">Resultaat</p>
-                      
-                const fileMap: Record<string, string> = {
-                  researchFile: 'research/research.json',
-                  clipsFile: 'research/clips-research.json',
-                  outlineFile: 'script_outline.json',
-                };
-                const filePath = parsed?.researchFile ? fileMap.researchFile
-                  : parsed?.clipsFile ? fileMap.clipsFile
-                  : parsed?.outlineFile ? (parsed.outlineFile.endsWith('.json') ? parsed.outlineFile : 'script_outline.json')
-                  : parsed?._source ? 'script/style-profile.json'
-                  : null;
-<div className="flex gap-3">
+                      <div className="flex gap-3">
                         {filePath && !expandedFiles[step.id] && (
                           <button
                             onClick={async () => {
