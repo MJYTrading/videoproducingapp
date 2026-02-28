@@ -259,18 +259,55 @@ Geef ALLEEN de ingevulde JSON terug.`;
     maxClipDuration: number;
     videoType: string;
     youtubeTranscriptApiKey?: string;
+    clipBlueprint?: any;
   }): Promise<any> {
-    const systemPrompt = `Je bent een expert video researcher die echte, bestaande YouTube clips zoekt.
+    // Bouw clip type instructies op basis van blueprint
+    let clipTypeInstructions = '';
+    let targetClipCount = '8-15';
+    
+    if (params.clipBlueprint) {
+      const bp = params.clipBlueprint;
+      const taxonomy = bp.clip_taxonomy?.types || [];
+      
+      if (taxonomy.length > 0) {
+        clipTypeInstructions = `\nCLIP TYPES DIE NODIG ZIJN (zoek specifiek naar deze types):`;
+        for (const t of taxonomy) {
+          const freq = t.frequency || '';
+          const dur = t.duration_range_seconds || '';
+          clipTypeInstructions += `\n- ${t.type}: ${t.purpose} (duur: ${dur}s, ${freq})`;
+        }
+      }
+
+      // Bereken target clip count uit blueprint
+      if (bp.total_clip_targets?.benchmarks) {
+        const benchmark = bp.total_clip_targets.benchmarks[bp.total_clip_targets.benchmarks.length - 1];
+        if (benchmark?.clip_count) targetClipCount = benchmark.clip_count;
+      }
+
+      if (bp.opening_clip_protocol) {
+        clipTypeInstructions += `\n\nOPENING CLIPS: Zoek 2-3 clips die geschikt zijn als cold open. Nieuwsfragmenten, data reveals, expert reacties met urgentie. Korte clips (5-13s) die de kijker direct in het onderwerp trekken.`;
+      }
+
+      if (bp.duration_distribution?.bands) {
+        clipTypeInstructions += `\n\nGEWENSTE DUUR VERDELING:`;
+        for (const band of bp.duration_distribution.bands) {
+          clipTypeInstructions += `\n  ${band.range}: ${band.target_percentage} (${band.label})`;
+        }
+      }
+    }
+
+    const systemPrompt = `Je bent een expert video researcher die echte, bestaande YouTube clips zoekt voor professionele YouTube documentaires.
 
 KRITIEKE REGELS:
 - Zoek ALLEEN naar ECHTE YouTube video's die JIJ kunt verifiëren dat ze bestaan.
 - Geef EXACTE, WERKENDE YouTube URLs (https://www.youtube.com/watch?v=XXXXXXXXXXX formaat)
 - Geef exacte timestamps van het relevante fragment
 - Maximum clip duur: ${params.maxClipDuration} seconden per clip
-- Zoek 8-15 clips
+- Zoek ${targetClipCount} clips
 - Clips moeten RECENT zijn (bij voorkeur laatste 12 maanden)
 - VERZIN GEEN URLs. Als je niet zeker bent, geef dan minder clips.
 - Rangschik op relevantie + viraliteit
+${clipTypeInstructions}
 
 ${params.usedClips && params.usedClips.length > 0 ? 
   `EERDER GEBRUIKTE CLIPS (vermijd hergebruik):\n${params.usedClips.map(c => `  ${c.url} (${c.timesUsed}x)`).join('\n')}` : ''}
@@ -286,6 +323,7 @@ RESPONSE FORMAT (alleen JSON):
       "timestamp_start": "MM:SS",
       "timestamp_end": "MM:SS",
       "duration_seconds": 15,
+      "clip_type": "OPENER|VALIDATION|FEATURE|FLASH|TRANSITION",
       "relevance_score": 9,
       "virality_score": 8,
       "description": "Wat er te zien is in dit fragment",
@@ -295,7 +333,14 @@ RESPONSE FORMAT (alleen JSON):
     }
   ],
   "search_queries_used": ["query1", "query2"],
-  "total_clips_found": 12
+  "total_clips_found": 12,
+  "clip_type_breakdown": {
+    "OPENER": 3,
+    "VALIDATION": 8,
+    "FEATURE": 2,
+    "FLASH": 1,
+    "TRANSITION": 2
+  }
 }
 
 Geef ALLEEN de JSON terug.`;

@@ -2161,7 +2161,20 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
     console.log('[Pipeline] Stap 4: Geen research.json gevonden, doorgaan zonder');
   }
 
-  // 4. Perplexity clips research
+  // 4. Haal style profile op voor clip_blueprint (als beschikbaar)
+  let clipBlueprint: any = null;
+  try {
+    const styleProfile = await readJson(path.join(projPath, 'script', 'style-profile.json'));
+    const profile = styleProfile.script_style_profile || styleProfile;
+    if (profile.clip_blueprint) {
+      clipBlueprint = profile.clip_blueprint;
+      console.log('[Pipeline] Stap 4: clip_blueprint gevonden in style profile');
+    }
+  } catch {
+    console.log('[Pipeline] Stap 4: Geen style profile/clip_blueprint beschikbaar');
+  }
+
+  // 5. Perplexity clips research
   const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
 
   const result = await perplexity.executeTrendingClipsResearch({
@@ -2171,6 +2184,7 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
     usedClips,
     maxClipDuration,
     videoType: project.videoType || 'ai',
+    clipBlueprint,
   });
 
   // 5. Opslaan als clips-research.json
