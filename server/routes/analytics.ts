@@ -1,15 +1,15 @@
 /**
  * Analytics Route — YouTube views tracking via yt-api.p.rapidapi.com
  * 
- * Haalt per kanaal alle video's + views op via /channel/videos endpoint.
- * Berekent totale views per uur door verschil met vorige snapshot.
- * Inkomsten worden berekend op basis van RPM per kanaal.
+ * Per-video tracking: haalt ~60 video's op (2 pagina's), slaat views per video op,
+ * berekent verschil met vorige snapshot per video, en telt op tot kanaal totaal.
  * 
- * GET  /api/analytics/views?hours=24          — views per uur afgelopen X uur
+ * GET  /api/analytics/summary                 — dashboard samenvatting
+ * GET  /api/analytics/views?hours=24          — views per uur
  * GET  /api/analytics/revenue?period=day      — inkomsten berekening
  * POST /api/analytics/fetch-views             — handmatig views ophalen
+ * POST /api/analytics/resolve-channel         — resolve @handle → UC ID
  * PATCH /api/analytics/channel/:id/rpm        — RPM handmatig aanpassen
- * GET  /api/analytics/summary                 — dashboard samenvatting
  */
 import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
@@ -21,77 +21,85 @@ const YT_API_BASE = 'https://yt-api.p.rapidapi.com';
 
 // ── Helpers ──
 
-/** Extract UC... channel ID uit URL of geef raw ID terug */
 function extractChannelId(input: string): string {
   if (!input) return '';
-  // Al een UC ID
   if (input.startsWith('UC') && !input.includes('/') && !input.includes('.')) return input;
-  // URL formaat: /channel/UCxxxxxx
   const match = input.match(/\/channel\/(UC[a-zA-Z0-9_-]+)/);
   if (match) return match[1];
-  // Schoon op
   return input.trim().replace(/\/+$/, '');
 }
 
-/** Haal video's + views op via yt-api.p.rapidapi.com */
-async function fetchChannelVideos(channelId: string, rapidApiKey: string): Promise<{ meta: any; videos: any[] } | null> {
-  try {
-    const ucId = extractChannelId(channelId);
-    if (!ucId) {
-      console.error(`[Analytics] Geen geldig channel ID: ${channelId}`);
-      return null;
-    }
-
-    const response = await fetch(
-      `${YT_API_BASE}/channel/videos?id=${ucId}&sort_by=newest`,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'x-rapidapi-host': 'yt-api.p.rapidapi.com',
-          'x-rapidapi-key': rapidApiKey,
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error(`[Analytics] yt-api error ${response.status}: ${text.substring(0, 200)}`);
-      return null;
-    }
-
-    const data = await response.json();
-    if (data.msg) {
-      console.error(`[Analytics] yt-api msg: ${data.msg}`);
-      return null;
-    }
-
-    const videos = (data.data || []).map((v: any) => ({
-      videoId: v.videoId,
-      title: v.title,
-      viewCount: parseInt(v.viewCount || '0', 10),
-      publishDate: v.publishDate,
-    }));
-
-    // Tel totale views over alle video's
-    const totalViews = videos.reduce((sum: number, v: any) => sum + v.viewCount, 0);
-
-    return {
-      meta: {
-        channelId: data.meta?.channelId || ucId,
-        title: data.meta?.title || '',
-        subscriberCount: data.meta?.subscriberCount || 0,
-        videosCount: data.meta?.videosCount || videos.length,
-        totalViews,
-      },
-      videos,
-    };
-  } catch (err: any) {
-    console.error(`[Analytics] Fetch error voor ${channelId}:`, err.message);
-    return null;
-  }
+function getHourKey(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 0, 0));
 }
 
-/** Resolve een @handle naar channel ID via yt-api */
+// ── YouTube API calls ──
+
+interface VideoData {
+  videoId: string;
+  title: string;
+  viewCount: number;
+  publishDate: string;
+}
+
+async function fetchChannelVideosPage(channelId: string, rapidApiKey: string, token?: string): Promise<{ videos: VideoData[]; continuation: string; meta: any }> {
+  const url = token
+    ? `${YT_API_BASE}/channel/videos?id=${channelId}&token=${token}`
+    : `${YT_API_BASE}/channel/videos?id=${channelId}&sort_by=newest`;
+
+  const response = await fetch(url, {
+    headers: {
+      'Content-Type': 'application/json',
+      'x-rapidapi-host': 'yt-api.p.rapidapi.com',
+      'x-rapidapi-key': rapidApiKey,
+          'X-CACHEBYPASS': '1',
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`yt-api ${response.status}: ${text.substring(0, 200)}`);
+  }
+
+  const data = await response.json();
+  if (data.msg) throw new Error(`yt-api: ${data.msg}`);
+
+  const videos: VideoData[] = (data.data || [])
+    .filter((v: any) => v.type === 'video' || v.videoId)
+    .map((v: any) => ({
+      videoId: v.videoId,
+      title: v.title || '',
+      viewCount: parseInt(v.viewCount || '0', 10),
+      publishDate: v.publishDate || '',
+    }));
+
+  return {
+    videos,
+    continuation: data.continuation || '',
+    meta: data.meta || {},
+  };
+}
+
+/** Haalt ~60 video's op (2 pagina's) */
+async function fetchAllChannelVideos(channelId: string, rapidApiKey: string): Promise<{ videos: VideoData[]; meta: any }> {
+  // Pagina 1
+  const page1 = await fetchChannelVideosPage(channelId, rapidApiKey);
+  let allVideos = [...page1.videos];
+
+  // Pagina 2 (als er een continuation token is)
+  if (page1.continuation) {
+    try {
+      const page2 = await fetchChannelVideosPage(channelId, rapidApiKey, page1.continuation);
+      allVideos = [...allVideos, ...page2.videos];
+    } catch (err: any) {
+      console.warn(`[Analytics] Pagina 2 mislukt voor ${channelId}: ${err.message}`);
+    }
+  }
+
+  return { videos: allVideos, meta: page1.meta };
+}
+
 async function resolveHandle(handle: string, rapidApiKey: string): Promise<string | null> {
   try {
     const cleanHandle = handle.startsWith('@') ? handle : `@${handle}`;
@@ -101,6 +109,7 @@ async function resolveHandle(handle: string, rapidApiKey: string): Promise<strin
         'Content-Type': 'application/json',
         'x-rapidapi-host': 'yt-api.p.rapidapi.com',
         'x-rapidapi-key': rapidApiKey,
+          'X-CACHEBYPASS': '1',
       },
     });
     if (!response.ok) return null;
@@ -111,30 +120,176 @@ async function resolveHandle(handle: string, rapidApiKey: string): Promise<strin
   }
 }
 
-// ── Snapshot opslaan ──
+// ── Snapshots opslaan met per-video tracking ──
 
-async function saveViewSnapshot(channelId: string, totalViews: number) {
-  const now = new Date();
-  const hour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0);
+async function saveVideoSnapshots(channelId: string, videos: VideoData[]): Promise<{ totalViews: number; viewsGainedTotal: number }> {
+  const hour = getHourKey();
+  let totalViews = 0;
+  let viewsGainedTotal = 0;
 
-  // Haal vorige snapshot op
-  const previous = await prisma.channelViewSnapshot.findFirst({
-    where: { channelId },
-    orderBy: { hour: 'desc' },
-  });
+  for (const video of videos) {
+    totalViews += video.viewCount;
 
-  const viewsInHour = previous ? Math.max(0, totalViews - previous.totalViews) : 0;
+    // Haal vorige snapshot op (uit een eerder uur dan nu)
+    const previous = await prisma.videoViewSnapshot.findFirst({
+      where: { channelId, videoId: video.videoId, hour: { lt: hour } },
+      orderBy: { hour: 'desc' },
+    });
 
+    // Als er geen eerdere snapshot is, check of er al een record in dit uur staat
+    const currentHourRecord = await prisma.videoViewSnapshot.findUnique({
+      where: { channelId_videoId_hour: { channelId, videoId: video.videoId, hour } },
+    });
+
+    // Bereken views verschil
+    let viewsGained = 0;
+    if (previous) {
+      // Verschil met vorig uur
+      viewsGained = Math.max(0, video.viewCount - previous.viewCount);
+    } else if (currentHourRecord && currentHourRecord.viewCount > 0) {
+      // Binnen hetzelfde uur: verschil met eerder opgeslagen waarde
+      viewsGained = Math.max(0, video.viewCount - currentHourRecord.viewCount);
+    }
+    // Allereerste keer: verschil = 0 (correct)
+
+    viewsGainedTotal += viewsGained;
+
+    // Upsert per video per uur
+    await prisma.videoViewSnapshot.upsert({
+      where: { channelId_videoId_hour: { channelId, videoId: video.videoId, hour } },
+      update: { viewCount: video.viewCount, viewsGained: (currentHourRecord?.viewsGained || 0) + viewsGained, title: video.title },
+      create: {
+        channelId,
+        videoId: video.videoId,
+        title: video.title,
+        hour,
+        viewCount: video.viewCount,
+        viewsGained,
+        publishDate: video.publishDate,
+      },
+    });
+  }
+
+  // Sla ook kanaal-totaal snapshot op
   await prisma.channelViewSnapshot.upsert({
     where: { channelId_hour: { channelId, hour } },
-    update: { totalViews, viewsInHour },
-    create: { channelId, hour, totalViews, viewsInHour },
+    update: { totalViews, viewsInHour: viewsGainedTotal },
+    create: { channelId, hour, totalViews, viewsInHour: viewsGainedTotal },
   });
 
-  return { hour, totalViews, viewsInHour };
+  return { totalViews, viewsGainedTotal };
+}
+
+// ── Verwerk 1 kanaal ──
+
+async function processChannel(channel: any, rapidApiKey: string): Promise<any> {
+  let ucId = extractChannelId(channel.youtubeChannelId);
+
+  // Resolve @handle als nodig
+  if (!ucId.startsWith('UC')) {
+    const resolved = await resolveHandle(ucId, rapidApiKey);
+    if (resolved) {
+      await prisma.channel.update({ where: { id: channel.id }, data: { youtubeChannelId: resolved } });
+      ucId = resolved;
+      console.log(`[Analytics] Resolved ${channel.name} → ${resolved}`);
+    } else {
+      return { channelId: channel.id, channelName: channel.name, error: 'Kon channel ID niet resolven' };
+    }
+  }
+
+  const data = await fetchAllChannelVideos(ucId, rapidApiKey);
+  const { totalViews, viewsGainedTotal } = await saveVideoSnapshots(channel.id, data.videos);
+
+  console.log(`[Analytics] ${channel.name}: ${totalViews} total views, +${viewsGainedTotal} gained, ${data.videos.length} videos`);
+
+  return {
+    channelId: channel.id,
+    channelName: channel.name,
+    totalViews,
+    viewsGained: viewsGainedTotal,
+    videosTracked: data.videos.length,
+    subscriberCount: data.meta?.subscriberCount || 0,
+  };
 }
 
 // ── Routes ──
+
+// GET /api/analytics/summary
+router.get('/summary', async (req: Request, res: Response) => {
+  try {
+    const now = new Date();
+    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const channels = await prisma.channel.findMany({
+      where: { youtubeChannelId: { not: '' } },
+      select: { id: true, name: true, rpm: true, youtubeChannelId: true },
+    });
+
+    const snapshots = await prisma.channelViewSnapshot.findMany({
+      where: { hour: { gte: last24h } },
+      orderBy: { hour: 'asc' },
+    });
+
+    // Laatste totaal per kanaal (baseline)
+    const latestSnapshots: Record<string, number> = {};
+    for (const ch of channels) {
+      const latest = await prisma.channelViewSnapshot.findFirst({
+        where: { channelId: ch.id },
+        orderBy: { hour: 'desc' },
+      });
+      latestSnapshots[ch.id] = latest?.totalViews || 0;
+    }
+
+    // Bouw 24-uur array
+    const hourlyData: { hour: string; views: number; byChannel: Record<string, number> }[] = [];
+    for (let i = 23; i >= 0; i--) {
+      const hourDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours() - i, 0, 0));
+      const hourSnapshots = snapshots.filter(s => {
+        const sHour = new Date(s.hour);
+        return sHour.getTime() === hourDate.getTime();
+      });
+
+      const byChannel: Record<string, number> = {};
+      let totalViews = 0;
+      for (const s of hourSnapshots) {
+        byChannel[s.channelId] = s.viewsInHour;
+        totalViews += s.viewsInHour;
+      }
+
+      hourlyData.push({ hour: hourDate.toISOString(), views: totalViews, byChannel });
+    }
+
+    const totalViews24h = hourlyData.reduce((sum, h) => sum + h.views, 0);
+
+    // Inkomsten per kanaal
+    const revenuePerChannel: Record<string, number> = {};
+    for (const ch of channels) {
+      revenuePerChannel[ch.id] = 0;
+      for (const h of hourlyData) {
+        const chViews = h.byChannel[ch.id] || 0;
+        revenuePerChannel[ch.id] += (chViews / 1000) * ch.rpm;
+      }
+    }
+
+    const totalRevenue24h = Object.values(revenuePerChannel).reduce((sum, r) => sum + r, 0);
+
+    res.json({
+      totalViews24h,
+      totalRevenue24h: Math.round(totalRevenue24h * 100) / 100,
+      revenuePerHourAvg: Math.round((totalRevenue24h / 24) * 100) / 100,
+      hourlyData,
+      channels: channels.map(ch => ({
+        ...ch,
+        views24h: hourlyData.reduce((sum, h) => sum + (h.byChannel[ch.id] || 0), 0),
+        revenue24h: Math.round((revenuePerChannel[ch.id] || 0) * 100) / 100,
+        totalViews: latestSnapshots[ch.id] || 0,
+      })),
+    });
+  } catch (err: any) {
+    console.error('[Analytics] Summary error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // GET /api/analytics/views?hours=24
 router.get('/views', async (req: Request, res: Response) => {
@@ -154,9 +309,7 @@ router.get('/views', async (req: Request, res: Response) => {
         byChannel[s.channelId] = { channel: s.channel, snapshots: [] };
       }
       byChannel[s.channelId].snapshots.push({
-        hour: s.hour,
-        totalViews: s.totalViews,
-        viewsInHour: s.viewsInHour,
+        hour: s.hour, totalViews: s.totalViews, viewsInHour: s.viewsInHour,
       });
     }
 
@@ -167,7 +320,6 @@ router.get('/views', async (req: Request, res: Response) => {
 
     res.json({ hours, totalViewsInPeriod, channels: byChannel });
   } catch (err: any) {
-    console.error('[Analytics] Views error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -204,81 +356,11 @@ router.get('/revenue', async (req: Request, res: Response) => {
 
     res.json({ period, hours, totalRevenue: Math.round(totalRevenue * 100) / 100, channels: results });
   } catch (err: any) {
-    console.error('[Analytics] Revenue error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/analytics/summary
-router.get('/summary', async (req: Request, res: Response) => {
-  try {
-    const now = new Date();
-    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    const channels = await prisma.channel.findMany({
-      where: { youtubeChannelId: { not: '' } },
-      select: { id: true, name: true, rpm: true, youtubeChannelId: true },
-    });
-
-    const snapshots = await prisma.channelViewSnapshot.findMany({
-      where: { hour: { gte: last24h } },
-      orderBy: { hour: 'asc' },
-    });
-
-    // Array van 24 uren
-    const hourlyData: { hour: string; views: number; byChannel: Record<string, number> }[] = [];
-    for (let i = 23; i >= 0; i--) {
-      const hourDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() - i, 0, 0);
-      const hourSnapshots = snapshots.filter(s => {
-        const sHour = new Date(s.hour);
-        return sHour.getFullYear() === hourDate.getFullYear() &&
-               sHour.getMonth() === hourDate.getMonth() &&
-               sHour.getDate() === hourDate.getDate() &&
-               sHour.getHours() === hourDate.getHours();
-      });
-
-      const byChannel: Record<string, number> = {};
-      let totalViews = 0;
-      for (const s of hourSnapshots) {
-        byChannel[s.channelId] = s.viewsInHour;
-        totalViews += s.viewsInHour;
-      }
-
-      hourlyData.push({ hour: hourDate.toISOString(), views: totalViews, byChannel });
-    }
-
-    const totalViews24h = hourlyData.reduce((sum, h) => sum + h.views, 0);
-
-    const revenuePerChannel: Record<string, number> = {};
-    for (const ch of channels) {
-      revenuePerChannel[ch.id] = 0;
-      for (const h of hourlyData) {
-        const chViews = h.byChannel[ch.id] || 0;
-        revenuePerChannel[ch.id] += (chViews / 1000) * ch.rpm;
-      }
-    }
-
-    const totalRevenue24h = Object.values(revenuePerChannel).reduce((sum, r) => sum + r, 0);
-    const revenuePerHourAvg = totalRevenue24h / 24;
-
-    res.json({
-      totalViews24h,
-      totalRevenue24h: Math.round(totalRevenue24h * 100) / 100,
-      revenuePerHourAvg: Math.round(revenuePerHourAvg * 100) / 100,
-      hourlyData,
-      channels: channels.map(ch => ({
-        ...ch,
-        views24h: hourlyData.reduce((sum, h) => sum + (h.byChannel[ch.id] || 0), 0),
-        revenue24h: Math.round((revenuePerChannel[ch.id] || 0) * 100) / 100,
-      })),
-    });
-  } catch (err: any) {
-    console.error('[Analytics] Summary error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/analytics/fetch-views
+// POST /api/analytics/fetch-views — handmatig views ophalen
 router.post('/fetch-views', async (req: Request, res: Response) => {
   try {
     const settings = await prisma.settings.findUnique({ where: { id: 'singleton' } });
@@ -297,51 +379,25 @@ router.post('/fetch-views', async (req: Request, res: Response) => {
 
     const results: any[] = [];
     for (const channel of channels) {
-      // Extract UC ID uit eventuele URL
-      let ucId = extractChannelId(channel.youtubeChannelId);
-
-      // Als het geen UC ID is (bijv. een @handle), probeer te resolven
-      if (!ucId.startsWith('UC')) {
-        const resolved = await resolveHandle(ucId, rapidApiKey);
-        if (resolved) {
-          // Sla het opgelost ID op in de database voor volgende keer
-          await prisma.channel.update({
-            where: { id: channel.id },
-            data: { youtubeChannelId: resolved },
-          });
-          ucId = resolved;
-          console.log(`[Analytics] Resolved ${channel.name} → ${resolved}`);
-        } else {
-          results.push({ channelId: channel.id, channelName: channel.name, error: 'Kon channel ID niet resolven' });
-          continue;
-        }
-      }
-
-      const data = await fetchChannelVideos(ucId, rapidApiKey);
-      if (data) {
-        const snapshot = await saveViewSnapshot(channel.id, data.meta.totalViews);
-        results.push({
-          channelId: channel.id,
-          channelName: channel.name,
-          totalViews: data.meta.totalViews,
-          videosCount: data.videos.length,
-          subscriberCount: data.meta.subscriberCount,
-          ...snapshot,
-        });
-        console.log(`[Analytics] ${channel.name}: ${data.meta.totalViews} total views across ${data.videos.length} videos`);
-      } else {
-        results.push({ channelId: channel.id, channelName: channel.name, error: 'Kon views niet ophalen' });
+      try {
+        const result = await processChannel(channel, rapidApiKey);
+        results.push(result);
+      } catch (err: any) {
+        results.push({ channelId: channel.id, channelName: channel.name, error: err.message });
       }
     }
 
-    res.json({ message: `Views opgehaald voor ${results.filter(r => !r.error).length}/${channels.length} kanalen`, results });
+    res.json({
+      message: `Views opgehaald voor ${results.filter(r => !r.error).length}/${channels.length} kanalen`,
+      results,
+    });
   } catch (err: any) {
     console.error('[Analytics] Fetch views error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/analytics/resolve-channel — resolve @handle naar UC ID
+// POST /api/analytics/resolve-channel
 router.post('/resolve-channel', async (req: Request, res: Response) => {
   try {
     const { handle } = req.body;
@@ -371,14 +427,13 @@ router.patch('/channel/:id/rpm', async (req: Request, res: Response) => {
     const channel = await prisma.channel.update({ where: { id }, data: { rpm } });
     res.json({ channelId: channel.id, rpm: channel.rpm });
   } catch (err: any) {
-    console.error('[Analytics] RPM update error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 export default router;
 
-// ── Cron Job: elk uur views ophalen ──
+// ── Cron Job ──
 
 export async function startViewsCron() {
   function randomInterval(): number {
@@ -391,20 +446,21 @@ export async function startViewsCron() {
     try {
       const settings = await prisma.settings.findUnique({ where: { id: 'singleton' } });
       const rapidApiKey = (settings as any)?.youtubeRapidApiKey;
-      if (!rapidApiKey) return;
+      if (!rapidApiKey) {
+        const next = randomInterval();
+        setTimeout(fetchAll, next);
+        return;
+      }
 
       const channels = await prisma.channel.findMany({
         where: { youtubeChannelId: { not: '' } },
       });
 
       for (const channel of channels) {
-        let ucId = extractChannelId(channel.youtubeChannelId);
-        if (!ucId.startsWith('UC')) continue;
-
-        const data = await fetchChannelVideos(ucId, rapidApiKey);
-        if (data) {
-          await saveViewSnapshot(channel.id, data.meta.totalViews);
-          console.log(`[Analytics Cron] ${channel.name}: ${data.meta.totalViews} views`);
+        try {
+          await processChannel(channel, rapidApiKey);
+        } catch (err: any) {
+          console.error(`[Analytics Cron] ${channel.name} error:`, err.message);
         }
       }
     } catch (err: any) {

@@ -131,6 +131,24 @@ model ChannelViewSnapshot {
   @@index([hour])
 }
 
+// ─── Video View Snapshots (per-video views tracking) ────
+
+model VideoViewSnapshot {
+  id            String   @id @default(cuid())
+  channelId     String
+  videoId       String
+  title         String   @default("")
+  hour          DateTime
+  viewCount     Int      @default(0)
+  viewsGained   Int      @default(0)
+  publishDate   String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@unique([channelId, videoId, hour])
+  @@index([channelId, hour])
+  @@index([videoId])
+}
+
 // ─── Project ────────────────────────────────────────────
 
 model Project {

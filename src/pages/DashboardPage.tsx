@@ -232,7 +232,8 @@ function AnalyticsPanel() {
               <span className="text-sm font-medium truncate">{ch.name}</span>
             </div>
             <div className="flex items-center gap-4 text-xs">
-              <span className="text-zinc-400">{formatNumber(ch.views24h)} views</span>
+              <span className="text-zinc-500" title="Totaal views">{formatNumber(ch.totalViews || 0)} totaal</span>
+              <span className="text-zinc-400">+{formatNumber(ch.views24h)} (24u)</span>
               <span className="text-emerald-400 font-medium">{formatCurrency(ch.revenue24h)}</span>
               {/* RPM */}
               {editRpm?.id === ch.id ? (
