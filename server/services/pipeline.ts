@@ -197,6 +197,55 @@ VERPLICHT JSON FORMAT (geef ALLEEN de JSON terug, geen extra tekst):
 export async function executeStep2(project: any, llmKeys: { elevateApiKey?: string; anthropicApiKey?: string }) {
   const projPath = projectDir(project.name);
 
+  // ── Check of kanaal een baseStyleProfile heeft ──
+  let channelStyleProfile: any = null;
+  let channelMaxClipDuration = 15; // default
+  if (project.channelId) {
+    try {
+      const prismaImport = await import('../db.js');
+      const prismaClient = prismaImport.default;
+      const channel = await prismaClient.channel.findUnique({ where: { id: project.channelId } });
+      if (channel?.baseStyleProfile) {
+        try {
+          channelStyleProfile = JSON.parse(channel.baseStyleProfile);
+          console.log(`[Style Profile] Kanaal baseStyleProfile gevonden (${channel.baseStyleProfile.length} chars)`);
+        } catch {}
+      }
+      if (channel?.maxClipDurationSeconds) {
+        channelMaxClipDuration = channel.maxClipDurationSeconds;
+      }
+    } catch {}
+  }
+
+  // ── Als kanaal een volledig style profile heeft → gebruik dat direct ──
+  if (channelStyleProfile) {
+    // Unwrap als het in een wrapper zit (bijv. { script_style_profile: { ... } })
+    const profile = channelStyleProfile.script_style_profile || channelStyleProfile;
+
+    // Voeg project-specifieke waarden toe
+    const targetWords = project.scriptLength || 5000;
+    if (!profile.script_formatting_rules) profile.script_formatting_rules = {};
+    profile.script_formatting_rules.total_target_words = targetWords;
+    profile._source = 'channel_base_profile';
+    profile._maxClipDurationSeconds = channelMaxClipDuration;
+
+    await writeJson(path.join(projPath, 'script', 'style-profile.json'), profile);
+
+    // Update config
+    try {
+      const configPath = path.join(projPath, 'config.json');
+      const config = await readJson(configPath);
+      config.visual = config.visual || {};
+      config.visual.genre = profile.genre || '';
+      config.visual.mood = profile.mood || profile.emotional_tone?.primary || '';
+      await writeJson(configPath, config);
+    } catch {}
+
+    console.log(`[Style Profile] Kanaal profile gebruikt (${profile.profile_name || 'unnamed'}), target: ${targetWords} woorden, maxClip: ${channelMaxClipDuration}s`);
+    return profile;
+  }
+
+  // ── Geen kanaal profile → genereer from scratch via LLM ──
   const transcriptTexts: string[] = [];
   for (let i = 1; i <= 3; i++) {
     const filePath = path.join(projPath, 'script', `ref-transcript-${i}.txt`);
@@ -207,10 +256,10 @@ export async function executeStep2(project: any, llmKeys: { elevateApiKey?: stri
   }
 
   if (transcriptTexts.length === 0) {
-    throw new Error('Geen transcripts gevonden. Voer eerst stap 1 uit.');
+    throw new Error('Geen transcripts gevonden en geen kanaal style profile beschikbaar.');
   }
 
-  // Haal research data op (stap 2) voor context
+  // Haal research data op voor context
   let researchContext = '';
   try {
     const research = await readJson(path.join(projPath, 'research', 'research.json'));
@@ -244,7 +293,7 @@ ${researchContext ? '- Stem de emotionele toon af op het onderwerp uit de resear
     { maxTokens: 4096, temperature: 0.5 }
   );
 
-  // Bereken sections en avg_words_per_section op basis van target scriptLength
+  // Bereken sections en avg_words_per_section
   const targetWords = project.scriptLength || 5000;
   const sections = styleProfile.script_formatting_rules?.sections || Math.max(3, Math.round(targetWords / 1200));
   const avgWordsPerSection = Math.round(targetWords / sections);
@@ -252,7 +301,9 @@ ${researchContext ? '- Stem de emotionele toon af op het onderwerp uit de resear
   styleProfile.script_formatting_rules.sections = sections;
   styleProfile.script_formatting_rules.avg_words_per_section = avgWordsPerSection;
   styleProfile.script_formatting_rules.total_target_words = targetWords;
-  console.log(`[Style Profile] Target: ${targetWords} woorden, ${sections} secties x ${avgWordsPerSection} woorden`);
+  styleProfile._source = 'llm_generated';
+  styleProfile._maxClipDurationSeconds = channelMaxClipDuration;
+  console.log(`[Style Profile] LLM-gegenereerd, target: ${targetWords} woorden, ${sections} secties x ${avgWordsPerSection} woorden`);
 
   await writeJson(path.join(projPath, 'script', 'style-profile.json'), styleProfile);
 
@@ -272,16 +323,22 @@ ${researchContext ? '- Stem de emotionele toon af op het onderwerp uit de resear
 
 const SCRIPT_SYSTEM = `Je bent een top-tier YouTube scriptwriter. Je schrijft meeslepende, high-retention scripts op basis van een style profile en een onderwerp.
 
-REGELS:
-- Volg het style profile 100% — toon, structuur, pacing, devices
-- Het script heeft PRECIES het aantal secties uit het style profile
-- De hook is 50-75 woorden, direct pakkend
-- De outro is max 30 woorden met een subscribe CTA
+KRITISCHE REGELS:
+- Volg het style profile 100% — toon, structuur, pacing, devices, clip_blueprint
+- Als het style profile een clip_blueprint bevat, volg die EXACT:
+  * Respecteer clip taxonomie (OPENER, VALIDATION, FEATURE, FLASH, TRANSITION)
+  * Respecteer combo_groups regels (opening combo, max 3 clips per combo)
+  * Respecteer placement_rules (spacing, triggers, section_density)
+  * Respecteer duration_distribution (varieer clip lengtes volgens de targets)
+  * Opening clip protocol: clips openen de video, narrator spreekt NIET eerst
+  * Closing clip protocol: narrator krijgt ALTIJD het laatste woord
 - GEEN headings, GEEN line breaks (behalve bij [CLIP] markers), GEEN underscores
 - Schrijf in de taal die gevraagd wordt
 - Houd het ritme strak — korte gesproken zinnen
 - Vermijd opvulling en herhaling
-- Als er [CLIP] markers nodig zijn, gebruik formaat: [CLIP: URL HH:MM:SS - HH:MM:SS]
+- Clip formaat: [CLIP: URL HH:MM:SS - HH:MM:SS]
+- Elke [CLIP] marker moet een SPECIFIEKE URL bevatten uit de beschikbare clips lijst
+- Clips mogen NOOIT langer zijn dan het opgegeven maximum
 
 OUTPUT: Geef ALLEEN het script terug. Geen inleiding, geen uitleg, alleen het script.`;
 
@@ -311,7 +368,9 @@ export async function executeStep3(project: any, llmKeys: { elevateApiKey?: stri
     trendingClips = (clipsResearch.clips || []).filter((c: any) => c.validated !== false);
   } catch {}
 
-  if (project.useClips && (clips.length > 0 || montageClips.length > 0 || trendingClips.length > 0)) {
+  // Trending clips altijd meenemen als ze beschikbaar zijn (ongeacht useClips flag)
+  const hasAnyClips = clips.length > 0 || montageClips.length > 0 || trendingClips.length > 0;
+  if (hasAnyClips) {
     const allClips = [
       ...clips,
       ...montageClips.map((c: any) => `${c.url} ${c.startTime} - ${c.endTime}`),
@@ -325,11 +384,12 @@ ${allClips.map((c, i) => `  ${i + 1}. ${typeof c === 'string' ? c : JSON.stringi
 
 Formaat: [CLIP: URL HH:MM:SS - HH:MM:SS]
 Regels:
+- MAXIMALE clip duur: ${styleProfile._maxClipDurationSeconds || 20} seconden per clip — NOOIT langer
+- Volg de clip_blueprint uit het style profile als die aanwezig is (clip types, placement, combo groups, density)
 - Gebruik de meest impactvolle clips op strategische momenten
 - Plaats clips op plekken waar visueel bewijs de tekst versterkt
-- Maximaal 1 clip per 1-2 minuten narration
 - De tekst voor en na moet vloeiend aansluiten op de clip
-- Geef korte context in het script waarom de kijker deze clip ziet`;
+- Varieer clip lengtes (5-${styleProfile._maxClipDurationSeconds || 20}s) voor ritme`;
   }
 
   const userPrompt = `Schrijf een YouTube script met de volgende specificaties:
