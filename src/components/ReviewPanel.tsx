@@ -1,401 +1,287 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle, Send } from 'lucide-react';
-import { Project, Step } from '../types';
-import { useStore } from '../store';
-import { TRANSITIONS } from '../data/transitions';
+import { CheckCircle2, XCircle, RotateCcw, Filter, Image, Film, CheckCheck, Loader2 } from 'lucide-react';
+import { Project } from '../types';
+import * as api from '../api';
+import { getFileUrl } from '../api';
 
 interface ReviewPanelProps {
   project: Project;
-  step: Step;
 }
 
-export default function ReviewPanel({ project, step }: ReviewPanelProps) {
-  const [reviewAction, setReviewAction] = useState<'approve' | 'feedback' | null>(null);
-  const [feedbackText, setFeedbackText] = useState('');
-  const submitFeedback = useStore((state) => state.submitFeedback);
-  const approveStep = useStore((state) => state.approveStep);
-  const selectImage = useStore((state) => state.selectImage);
-  const confirmImageSelection = useStore((state) => state.confirmImageSelection);
-  const setSceneTransition = useStore((state) => state.setSceneTransition);
+type AssetType = 'all' | 'clips' | 'images';
+type ReviewFilter = 'all' | 'pending' | 'approved' | 'rejected';
 
-  const previousFeedback = project.feedbackHistory.filter((f) => f.stepNumber === step.id);
+interface AssetItem {
+  id: string;
+  type: 'clip' | 'image';
+  title: string;
+  description: string;
+  sourceUrl: string;
+  localPath?: string;
+  thumbnailPath?: string;
+  reviewStatus: string;
+  tags?: string;
+  category?: string;
+  startTime?: string;
+  endTime?: string;
+}
 
-  const isAIStyle = project.visualStyleParent === 'ai';
-  const isManualImageSelection = isAIStyle && project.imageSelectionMode === 'manual';
-  const isPerSceneTransition = project.transitionMode === 'per-scene';
+export default function ReviewPanel({ project }: ReviewPanelProps) {
+  const [assets, setAssets] = useState<AssetItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [assetType, setAssetType] = useState<AssetType>('all');
+  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('pending');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [updating, setUpdating] = useState<string | null>(null);
+  const [counts, setCounts] = useState<any>({});
 
-  const mockScenes = Array.from({ length: 28 }, (_, i) => ({
-    id: `scene-${i + 1}`,
-    number: i + 1,
-    prompt: i === 0
-      ? 'A white mannequin standing in a dark alley, rain falling, cinematic lighting'
-      : i === 1
-      ? 'Two mannequins facing each other in an abandoned warehouse'
-      : `Scene ${i + 1} with dramatic 3D rendered mannequins`,
-  }));
-
-  useEffect(() => {
-    if (step.id === 9 && isManualImageSelection) {
-      mockScenes.forEach((scene) => {
-        const existing = project.selectedImages.find((s) => s.sceneId === scene.id);
-        if (!existing) {
-          selectImage(project.id, scene.id, 1);
-        }
-      });
+  const loadAssets = async () => {
+    setLoading(true);
+    try {
+      const data = await api.assetReview.getAssets(project.id);
+      const items: AssetItem[] = [
+        ...(data.clips || []).map((c: any) => ({
+          id: c.id, type: 'clip' as const, title: c.title, description: c.description,
+          sourceUrl: c.sourceUrl, localPath: c.localPath, thumbnailPath: c.thumbnailPath,
+          reviewStatus: c.reviewStatus || 'pending', tags: c.tags, category: c.category,
+          startTime: c.startTime, endTime: c.endTime,
+        })),
+        ...(data.images || []).map((i: any) => ({
+          id: i.id, type: 'image' as const, title: i.title, description: i.description,
+          sourceUrl: i.sourceUrl, localPath: i.localPath, thumbnailPath: i.thumbnailPath,
+          reviewStatus: i.reviewStatus || 'pending', tags: i.tags, category: i.category,
+        })),
+      ];
+      setAssets(items);
+      setCounts(data.counts || {});
+    } catch (err: any) {
+      console.error('Laden mislukt:', err);
     }
-  }, [step.id]);
+    setLoading(false);
+  };
 
-  const handleSelectAllFirst = () => {
-    mockScenes.forEach((scene) => {
-      selectImage(project.id, scene.id, 1);
+  useEffect(() => { loadAssets(); }, [project.id]);
+
+  const filteredAssets = assets.filter(a => {
+    if (assetType === 'clips' && a.type !== 'clip') return false;
+    if (assetType === 'images' && a.type !== 'image') return false;
+    if (reviewFilter !== 'all' && a.reviewStatus !== reviewFilter) return false;
+    return true;
+  });
+
+  const handleReview = async (id: string, status: 'approved' | 'rejected' | 'pending', type: 'clip' | 'image') => {
+    setUpdating(id);
+    try {
+      await api.assetReview.updateStatus(id, status, type);
+      setAssets(prev => prev.map(a => a.id === id ? { ...a, reviewStatus: status } : a));
+    } catch (err: any) {
+      alert(err.message);
+    }
+    setUpdating(null);
+  };
+
+  const handleBulkAction = async (status: 'approved' | 'rejected') => {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    const clipIds = ids.filter(id => assets.find(a => a.id === id)?.type === 'clip');
+    const imageIds = ids.filter(id => assets.find(a => a.id === id)?.type === 'image');
+
+    try {
+      if (clipIds.length > 0) await api.assetReview.bulkUpdate(clipIds, status, 'clip');
+      if (imageIds.length > 0) await api.assetReview.bulkUpdate(imageIds, status, 'image');
+      setAssets(prev => prev.map(a => selectedIds.has(a.id) ? { ...a, reviewStatus: status } : a));
+      setSelectedIds(new Set());
+      await loadAssets();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
     });
   };
 
-  const canConfirmImages = project.selectedImages.length === mockScenes.length;
-
-  const handleSubmit = () => {
-    if (reviewAction === 'approve') {
-      approveStep(project.id, step.id);
-    } else if (reviewAction === 'feedback' && feedbackText.trim()) {
-      submitFeedback(project.id, step.id, feedbackText);
-      setFeedbackText('');
-      setReviewAction(null);
+  const selectAll = () => {
+    if (selectedIds.size === filteredAssets.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredAssets.map(a => a.id)));
     }
   };
 
-  const renderPreview = () => {
-    const metadata = step.metadata || {};
-
-    switch (step.id) {
-      case 2:
-        return (
-          <div className="space-y-2">
-            <p className="text-zinc-400 text-sm mb-3">Style Profile</p>
-            <div className="flex flex-wrap gap-2">
-              <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-sm">Tone: Dramatic</span>
-              <span className="px-3 py-1 bg-purple-500/20 text-purple-400 rounded-full text-sm">POV: First Person</span>
-              <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-sm">Pacing: Fast</span>
-              <span className="px-3 py-1 bg-orange-500/20 text-orange-400 rounded-full text-sm">Narration: Active</span>
-            </div>
-          </div>
-        );
-      case 3: {
-        const scriptResult = step.result || {};
-        const scriptText = scriptResult.script || "";
-        const wordCount = scriptResult.wordCount || scriptText.split(/\s+/).length || 0;
-        const estimatedMin = Math.round(wordCount / 150);
-        const previewText = scriptText.slice(0, 1500) || "Script wordt geladen...";
-        const targetWords = project.scriptLength || 5000;
-        return (
-          <div className="space-y-3">
-            <div className="text-zinc-300 leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto bg-zinc-800 rounded-lg p-4 text-sm">
-              {previewText}
-              {scriptText.length > 1500 && (
-                <p className="text-zinc-500 italic mt-2">... [preview van eerste ~300 woorden]</p>
-              )}
-            </div>
-            <div className="flex items-center gap-4 text-sm">
-              <span className="text-zinc-400">📊 {wordCount.toLocaleString()} woorden</span>
-              <span className="text-zinc-400">🎯 Target: {targetWords.toLocaleString()}</span>
-              <span className="text-zinc-400">🎙️ ~{estimatedMin} min VO</span>
-              <span className="text-zinc-400">🌐 {project.language}</span>
-            </div>
-          </div>
-        );
-      }
-
-      case 4:
-        const duration = metadata.estimatedDuration || 765;
-        const fileSize = metadata.fileSize || 18.4;
-        const minutes = Math.floor(duration / 60);
-        const seconds = duration % 60;
-        return (
-          <div className="space-y-3">
-            <div className="bg-zinc-800 rounded-lg p-4">
-              <div className="flex items-center gap-3 mb-3">
-                <button className="w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-700 flex items-center justify-center transition-colors">
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-                  </svg>
-                </button>
-                <div className="flex-1">
-                  <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
-                    <div className="h-full bg-blue-600 w-0" />
-                  </div>
-                  <p className="text-xs text-zinc-400 mt-1">0:00 / {minutes}:{seconds.toString().padStart(2, '0')}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-4 text-xs text-zinc-400">
-                <span>Voice: {project.voice}</span>
-                <span>🎙️ {minutes}:{seconds.toString().padStart(2, '0')}</span>
-                <span>📦 {fileSize.toFixed(1)} MB</span>
-              </div>
-            </div>
-          </div>
-        );
-
-      case 6:
-        return (
-          <div className="space-y-3">
-            <p className="text-zinc-400 text-sm mb-2">Scene Prompts (eerste 5 van 28)</p>
-            <div className="space-y-2">
-              {[
-                'Wide shot of Silicon Valley office building at dawn, cinematic lighting',
-                'Close-up of engineer typing on keyboard, blue screen glow on face',
-                'Dramatic reveal of AI model training visualization on monitors',
-                'Team gathered around table with laptop, excited expressions',
-                'Overhead shot of sprawling tech campus, golden hour'
-              ].map((prompt, i) => (
-                <div key={i} className="bg-zinc-800 rounded p-2 text-sm">
-                  <span className="text-zinc-500 mr-2">#{i + 1}</span>
-                  <span className="text-zinc-300">{prompt}</span>
-                </div>
-              ))}
-            </div>
-            <button className="text-blue-400 hover:text-blue-300 text-sm">
-              Alle 28 prompts bekijken →
-            </button>
-          </div>
-        );
-
-      case 9:
-        if (isManualImageSelection) {
-          return (
-            <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
-              <div className="flex items-center justify-between sticky top-0 bg-zinc-900 py-2 z-10">
-                <h4 className="font-medium text-violet-300">🖼️ Kies de beste afbeelding per scene</h4>
-                <button
-                  onClick={handleSelectAllFirst}
-                  className="px-3 py-1 bg-zinc-700 hover:bg-zinc-600 rounded text-sm transition-colors"
-                >
-                  Alle automatisch kiezen (optie 1)
-                </button>
-              </div>
-
-              {mockScenes.map((scene, sceneIndex) => {
-                const selectedOption = project.selectedImages.find((s) => s.sceneId === scene.id)?.chosenOption || 1;
-                const transition = project.sceneTransitions.find((t) => t.sceneId === scene.id)?.transition || 'cross-dissolve';
-                const isLastScene = sceneIndex === mockScenes.length - 1;
-
-                return (
-                  <div key={scene.id} className="space-y-2 pb-4 border-b border-zinc-800">
-                    <p className="text-sm text-zinc-300 font-medium">
-                      Scene {scene.number}: <span className="text-zinc-400 font-normal">{scene.prompt}</span>
-                    </p>
-
-                    <div className={`grid gap-3`} style={{ gridTemplateColumns: `repeat(${project.imagesPerScene}, minmax(0, 1fr))` }}>
-                      {Array.from({ length: project.imagesPerScene }).map((_, optionIndex) => {
-                        const optionNumber = optionIndex + 1;
-                        const isSelected = selectedOption === optionNumber;
-                        const bgColor = ['from-blue-500/15 to-blue-600/20', 'from-purple-500/15 to-purple-600/20', 'from-green-500/15 to-green-600/20', 'from-orange-500/15 to-orange-600/20'][optionIndex];
-
-                        return (
-                          <button
-                            key={optionNumber}
-                            onClick={() => selectImage(project.id, scene.id, optionNumber)}
-                            className={`aspect-video rounded-lg border-2 transition-all relative overflow-hidden ${
-                              isSelected ? 'border-blue-500' : 'border-zinc-700 hover:border-zinc-600'
-                            }`}
-                          >
-                            <div className={`absolute inset-0 bg-gradient-to-br ${bgColor}`} />
-                            <div className="absolute inset-0 flex flex-col items-center justify-center">
-                              <p className="text-xs text-zinc-400 mb-1">Optie {optionNumber}</p>
-                              {isSelected && (
-                                <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center">
-                                  <CheckCircle className="w-4 h-4 text-white" />
-                                </div>
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {isPerSceneTransition && !isLastScene && (
-                      <div className="flex items-center gap-2 mt-2 ml-2">
-                        <label className="text-xs text-zinc-400">Transitie naar scene {scene.number + 1}:</label>
-                        <select
-                          value={transition}
-                          onChange={(e) => setSceneTransition(project.id, scene.id, e.target.value)}
-                          className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
-                        >
-                          {TRANSITIONS.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.icon} {t.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              <div className="sticky bottom-0 bg-zinc-900 pt-3 flex items-center justify-between border-t border-zinc-800">
-                <p className="text-sm text-zinc-400">
-                  Geselecteerd: {project.selectedImages.length}/{mockScenes.length} scenes
-                </p>
-                <button
-                  onClick={() => confirmImageSelection(project.id)}
-                  disabled={!canConfirmImages}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                    canConfirmImages
-                      ? 'bg-green-600 hover:bg-green-700 text-white'
-                      : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-                  }`}
-                >
-                  <CheckCircle className="w-4 h-4" />
-                  Bevestig & start video
-                </button>
-              </div>
-            </div>
-          );
-        }
-
-        const sceneCount = metadata.sceneCount || 28;
-        return (
-          <div className="space-y-3">
-            <p className="text-zinc-400 text-sm mb-2">Video Scenes: {sceneCount} scenes gegenereerd</p>
-            <div className="grid grid-cols-3 gap-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="aspect-video bg-zinc-800 rounded-lg flex items-center justify-center relative overflow-hidden">
-                  <div className="absolute inset-0 bg-gradient-to-br from-blue-500/20 to-purple-500/20" />
-                  <div className="relative z-10">
-                    <p className="text-xs text-zinc-400">Scene {i + 1}</p>
-                    <p className="text-green-400 text-xs">✓</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="text-sm text-zinc-400">{sceneCount}/28 scenes klaar</p>
-          </div>
-        );
-
-      default:
-        return (
-          <p className="text-zinc-400">Preview voor stap {step.id}: {step.name}</p>
-        );
-    }
+  const getPreviewUrl = (asset: AssetItem) => {
+    if (asset.thumbnailPath) return getFileUrl('', asset.thumbnailPath);
+    if (asset.localPath) return getFileUrl('', asset.localPath);
+    if (asset.sourceUrl) return getFileUrl(asset.sourceUrl, '');
+    return '';
   };
+
+  const totalPending = (counts.clipsPending || 0) + (counts.imagesPending || 0);
+  const totalApproved = (counts.clipsApproved || 0) + (counts.imagesApproved || 0);
+  const totalRejected = (counts.clipsRejected || 0) + (counts.imagesRejected || 0);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="w-6 h-6 animate-spin text-brand-400" />
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-violet-500/10 border-2 border-violet-500/50 rounded-lg p-6 mb-6">
-      <div className="flex items-center gap-3 mb-4">
-        <span className="text-3xl">👁️</span>
-        <div>
-          <h3 className="text-xl font-semibold text-violet-400">
-            Stap {step.id}: {step.name} — WACHT OP REVIEW
-          </h3>
-          {previousFeedback.length > 0 && (
-            <p className="text-sm text-violet-300">Poging {step.attemptNumber || 1}</p>
+    <div className="space-y-4">
+      {/* Header met filters */}
+      <div className="glass rounded-xl p-4">
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="flex gap-1">
+            {([
+              { key: 'all', label: 'Alles', icon: Filter },
+              { key: 'clips', label: 'Clips', icon: Film },
+              { key: 'images', label: 'Images', icon: Image },
+            ] as const).map(t => (
+              <button key={t.key} onClick={() => setAssetType(t.key)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  assetType === t.key ? 'bg-brand-500/20 text-brand-300' : 'bg-surface-200 text-zinc-500 hover:text-zinc-300'
+                }`}>
+                <t.icon className="w-3.5 h-3.5" /> {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="w-px h-6 bg-white/[0.06]" />
+
+          <div className="flex gap-1">
+            {([
+              { key: 'pending', label: 'Te reviewen', count: totalPending, color: 'bg-amber-500/15 text-amber-400 border-amber-500/20' },
+              { key: 'approved', label: 'Goedgekeurd', count: totalApproved, color: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20' },
+              { key: 'rejected', label: 'Afgekeurd', count: totalRejected, color: 'bg-red-500/15 text-red-400 border-red-500/20' },
+              { key: 'all', label: 'Alle', count: assets.length, color: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/20' },
+            ] as const).map(s => (
+              <button key={s.key} onClick={() => setReviewFilter(s.key)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                  reviewFilter === s.key ? s.color : 'bg-surface-200 text-zinc-600 border-white/[0.04] hover:text-zinc-400'
+                }`}>
+                {s.label} <span className="font-bold">{s.count}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex-1" />
+
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-zinc-500">{selectedIds.size} geselecteerd</span>
+              <button onClick={() => handleBulkAction('approved')}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 text-[11px] font-medium hover:bg-emerald-500/25 transition-colors">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Goedkeuren
+              </button>
+              <button onClick={() => handleBulkAction('rejected')}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-500/15 text-red-400 border border-red-500/20 text-[11px] font-medium hover:bg-red-500/25 transition-colors">
+                <XCircle className="w-3.5 h-3.5" /> Afkeuren
+              </button>
+            </div>
           )}
+
+          <button onClick={selectAll}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-surface-200 text-zinc-500 text-[11px] font-medium hover:text-zinc-300 transition-colors">
+            <CheckCheck className="w-3.5 h-3.5" /> {selectedIds.size === filteredAssets.length && filteredAssets.length > 0 ? 'Deselecteer' : 'Selecteer alles'}
+          </button>
         </div>
       </div>
 
-      <div className="bg-zinc-900 rounded-lg p-4 mb-4 border border-zinc-800">
-        <h4 className="font-semibold mb-3 flex items-center gap-2">
-          📝 Preview
-        </h4>
-        {renderPreview()}
-      </div>
+      {/* Assets Grid */}
+      {filteredAssets.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <Image className="w-10 h-10 text-zinc-700 mb-3" />
+          <p className="text-zinc-500 text-sm">Geen assets gevonden</p>
+          <p className="text-zinc-600 text-xs mt-1">
+            {reviewFilter === 'pending' ? 'Alle assets zijn al gereviewd' : 'Probeer een ander filter'}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+          {filteredAssets.map(asset => {
+            const isSelected = selectedIds.has(asset.id);
+            const previewUrl = getPreviewUrl(asset);
+            const isClip = asset.type === 'clip';
+            const statusColor = asset.reviewStatus === 'approved' ? 'border-emerald-500/40' :
+                               asset.reviewStatus === 'rejected' ? 'border-red-500/40' : 'border-white/[0.06]';
 
-      {previousFeedback.length > 0 && (
-        <div className="bg-zinc-900 rounded-lg p-4 mb-4 border border-zinc-800">
-          <h4 className="font-semibold mb-3">📋 Feedback geschiedenis</h4>
-          <div className="space-y-3">
-            {previousFeedback.map((fb, idx) => (
-              <div key={idx} className="border-l-2 border-zinc-700 pl-3">
-                <p className="text-xs text-zinc-500 mb-1">Poging {fb.attempt}</p>
-                <p className="text-sm text-zinc-400 italic">"{fb.feedback}"</p>
-                {idx < previousFeedback.length - 1 && (
-                  <p className="text-xs text-zinc-500 mt-1">↓ opnieuw gegenereerd</p>
-                )}
+            return (
+              <div key={asset.id}
+                className={`glass rounded-xl overflow-hidden border-2 transition-all ${statusColor} ${
+                  isSelected ? 'ring-2 ring-brand-500/50' : ''
+                }`}>
+                <div className="relative aspect-video bg-surface-200/60 cursor-pointer" onClick={() => toggleSelect(asset.id)}>
+                  {previewUrl ? (
+                    <img src={previewUrl} alt={asset.title}
+                      className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      {isClip ? <Film className="w-8 h-8 text-zinc-700" /> : <Image className="w-8 h-8 text-zinc-700" />}
+                    </div>
+                  )}
+                  <span className={`absolute top-2 left-2 text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                    isClip ? 'bg-purple-500/80 text-white' : 'bg-blue-500/80 text-white'
+                  }`}>
+                    {isClip ? 'CLIP' : 'IMG'}
+                  </span>
+                  {asset.reviewStatus !== 'pending' && (
+                    <span className={`absolute top-2 right-2 text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                      asset.reviewStatus === 'approved' ? 'bg-emerald-500/80 text-white' : 'bg-red-500/80 text-white'
+                    }`}>
+                      {asset.reviewStatus === 'approved' ? '✓' : '✗'}
+                    </span>
+                  )}
+                  <div className={`absolute bottom-2 left-2 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                    isSelected ? 'bg-brand-500 border-brand-500' : 'bg-black/40 border-white/30'
+                  }`}>
+                    {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                  </div>
+                  {isClip && asset.startTime && (
+                    <span className="absolute bottom-2 right-2 text-[9px] bg-black/60 text-white px-1.5 py-0.5 rounded font-mono">
+                      {asset.startTime} - {asset.endTime}
+                    </span>
+                  )}
+                </div>
+
+                <div className="p-2.5">
+                  <p className="text-xs font-medium text-zinc-300 truncate">{asset.title || 'Untitled'}</p>
+                  {asset.description && <p className="text-[10px] text-zinc-600 truncate mt-0.5">{asset.description}</p>}
+                  {asset.category && (
+                    <span className="text-[9px] text-zinc-700 bg-surface-200/80 px-1.5 py-0.5 rounded mt-1 inline-block">{asset.category}</span>
+                  )}
+                </div>
+
+                <div className="flex border-t border-white/[0.04]">
+                  <button onClick={() => handleReview(asset.id, 'approved', asset.type)} disabled={updating === asset.id}
+                    className={`flex-1 flex items-center justify-center gap-1 py-2 text-[11px] font-medium transition-colors ${
+                      asset.reviewStatus === 'approved' ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-600 hover:text-emerald-400 hover:bg-emerald-500/10'
+                    }`}>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  </button>
+                  <div className="w-px bg-white/[0.04]" />
+                  <button onClick={() => handleReview(asset.id, 'rejected', asset.type)} disabled={updating === asset.id}
+                    className={`flex-1 flex items-center justify-center gap-1 py-2 text-[11px] font-medium transition-colors ${
+                      asset.reviewStatus === 'rejected' ? 'bg-red-500/20 text-red-400' : 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10'
+                    }`}>
+                    <XCircle className="w-3.5 h-3.5" />
+                  </button>
+                  <div className="w-px bg-white/[0.04]" />
+                  <button onClick={() => handleReview(asset.id, 'pending', asset.type)} disabled={updating === asset.id}
+                    className="flex-1 flex items-center justify-center gap-1 py-2 text-[11px] font-medium transition-colors text-zinc-600 hover:text-zinc-400 hover:bg-white/[0.02]">
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-            ))}
-            {step.attemptNumber && (
-              <div className="border-l-2 border-violet-500 pl-3">
-                <p className="text-xs text-violet-400 mb-1">Poging {step.attemptNumber} (huidige)</p>
-              </div>
-            )}
-          </div>
+            );
+          })}
         </div>
       )}
-
-      <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
-        <h4 className="font-semibold mb-3">Wat wil je doen?</h4>
-
-        <div className="space-y-3 mb-4">
-          <label className="flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors hover:bg-zinc-800/50"
-            style={{ borderColor: reviewAction === 'approve' ? 'rgb(34 197 94)' : 'rgb(39 39 42)' }}>
-            <input
-              type="radio"
-              name="reviewAction"
-              checked={reviewAction === 'approve'}
-              onChange={() => setReviewAction('approve')}
-              className="mt-1"
-            />
-            <div>
-              <div className="font-medium flex items-center gap-2">
-                <span>✅</span>
-                <span>Goedkeuren en doorgaan</span>
-              </div>
-              <p className="text-sm text-zinc-400 mt-1">
-                Het resultaat is goed, de pipeline gaat verder naar de volgende stap
-              </p>
-            </div>
-          </label>
-
-          <label className="flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors hover:bg-zinc-800/50"
-            style={{ borderColor: reviewAction === 'feedback' ? 'rgb(139 92 246)' : 'rgb(39 39 42)' }}>
-            <input
-              type="radio"
-              name="reviewAction"
-              checked={reviewAction === 'feedback'}
-              onChange={() => setReviewAction('feedback')}
-              className="mt-1"
-            />
-            <div className="flex-1">
-              <div className="font-medium flex items-center gap-2">
-                <span>🤖</span>
-                <span>Feedback geven — AI past het aan</span>
-              </div>
-              <p className="text-sm text-zinc-400 mt-1">
-                Het resultaat moet anders, geef feedback en de stap wordt opnieuw gegenereerd
-              </p>
-            </div>
-          </label>
-        </div>
-
-        {reviewAction === 'feedback' && (
-          <div className="mt-4 pt-4 border-t border-zinc-800">
-            <label className="block text-sm font-medium mb-2">💬 Wat moet er anders?</label>
-            <textarea
-              value={feedbackText}
-              onChange={(e) => setFeedbackText(e.target.value)}
-              placeholder="Bijvoorbeeld: Het script is te lang, maak het korter rond 4000 woorden. De hook in het begin is te zwak, begin met een schokkend feit. Meer spanning opbouwen..."
-              className="w-full h-32 bg-zinc-800 border border-zinc-700 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-600 resize-none"
-            />
-          </div>
-        )}
-
-        <button
-          onClick={handleSubmit}
-          disabled={!reviewAction || (reviewAction === 'feedback' && !feedbackText.trim())}
-          className="mt-4 w-full px-4 py-3 bg-violet-600 hover:bg-violet-700 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
-        >
-          {reviewAction === 'approve' ? (
-            <>
-              <CheckCircle className="w-5 h-5" />
-              Goedkeuren & Doorgaan
-            </>
-          ) : (
-            <>
-              <Send className="w-5 h-5" />
-              Verstuur Feedback & Genereer Opnieuw
-            </>
-          )}
-        </button>
-      </div>
     </div>
   );
 }

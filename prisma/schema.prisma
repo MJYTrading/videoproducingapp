@@ -308,6 +308,7 @@ model Competitor {
 
 model AssetClip {
   id            String    @id @default(cuid())
+  reviewStatus  String    @default("pending")
   sourceUrl     String
   videoId       String
   title         String
@@ -466,6 +467,7 @@ model EditingKnowledge {
 
 model AssetImage {
   id            String    @id @default(cuid())
+  reviewStatus  String    @default("pending")
   sourceUrl     String
   localPath     String
   thumbnailPath String?

@@ -175,6 +175,33 @@ export const imageOptions = {
   },
 };
 
+// ── Asset Review API ──
+
+export const assetReview = {
+  async getAssets(projectId: string, status?: string) {
+    const params = status ? `?status=${status}` : '';
+    const res = await apiFetch(`/assets/review/${projectId}${params}`);
+    if (!res.ok) throw new Error('Kon assets niet ophalen');
+    return res.json();
+  },
+  async updateStatus(id: string, status: 'approved' | 'rejected' | 'pending', type: 'clip' | 'image') {
+    const res = await apiFetch(`/assets/review/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status, type }),
+    });
+    if (!res.ok) throw new Error('Kon status niet updaten');
+    return res.json();
+  },
+  async bulkUpdate(ids: string[], status: 'approved' | 'rejected' | 'pending', type: 'clip' | 'image') {
+    const res = await apiFetch('/assets/review-bulk', {
+      method: 'PATCH',
+      body: JSON.stringify({ ids, status, type }),
+    });
+    if (!res.ok) throw new Error('Bulk update mislukt');
+    return res.json();
+  },
+};
+
 // ── Pipeline Engine API ──
 
 export const scriptChecker = {
