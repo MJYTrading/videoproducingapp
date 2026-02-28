@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Tv, FileVideo, Settings, Zap, Play, X, Mic, BarChart3, DollarSign, Eye, RefreshCw, TrendingUp, Clock } from 'lucide-react';
+import { Plus, Tv, FileVideo, Settings, Zap, Play, X, Mic, BarChart3, DollarSign, Eye, RefreshCw, TrendingUp, Clock, Filter } from 'lucide-react';
 import { useStore } from '../store';
 import { Channel, ProjectStatus, VideoType, VIDEO_TYPE_LABELS, Language } from '../types';
 import * as api from '../api';
@@ -47,21 +47,27 @@ function AnalyticsPanel() {
   const [summary, setSummary] = useState<any>(null);
   const [revenue, setRevenue] = useState<any>(null);
   const [revenuePeriod, setRevenuePeriod] = useState('day');
+  const [chartPeriod, setChartPeriod] = useState<'24h' | 'week' | 'month'>('24h');
+  const [selectedChannel, setSelectedChannel] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
   const [editRpm, setEditRpm] = useState<{ id: string; rpm: string } | null>(null);
 
+  const chartHours = chartPeriod === '24h' ? 24 : chartPeriod === 'week' ? 168 : 720;
+
   const loadAnalytics = useCallback(async () => {
     try {
       const [summaryData, revenueData] = await Promise.all([
-        api.analytics.getSummary().catch(() => null),
+        api.analytics.getViews(chartHours).catch(() => null),
         api.analytics.getRevenue(revenuePeriod).catch(() => null),
       ]);
-      if (summaryData) setSummary(summaryData);
+      // Also get summary for KPI + channel list
+      const summaryKpi = await api.analytics.getSummary().catch(() => null);
+      if (summaryKpi) setSummary({ ...summaryKpi, viewsData: summaryData });
       if (revenueData) setRevenue(revenueData);
     } catch {}
     setLoading(false);
-  }, [revenuePeriod]);
+  }, [revenuePeriod, chartHours]);
 
   useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
 
@@ -121,17 +127,96 @@ function AnalyticsPanel() {
     );
   }
 
-  // Bereken max views voor chart schaal
-  const maxViews = Math.max(1, ...summary.hourlyData.map((h: any) => h.views));
+  // Bouw chart data op basis van viewsData
+  const viewsData = summary.viewsData;
   const channelColors = ['#6366f1', '#22d3ee', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6'];
+
+  // Aggregeer data per bucket (uur voor 24h, dag voor week/maand)
+  const buildChartBuckets = () => {
+    if (!viewsData?.channels) return [];
+
+    // Verzamel alle snapshots van alle kanalen
+    const allSnapshots: { hour: string; channelId: string; viewsInHour: number }[] = [];
+    for (const [chId, chData] of Object.entries(viewsData.channels) as any) {
+      for (const snap of chData.snapshots || []) {
+        allSnapshots.push({ hour: snap.hour, channelId: chId, viewsInHour: snap.viewsInHour });
+      }
+    }
+
+    if (chartPeriod === '24h') {
+      // Per uur, 24 buckets
+      const now = new Date();
+      const buckets: { label: string; views: number; byChannel: Record<string, number> }[] = [];
+      for (let i = 23; i >= 0; i--) {
+        const bucketDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours() - i, 0, 0));
+        const label = bucketDate.getUTCHours().toString().padStart(2, '0') + ':00';
+        const byChannel: Record<string, number> = {};
+        let views = 0;
+        for (const snap of allSnapshots) {
+          const snapH = new Date(snap.hour);
+          if (snapH.getTime() === bucketDate.getTime()) {
+            byChannel[snap.channelId] = (byChannel[snap.channelId] || 0) + snap.viewsInHour;
+            views += snap.viewsInHour;
+          }
+        }
+        buckets.push({ label, views, byChannel });
+      }
+      return buckets;
+    } else {
+      // Per dag
+      const days = chartPeriod === 'week' ? 7 : 30;
+      const now = new Date();
+      const buckets: { label: string; views: number; byChannel: Record<string, number> }[] = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const bucketDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+        const label = `${bucketDate.getUTCDate()}/${bucketDate.getUTCMonth() + 1}`;
+        const byChannel: Record<string, number> = {};
+        let views = 0;
+        for (const snap of allSnapshots) {
+          const snapH = new Date(snap.hour);
+          if (snapH.getUTCFullYear() === bucketDate.getUTCFullYear() &&
+              snapH.getUTCMonth() === bucketDate.getUTCMonth() &&
+              snapH.getUTCDate() === bucketDate.getUTCDate()) {
+            byChannel[snap.channelId] = (byChannel[snap.channelId] || 0) + snap.viewsInHour;
+            views += snap.viewsInHour;
+          }
+        }
+        buckets.push({ label, views, byChannel });
+      }
+      return buckets;
+    }
+  };
+
+  const chartBuckets = buildChartBuckets();
+
+  // Filter op geselecteerd kanaal
+  const filteredBuckets = chartBuckets.map(b => {
+    if (selectedChannel === 'all') return b;
+    const chViews = b.byChannel[selectedChannel] || 0;
+    return { ...b, views: chViews, byChannel: { [selectedChannel]: chViews } };
+  });
+
+  const maxViews = Math.max(1, ...filteredBuckets.map(b => b.views));
+  const totalViewsInChart = filteredBuckets.reduce((sum, b) => sum + b.views, 0);
+
+  // Bepaal label interval
+  const labelInterval = chartPeriod === '24h' ? 3 : chartPeriod === 'week' ? 1 : 5;
 
   return (
     <div className="glass rounded-2xl p-6 mb-8 animate-fade-in-up">
-      {/* Header */}
+      {/* Header met kanaal filter */}
       <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <BarChart3 className="w-5 h-5 text-brand-400" />
           <h2 className="section-title !mb-0">Analytics</h2>
+          {/* Kanaal filter */}
+          <select value={selectedChannel} onChange={e => setSelectedChannel(e.target.value)}
+            className="input-base !w-auto text-xs !py-1.5 !px-2.5 !bg-surface-200/60 ml-2">
+            <option value="all">Alle kanalen</option>
+            {summary.channels.map((ch: any) => (
+              <option key={ch.id} value={ch.id}>{ch.name}</option>
+            ))}
+          </select>
         </div>
         <button onClick={handleFetchViews} disabled={fetching} className="btn-secondary text-xs">
           <RefreshCw className={`w-3.5 h-3.5 ${fetching ? 'animate-spin' : ''}`} />
@@ -181,40 +266,52 @@ function AnalyticsPanel() {
         </div>
       </div>
 
-      {/* Views Chart — 24 uur staafdiagram */}
+      {/* Views Chart */}
       <div className="mb-5">
-        <p className="text-xs text-zinc-500 font-medium mb-3">Views per uur (afgelopen 24 uur)</p>
-        <div className="flex items-end gap-[3px] h-32 bg-surface-200/30 rounded-xl p-3 border border-white/[0.04]">
-          {summary.hourlyData.map((h: any, i: number) => {
-            const height = maxViews > 0 ? Math.max(2, (h.views / maxViews) * 100) : 2;
-            const hourDate = new Date(h.hour);
-            const hourLabel = hourDate.getHours().toString().padStart(2, '0') + ':00';
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs text-zinc-500 font-medium">
+            Views {chartPeriod === '24h' ? 'per uur (24 uur)' : chartPeriod === 'week' ? 'per dag (7 dagen)' : 'per dag (30 dagen)'}
+            {totalViewsInChart > 0 && <span className="text-zinc-400 ml-2">· {formatNumber(totalViewsInChart)} totaal</span>}
+          </p>
+          <div className="flex gap-1">
+            {(['24h', 'week', 'month'] as const).map(p => (
+              <button key={p} onClick={() => setChartPeriod(p)}
+                className={`text-[10px] px-2 py-1 rounded-md font-medium transition-colors ${chartPeriod === p ? 'bg-brand-500/20 text-brand-300' : 'bg-surface-300/40 text-zinc-600 hover:text-zinc-400'}`}>
+                {p === '24h' ? '24 uur' : p === 'week' ? 'Week' : 'Maand'}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-end gap-[2px] h-48 bg-surface-200/30 rounded-xl p-3 pt-4 border border-white/[0.04]">
+          {filteredBuckets.map((b, i) => {
+            const height = maxViews > 0 ? Math.max(1, (b.views / maxViews) * 100) : 1;
             return (
               <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
-                {/* Stacked bar per channel */}
+                {/* Bar */}
                 <div className="w-full rounded-t-sm overflow-hidden flex flex-col-reverse" style={{ height: `${height}%` }}>
-                  {summary.channels.map((ch: any, ci: number) => {
-                    const chViews = h.byChannel[ch.id] || 0;
-                    const chPct = h.views > 0 ? (chViews / h.views) * 100 : 0;
-                    return (
-                      <div key={ch.id} style={{ height: `${chPct}%`, backgroundColor: channelColors[ci % channelColors.length] }}
-                        className="w-full min-h-0 transition-all" />
-                    );
-                  })}
-                  {summary.channels.length === 0 && (
-                    <div className="w-full h-full bg-brand-500/60 rounded-t-sm" />
+                  {selectedChannel === 'all' ? (
+                    summary.channels.map((ch: any, ci: number) => {
+                      const chViews = b.byChannel[ch.id] || 0;
+                      const chPct = b.views > 0 ? (chViews / b.views) * 100 : 0;
+                      return (
+                        <div key={ch.id} style={{ height: `${chPct}%`, backgroundColor: channelColors[ci % channelColors.length] }}
+                          className="w-full min-h-0 transition-all" />
+                      );
+                    })
+                  ) : (
+                    <div className="w-full h-full bg-brand-500/80 rounded-t-sm" />
                   )}
                 </div>
                 {/* Tooltip */}
-                <div className="absolute bottom-full mb-2 hidden group-hover:block z-10">
+                <div className="absolute bottom-full mb-2 hidden group-hover:block z-10 pointer-events-none">
                   <div className="bg-surface-50 border border-white/[0.1] rounded-lg p-2 text-[10px] whitespace-nowrap shadow-xl">
-                    <p className="font-medium">{hourLabel}</p>
-                    <p className="text-zinc-400">{formatNumber(h.views)} views</p>
+                    <p className="font-medium">{b.label}</p>
+                    <p className="text-zinc-400">{formatNumber(b.views)} views</p>
                   </div>
                 </div>
-                {/* Uur label (elke 3 uur) */}
-                {i % 3 === 0 && (
-                  <span className="text-[8px] text-zinc-600 mt-1 font-mono">{hourLabel}</span>
+                {/* Label */}
+                {i % labelInterval === 0 && (
+                  <span className="text-[7px] text-zinc-600 mt-1 font-mono leading-none">{b.label}</span>
                 )}
               </div>
             );
