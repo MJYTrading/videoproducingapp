@@ -221,11 +221,19 @@ async function updateStepInDb(projectId: string, stepNumber: number, data: any) 
   });
 }
 
-async function addLog(projectId: string, level: string, step: number, source: string, message: string) {
+export async function addLog(projectId: string, level: string, step: number, source: string, message: string) {
   await prisma.logEntry.create({
     data: { level, step, source, message, projectId },
   });
   console.log(`[Pipeline][${level.toUpperCase()}] Stap ${step}: ${message}`);
+}
+
+export type StepLogger = (message: string, level?: string) => Promise<void>;
+
+export function createStepLogger(projectId: string, stepNumber: number, source: string): StepLogger {
+  return async (message: string, level: string = 'info') => {
+    await addLog(projectId, level, stepNumber, source, message);
+  };
 }
 
 async function updateProjectStatus(projectId: string, status: string) {
@@ -295,6 +303,8 @@ async function executeStepWithRetry(
   const source = getExecutorName(stepNumber);
   const stepName = getStepName(stepNumber);
 
+  const stepLogger = createStepLogger(projectId, stepNumber, source);
+
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
     // Check of pipeline nog draait
     if (state.status !== 'running') {
@@ -330,7 +340,7 @@ async function executeStepWithRetry(
     try {
       // Voer stap uit met timeout
       const result = await Promise.race([
-        executeStepFunction(stepNumber, project, settings, llmKeys),
+        executeStepFunction(stepNumber, project, settings, llmKeys, stepLogger),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error(`Timeout: ${stepName} duurde langer dan ${config.timeout / 1000}s`)),
             config.timeout)
@@ -383,7 +393,7 @@ async function executeStepWithRetry(
 // ── Step function dispatcher ──
 
 async function executeStepFunction(
-  stepNumber: number, project: any, settings: any, llmKeys: any
+  stepNumber: number, project: any, settings: any, llmKeys: any, log?: StepLogger
 ): Promise<any> {
   
 // ── VideoType-based stap activatie matrix ──
@@ -396,27 +406,27 @@ async function executeStepFunction(
     // Stap 0: Ideation → direct completed bij start
     // Stap 1: Project Formulier → direct completed bij start
     case 2: return executeStepResearch(project, settings);                         // Research JSON → Elevate Sonar / Perplexity
-    case 3: return executeStep1(project, settings.youtubeTranscriptApiKey);        // Transcripts
+    case 3: return executeStep1(project, settings.youtubeTranscriptApiKey, log);        // Transcripts
     case 4: return executeStepTrendingClips(project, settings);                    // Trending Clips → Elevate Sonar / Perplexity
     case 5: return executeStep2(project, llmKeys);                                 // Style Profile
     case 6: return executeStepScriptOrchestrator(project, settings, llmKeys);      // Script Orchestrator → Elevate Opus
-    case 7: return executeStep3(project, llmKeys);                                 // Script Schrijven
-    case 8: return executeStep4(project, settings);                                // Voice Over
+    case 7: return executeStep3(project, llmKeys, log);                                 // Script Schrijven
+    case 8: return executeStep4(project, settings, log);                                // Voice Over
     case 9: throw new Error('Avatar/Spokesperson nog niet geïmplementeerd');       // Avatar → HeyGen (TODO)
-    case 10: return executeStep5(project, settings);                               // Timestamps
-    case 11: return executeStep6(project, llmKeys);                                // Scene Prompts
+    case 10: return executeStep5(project, settings, log);                               // Timestamps
+    case 11: return executeStep6(project, llmKeys, log);                                // Scene Prompts
     case 12: return executeStep7(project, settings);                               // Assets Zoeken
     case 13: return executeStep8(project, settings);                               // Clips Downloaden
-    case 14: return executeStep6b(project, settings);                              // Images Genereren
-    case 15: return executeStep9(project, settings);                               // Video Scenes
-    case 16: return executeStepDirectorsCut(project, settings, llmKeys);            // Director's Cut
+    case 14: return executeStep6b(project, settings, log);                              // Images Genereren
+    case 15: return executeStep9(project, settings, log);                               // Video Scenes
+    case 16: return executeStepDirectorsCut(project, settings, llmKeys, log);            // Director's Cut
     case 17: throw new Error('Achtergrondmuziek nog niet geïmplementeerd');        // Muziek (TODO)
     case 18: return executeStep11(project, settings);                              // Color Grading
     case 19: return executeStep12(project, settings);                              // Subtitles
     case 20: throw new Error('Overlay nog niet geïmplementeerd');                  // Overlay (TODO)
     case 21: return executeStepSoundEffects(project, settings);                    // Sound Effects
     case 22: return executeStepVideoEffects(project, settings);                    // Video Effects
-    case 23: return executeStepFinalAssembly(project, settings);                   // Final Assembly
+    case 23: return executeStepFinalAssembly(project, settings, log);                   // Final Assembly
     case 24: throw new Error('Thumbnail nog niet geïmplementeerd');                // Thumbnail (TODO)
     case 25: return executeStep14(project, settings);                              // Drive Upload
     default: throw new Error(`Stap ${stepNumber} niet geïmplementeerd`);

@@ -11,6 +11,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import prisma from '../db.js';
+import type { StepLogger } from './pipeline-engine.js';
 import { llmSimplePrompt, LLM_MODELS } from './llm.js';
 
 const WORKSPACE_BASE = '/root/.openclaw/workspace/projects';

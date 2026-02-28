@@ -3,10 +3,13 @@
  */
 
 import fs from 'fs/promises';
+import type { StepLogger } from './pipeline-engine.js';
 import path from 'path';
 import { fetchTranscriptsBatch } from './youtube.js';
 import { llmJsonPrompt, llmSimplePrompt } from './llm.js';
 import { generateImages, generateVideos } from './media-generator.js';
+
+const noopLog: StepLogger = async () => {};
 
 const WORKSPACE_BASE = '/root/.openclaw/workspace/projects';
 
@@ -93,14 +96,16 @@ export async function executeStep0(project: any) {
 
 // ── Stap 1: Transcripts ophalen ──
 
-export async function executeStep1(project: any, youtubeApiKey: string) {
+export async function executeStep1(project: any, youtubeApiKey: string, log: StepLogger = noopLog) {
   const refs: string[] = (project.referenceVideos || []).filter((r: string) => r?.trim());
 
   if (refs.length === 0) {
     throw new Error('Geen referentie video URLs gevonden. Voeg minimaal 1 (liefst 3) toe.');
   }
 
+  await log(`${refs.length} referentie video(s) gevonden, transcripts ophalen...`);
   const batchResult = await fetchTranscriptsBatch(youtubeApiKey, refs);
+  await log(`${batchResult.results.length} transcripts ontvangen, ${batchResult.failures.length} mislukt`);
 
   if (batchResult.failures.length > 0 && batchResult.results.length === 0) {
     const failDetails = batchResult.failures.map(f => `${f.videoId}: ${f.error}`).join('\n');
@@ -124,6 +129,14 @@ export async function executeStep1(project: any, youtubeApiKey: string) {
     });
   }
 
+  for (const t of transcripts) {
+    await log(`Transcript ${t.index}: "${t.videoTitle}" (${t.wordCount} woorden, ${t.language})`);
+  }
+  if (batchResult.failures.length > 0) {
+    for (const f of batchResult.failures) {
+      await log(`Transcript mislukt: ${f.videoId} — ${f.error}`, 'warn');
+    }
+  }
   return { transcripts, failures: batchResult.failures };
 }
 
@@ -253,7 +266,7 @@ REGELS:
 
 OUTPUT: Geef ALLEEN het script terug. Geen inleiding, geen uitleg, alleen het script.`;
 
-export async function executeStep3(project: any, llmKeys: { elevateApiKey?: string; anthropicApiKey?: string }) {
+export async function executeStep3(project: any, llmKeys: { elevateApiKey?: string; anthropicApiKey?: string }, log: StepLogger = noopLog) {
   const projPath = projectDir(project.name);
 
   let styleProfile: any;
@@ -265,6 +278,7 @@ export async function executeStep3(project: any, llmKeys: { elevateApiKey?: stri
 
   const wordCount = project.scriptLength || 5000;
   const sections = styleProfile.script_formatting_rules?.sections || 8;
+  await log(`Script parameters: ${wordCount} woorden, ${sections} secties, taal: ${project.language || 'EN'}`);
   const wordsPerSection = Math.round(wordCount / sections);
 
   let clipInfo = '';
@@ -426,7 +440,7 @@ BELANGRIJK voor video_prompt:
 - Moet kort en actiegericht zijn (1-2 zinnen)
 - Alleen voor ai_video scenes`;
 
-export async function executeStep6(project: any, llmKeys: { elevateApiKey?: string; anthropicApiKey?: string }) {
+export async function executeStep6(project: any, llmKeys: { elevateApiKey?: string; anthropicApiKey?: string }, log: StepLogger = noopLog) {
   const projPath = projectDir(project.name);
 
   // 1. Laad script
@@ -749,7 +763,7 @@ REGELS:
 
 // ── Stap 13: Images Genereren (direct API) ──
 
-export async function executeStep6b(project: any, settings: any) {
+export async function executeStep6b(project: any, settings: any, log: StepLogger = noopLog) {
   const projPath = projectDir(project.name);
   const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
 
@@ -877,7 +891,7 @@ async function pollForStatus(statusPath: string, intervalMs: number, timeoutMs: 
   throw new Error('Timeout: status.json niet gevonden of niet voltooid binnen de tijdslimiet');
 }
 
-export async function executeStep4(project: any, settings: any) {
+export async function executeStep4(project: any, settings: any, log: StepLogger = noopLog) {
   const projPath = projectDir(project.name);
   const scriptVoiceoverPath = path.join(projPath, 'script', 'script-voiceover.txt');
   const outputPath = path.join(projPath, 'audio', 'voiceover.mp3');
@@ -899,6 +913,8 @@ export async function executeStep4(project: any, settings: any) {
   // Zoek voice_id op
   const voice = await resolveVoiceId(project.voice);
   console.log('[Step 4] Voice: ' + voice.name + ' (' + voice.voice_id + ')');
+  await log(`Voice geselecteerd: ${voice.name} (${voice.voice_id})`);
+  await log(`Script: ${scriptText.split(/\s+/).length} woorden`);
 
   // Zorg dat audio dir bestaat
   await ensureDir(path.join(projPath, 'audio'));
@@ -952,7 +968,7 @@ export async function executeStep4(project: any, settings: any) {
 
 // ── Stap 5: Timestamps genereren (via N8N) ──
 
-export async function executeStep5(project: any, settings: any) {
+export async function executeStep5(project: any, settings: any, log: StepLogger = noopLog) {
   const projPath = projectDir(project.name);
   const audioPath = path.join(projPath, 'audio', 'voiceover.mp3');
   const scriptPath = path.join(projPath, 'script', 'script.txt');
@@ -1328,7 +1344,7 @@ export async function executeStep8(project: any, settings: any) {
 
 // ── Stap 14: Video Scenes Genereren (direct API) ──
 
-export async function executeStep9(project: any, settings: any) {
+export async function executeStep9(project: any, settings: any, log: StepLogger = noopLog) {
   const projPath = projectDir(project.name);
   const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
   const selectionsPath = path.join(projPath, 'assets', 'image-selections.json');
@@ -2162,7 +2178,7 @@ export async function executeStepDirectorsCut(project: any, settings: any, llmKe
 
 import { executeSoundEffects } from './sound-effects.js';
 
-export async function executeStepSoundEffects(project: any, settings: any): Promise<any> {
+export async function executeStepSoundEffects(project: any, settings: any, log?: any): Promise<any> {
   return executeSoundEffects(project, settings);
 }
 
@@ -2172,7 +2188,7 @@ export async function executeStepSoundEffects(project: any, settings: any): Prom
 
 import { executeVideoEffects } from './video-effects.js';
 
-export async function executeStepVideoEffects(project: any, settings: any): Promise<any> {
+export async function executeStepVideoEffects(project: any, settings: any, log?: any): Promise<any> {
   return executeVideoEffects(project, settings);
 }
 
@@ -2182,6 +2198,6 @@ export async function executeStepVideoEffects(project: any, settings: any): Prom
 
 import { executeFinalAssembly } from './final-assembly.js';
 
-export async function executeStepFinalAssembly(project: any, settings: any): Promise<any> {
+export async function executeStepFinalAssembly(project: any, settings: any, log?: any): Promise<any> {
   return executeFinalAssembly(project, settings);
 }
