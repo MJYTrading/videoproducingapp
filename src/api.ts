@@ -342,11 +342,13 @@ export const voices = {
 // ── Ideation API ──
 
 export const ideation = {
-  async brainstorm(channelId: string): Promise<any> {
-    const res = await apiFetch('/ideation/brainstorm', { method: 'POST', body: JSON.stringify({ channelId }) });
+  // Brainstorm
+  async brainstorm(data: { channelId: string; topic?: string; mode?: string; researchContext?: string }): Promise<any> {
+    const res = await apiFetch('/ideation/brainstorm', { method: 'POST', body: JSON.stringify(data) });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Brainstorm mislukt'); }
     return res.json();
   },
+  // Ideas CRUD
   async getIdeas(channelId?: string): Promise<any[]> {
     const query = channelId ? `?channelId=${channelId}` : '';
     const res = await apiFetch(`/ideation/ideas${query}`);
@@ -372,10 +374,45 @@ export const ideation = {
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Conversie mislukt'); }
     return res.json();
   },
-  async getSimilarChannels(channelId: string): Promise<any> {
-    const res = await apiFetch(`/ideation/similar-channels/${channelId}`);
-    if (!res.ok) throw new Error('Kon vergelijkbare kanalen niet ophalen');
+  // NexLev — on-demand with caching (returns {data, cached, fetchedAt})
+  async nexlev(endpoint: string, channelId: string, refresh = false): Promise<any> {
+    const q = refresh ? '?refresh=true' : '';
+    const res = await apiFetch(`/ideation/nexlev/${endpoint}/${channelId}${q}`);
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || `NexLev ${endpoint} mislukt`); }
     return res.json();
+  },
+  // Check cache only — returns null if no cache (no credit cost)
+  async nexlevCacheOnly(endpoint: string, channelId: string): Promise<any | null> {
+    const res = await apiFetch(`/ideation/nexlev/${endpoint}/${channelId}?cacheOnly=true`);
+    if (res.status === 204) return null;
+    if (!res.ok) return null;
+    return res.json();
+  },
+  async nexlevPost(endpoint: string, body: any): Promise<any> {
+    const res = await apiFetch(`/ideation/nexlev/${endpoint}`, { method: 'POST', body: JSON.stringify(body) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || `NexLev ${endpoint} mislukt`); }
+    return res.json();
+  },
+  // Direct channel call (for competitors by ytChannelId)
+  async directChannel(ytChannelId: string, endpoint: string, refresh = false): Promise<any> {
+    const res = await apiFetch('/ideation/nexlev/direct-channel', { method: 'POST', body: JSON.stringify({ ytChannelId, endpoint, refresh }) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Direct channel call mislukt'); }
+    return res.json();
+  },
+  // Competitors
+  async getCompetitors(channelId: string): Promise<any[]> {
+    const res = await apiFetch(`/ideation/competitors/${channelId}`);
+    if (!res.ok) throw new Error('Competitors ophalen mislukt');
+    return res.json();
+  },
+  async addCompetitor(data: { channelId: string; ytChannelId: string; name?: string }): Promise<any> {
+    const res = await apiFetch('/ideation/competitors', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Competitor toevoegen mislukt'); }
+    return res.json();
+  },
+  async deleteCompetitor(id: string): Promise<void> {
+    const res = await apiFetch(`/ideation/competitors/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Competitor verwijderen mislukt');
   },
 };
 

@@ -25,3 +25,4 @@ dist-ssr
 # Backend
 data/
 dist-frontend/
+*.bak

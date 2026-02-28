@@ -100,6 +100,7 @@ model Channel {
   // Relaties
   projects              Project[]
   ideas                 Idea[]
+  competitorEntries     Competitor[]
   musicSelections       ChannelMusicSelection[]
   sfxSelections         ChannelSfxSelection[]
   specialEditSelections ChannelSpecialEditSelection[]
@@ -231,6 +232,39 @@ model ResearchTemplate {
   isDefault   Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// ─── Clip Library (gedeeld over alle kanalen) ───────────
+
+
+// ─── NexLev Data Cache ─────────────────────────────────
+
+model NexLevCache {
+  id          String   @id @default(cuid())
+  channelId   String
+  endpoint    String
+  data        String
+  fetchedAt   DateTime @default(now())
+
+  @@unique([channelId, endpoint])
+  @@index([channelId])
+}
+
+// ─── Competitors ───────────────────────────────────────
+
+model Competitor {
+  id              String   @id @default(cuid())
+  channelId       String
+  ytChannelId     String
+  name            String   @default("")
+  notes           String   @default("")
+  cachedAbout     String?
+  createdAt       DateTime @default(now())
+
+  channel         Channel  @relation(fields: [channelId], references: [id])
+
+  @@unique([channelId, ytChannelId])
+  @@index([channelId])
 }
 
 // ─── Clip Library (gedeeld over alle kanalen) ───────────
