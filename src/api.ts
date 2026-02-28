@@ -600,3 +600,52 @@ export const mediaLibrary = {
     if (!res.ok) throw new Error('Toewijzen mislukt');
   },
 };
+
+// ── File Serving Helper ──
+
+export function getFileUrl(sourceUrl: string, localPath?: string): string {
+  // Als sourceUrl een externe URL is (http/https), gebruik die direct
+  if (sourceUrl && (sourceUrl.startsWith('http://') || sourceUrl.startsWith('https://'))) {
+    return sourceUrl;
+  }
+  // Als er een lokaal pad is, serveer via de file-serve route
+  const filePath = localPath || sourceUrl;
+  if (filePath && filePath.startsWith('/')) {
+    const token = getToken() || '';
+    return `/api/files/serve?path=${encodeURIComponent(filePath)}&token=${token}`;
+  }
+  // Fallback: sourceUrl teruggeven
+  return sourceUrl || '';
+}
+
+// ── Analytics API ──
+
+export const analytics = {
+  async getSummary(): Promise<any> {
+    const res = await apiFetch('/analytics/summary');
+    if (!res.ok) throw new Error('Kon analytics niet ophalen');
+    return res.json();
+  },
+  async getViews(hours = 24): Promise<any> {
+    const res = await apiFetch(`/analytics/views?hours=${hours}`);
+    if (!res.ok) throw new Error('Kon views niet ophalen');
+    return res.json();
+  },
+  async getRevenue(period = 'day'): Promise<any> {
+    const res = await apiFetch(`/analytics/revenue?period=${period}`);
+    if (!res.ok) throw new Error('Kon inkomsten niet ophalen');
+    return res.json();
+  },
+  async fetchViews(): Promise<any> {
+    const res = await apiFetch('/analytics/fetch-views', { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Views ophalen mislukt'); }
+    return res.json();
+  },
+  async updateRpm(channelId: string, rpm: number): Promise<any> {
+    const res = await apiFetch(`/analytics/channel/${channelId}/rpm`, {
+      method: 'PATCH', body: JSON.stringify({ rpm }),
+    });
+    if (!res.ok) throw new Error('RPM bijwerken mislukt');
+    return res.json();
+  },
+};

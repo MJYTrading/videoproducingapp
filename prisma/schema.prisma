@@ -48,10 +48,12 @@ model Settings {
   genaiProImagesEnabled Boolean @default(false)
   videoDownloadApiKey   String  @default("")
 
-  // NIEUW — Extra API keys
+  // Extra API keys
   perplexityApiKey      String  @default("")
   twelveLabsApiKey      String  @default("")
   nexlevApiKey          String  @default("")
+  youtubeRapidApiKey    String  @default("")
+  pexelsApiKey          String  @default("")
 }
 
 // ─── Channel ────────────────────────────────────────────
@@ -97,6 +99,9 @@ model Channel {
   defaultVisualStyleParent   String?  @default("ai")
   referenceScriptUrls        String   @default("[]")
 
+  // Analytics — RPM (Revenue Per Mille) per kanaal
+  rpm                        Float    @default(0)
+
   // Relaties
   projects              Project[]
   ideas                 Idea[]
@@ -106,6 +111,24 @@ model Channel {
   specialEditSelections ChannelSpecialEditSelection[]
   editingKnowledge      EditingKnowledge[]
   overlayPreset         OverlayPreset? @relation(fields: [overlayPresetId], references: [id])
+  viewSnapshots         ChannelViewSnapshot[]
+}
+
+// ─── Channel View Snapshots (per-uur views tracking) ────
+
+model ChannelViewSnapshot {
+  id            String   @id @default(cuid())
+  channelId     String
+  hour          DateTime
+  totalViews    Int      @default(0)
+  viewsInHour   Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  channel       Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, hour])
+  @@index([channelId])
+  @@index([hour])
 }
 
 // ─── Project ────────────────────────────────────────────
@@ -152,7 +175,6 @@ model Project {
   channelId           String?
   driveUrl            String?
 
-  // NIEUW
   videoType           String    @default("ai")
   subtitleStyle       String    @default("classic")
 
@@ -233,9 +255,6 @@ model ResearchTemplate {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
-
-// ─── Clip Library (gedeeld over alle kanalen) ───────────
-
 
 // ─── NexLev Data Cache ─────────────────────────────────
 

@@ -108,6 +108,8 @@ export default function SettingsPage() {
               <ConnectionField id="perplexity" label="Perplexity API" description="Deep Research voor onderzoek en trending clips" field="perplexityApiKey" value={(localSettings as any).perplexityApiKey || ''} type="password" />
               <ConnectionField id="twelvelabs" label="TwelveLabs API" description="Video kwaliteitscheck bij asset zoeken" field="twelveLabsApiKey" value={(localSettings as any).twelveLabsApiKey || ''} type="password" />
               <ConnectionField id="nexlev" label="NexLev API" description="Kanaalanalyse en ideation via N8N" field="nexlevApiKey" value={(localSettings as any).nexlevApiKey || ''} type="password" />
+              <ConnectionField id="youtube-rapid" label="YouTube RapidAPI" description="YouTube Data API via RapidAPI — voor views tracking op dashboard" field="youtubeRapidApiKey" value={(localSettings as any).youtubeRapidApiKey || ''} type="password" />
+              <ConnectionField id="pexels" label="Pexels API" description="Stock foto's en video's voor B-roll" field="pexelsApiKey" value={(localSettings as any).pexelsApiKey || ''} type="password" />
               <ConnectionField id="discord-webhook" label="Discord Webhook" description="Meldingen" field="discordWebhookUrl" value={localSettings.discordWebhookUrl} />
               <ConnectionField id="discord-user" label="Discord User ID" description="Je Discord ID voor mentions" field="discordUserId" value={localSettings.discordUserId} />
             </div>

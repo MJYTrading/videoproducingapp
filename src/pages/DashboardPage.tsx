@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Tv, FileVideo, Settings, Zap, Play, X, Mic } from 'lucide-react';
+import { Plus, Tv, FileVideo, Settings, Zap, Play, X, Mic, BarChart3, DollarSign, Eye, RefreshCw, TrendingUp, Clock } from 'lucide-react';
 import { useStore } from '../store';
 import { Channel, ProjectStatus, VideoType, VIDEO_TYPE_LABELS, Language } from '../types';
 import * as api from '../api';
@@ -29,6 +29,235 @@ const LANGUAGES: { value: Language; label: string }[] = [
 ];
 
 const isAiType = (vt: string) => vt === 'ai' || vt === 'spokesperson_ai';
+
+// ── Formatteer getal (1234 → 1.2K) ──
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return n.toLocaleString('nl-NL');
+}
+
+function formatCurrency(n: number): string {
+  return '€' + n.toFixed(2);
+}
+
+// ── Analytics Panel Component ──
+
+function AnalyticsPanel() {
+  const [summary, setSummary] = useState<any>(null);
+  const [revenue, setRevenue] = useState<any>(null);
+  const [revenuePeriod, setRevenuePeriod] = useState('day');
+  const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
+  const [editRpm, setEditRpm] = useState<{ id: string; rpm: string } | null>(null);
+
+  const loadAnalytics = useCallback(async () => {
+    try {
+      const [summaryData, revenueData] = await Promise.all([
+        api.analytics.getSummary().catch(() => null),
+        api.analytics.getRevenue(revenuePeriod).catch(() => null),
+      ]);
+      if (summaryData) setSummary(summaryData);
+      if (revenueData) setRevenue(revenueData);
+    } catch {}
+    setLoading(false);
+  }, [revenuePeriod]);
+
+  useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
+
+  const handleFetchViews = async () => {
+    setFetching(true);
+    try {
+      await api.analytics.fetchViews();
+      await loadAnalytics();
+    } catch (err: any) {
+      alert(err.message || 'Views ophalen mislukt');
+    }
+    setFetching(false);
+  };
+
+  const handleSaveRpm = async () => {
+    if (!editRpm) return;
+    try {
+      await api.analytics.updateRpm(editRpm.id, parseFloat(editRpm.rpm) || 0);
+      setEditRpm(null);
+      await loadAnalytics();
+    } catch (err: any) {
+      alert(err.message || 'RPM opslaan mislukt');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="glass rounded-2xl p-6 mb-8 animate-fade-in-up">
+        <div className="flex items-center gap-2 mb-4">
+          <BarChart3 className="w-5 h-5 text-brand-400" />
+          <h2 className="section-title !mb-0">Analytics</h2>
+        </div>
+        <div className="flex items-center justify-center py-8">
+          <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-brand-500" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!summary || !summary.channels || summary.channels.length === 0) {
+    return (
+      <div className="glass rounded-2xl p-6 mb-8 animate-fade-in-up">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-brand-400" />
+            <h2 className="section-title !mb-0">Analytics</h2>
+          </div>
+          <button onClick={handleFetchViews} disabled={fetching} className="btn-secondary text-xs">
+            <RefreshCw className={`w-3.5 h-3.5 ${fetching ? 'animate-spin' : ''}`} />
+            {fetching ? 'Ophalen...' : 'Views Ophalen'}
+          </button>
+        </div>
+        <p className="text-zinc-500 text-sm text-center py-4">
+          Geen analytics data. Stel YouTube Channel IDs in bij je kanalen en een RapidAPI key in Settings, klik dan op "Views Ophalen".
+        </p>
+      </div>
+    );
+  }
+
+  // Bereken max views voor chart schaal
+  const maxViews = Math.max(1, ...summary.hourlyData.map((h: any) => h.views));
+  const channelColors = ['#6366f1', '#22d3ee', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6'];
+
+  return (
+    <div className="glass rounded-2xl p-6 mb-8 animate-fade-in-up">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-brand-400" />
+          <h2 className="section-title !mb-0">Analytics</h2>
+        </div>
+        <button onClick={handleFetchViews} disabled={fetching} className="btn-secondary text-xs">
+          <RefreshCw className={`w-3.5 h-3.5 ${fetching ? 'animate-spin' : ''}`} />
+          {fetching ? 'Ophalen...' : 'Vernieuwen'}
+        </button>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <div className="bg-surface-200/60 rounded-xl p-4 border border-white/[0.04]">
+          <div className="flex items-center gap-2 mb-1">
+            <Eye className="w-4 h-4 text-blue-400" />
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Views 24u</span>
+          </div>
+          <p className="text-xl font-bold">{formatNumber(summary.totalViews24h)}</p>
+        </div>
+        <div className="bg-surface-200/60 rounded-xl p-4 border border-white/[0.04]">
+          <div className="flex items-center gap-2 mb-1">
+            <DollarSign className="w-4 h-4 text-emerald-400" />
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Inkomsten 24u</span>
+          </div>
+          <p className="text-xl font-bold text-emerald-400">{formatCurrency(summary.totalRevenue24h)}</p>
+        </div>
+        <div className="bg-surface-200/60 rounded-xl p-4 border border-white/[0.04]">
+          <div className="flex items-center gap-2 mb-1">
+            <Clock className="w-4 h-4 text-amber-400" />
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Per uur</span>
+          </div>
+          <p className="text-xl font-bold text-amber-400">{formatCurrency(summary.revenuePerHourAvg)}</p>
+        </div>
+        <div className="bg-surface-200/60 rounded-xl p-4 border border-white/[0.04]">
+          <div className="flex items-center gap-2 mb-1">
+            <TrendingUp className="w-4 h-4 text-purple-400" />
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">
+              {revenuePeriod === 'hour' ? 'Per uur' : revenuePeriod === 'day' ? 'Per dag' : revenuePeriod === 'week' ? 'Per week' : 'Per maand'}
+            </span>
+          </div>
+          <p className="text-xl font-bold text-purple-400">{revenue ? formatCurrency(revenue.totalRevenue) : '—'}</p>
+          <div className="flex gap-1 mt-2">
+            {['hour', 'day', 'week', 'month'].map(p => (
+              <button key={p} onClick={() => setRevenuePeriod(p)}
+                className={`text-[9px] px-1.5 py-0.5 rounded ${revenuePeriod === p ? 'bg-purple-500/20 text-purple-300' : 'bg-surface-300/50 text-zinc-600'}`}>
+                {p === 'hour' ? 'Uur' : p === 'day' ? 'Dag' : p === 'week' ? 'Week' : 'Maand'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Views Chart — 24 uur staafdiagram */}
+      <div className="mb-5">
+        <p className="text-xs text-zinc-500 font-medium mb-3">Views per uur (afgelopen 24 uur)</p>
+        <div className="flex items-end gap-[3px] h-32 bg-surface-200/30 rounded-xl p-3 border border-white/[0.04]">
+          {summary.hourlyData.map((h: any, i: number) => {
+            const height = maxViews > 0 ? Math.max(2, (h.views / maxViews) * 100) : 2;
+            const hourDate = new Date(h.hour);
+            const hourLabel = hourDate.getHours().toString().padStart(2, '0') + ':00';
+            return (
+              <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                {/* Stacked bar per channel */}
+                <div className="w-full rounded-t-sm overflow-hidden flex flex-col-reverse" style={{ height: `${height}%` }}>
+                  {summary.channels.map((ch: any, ci: number) => {
+                    const chViews = h.byChannel[ch.id] || 0;
+                    const chPct = h.views > 0 ? (chViews / h.views) * 100 : 0;
+                    return (
+                      <div key={ch.id} style={{ height: `${chPct}%`, backgroundColor: channelColors[ci % channelColors.length] }}
+                        className="w-full min-h-0 transition-all" />
+                    );
+                  })}
+                  {summary.channels.length === 0 && (
+                    <div className="w-full h-full bg-brand-500/60 rounded-t-sm" />
+                  )}
+                </div>
+                {/* Tooltip */}
+                <div className="absolute bottom-full mb-2 hidden group-hover:block z-10">
+                  <div className="bg-surface-50 border border-white/[0.1] rounded-lg p-2 text-[10px] whitespace-nowrap shadow-xl">
+                    <p className="font-medium">{hourLabel}</p>
+                    <p className="text-zinc-400">{formatNumber(h.views)} views</p>
+                  </div>
+                </div>
+                {/* Uur label (elke 3 uur) */}
+                {i % 3 === 0 && (
+                  <span className="text-[8px] text-zinc-600 mt-1 font-mono">{hourLabel}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Per kanaal breakdown */}
+      <div className="space-y-2">
+        <p className="text-xs text-zinc-500 font-medium">Per kanaal</p>
+        {summary.channels.map((ch: any, ci: number) => (
+          <div key={ch.id} className="flex items-center gap-3 bg-surface-200/40 rounded-lg px-3 py-2 border border-white/[0.04]">
+            <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: channelColors[ci % channelColors.length] }} />
+            <div className="flex-1 min-w-0">
+              <span className="text-sm font-medium truncate">{ch.name}</span>
+            </div>
+            <div className="flex items-center gap-4 text-xs">
+              <span className="text-zinc-400">{formatNumber(ch.views24h)} views</span>
+              <span className="text-emerald-400 font-medium">{formatCurrency(ch.revenue24h)}</span>
+              {/* RPM */}
+              {editRpm?.id === ch.id ? (
+                <div className="flex items-center gap-1">
+                  <input type="number" step="0.01" value={editRpm.rpm}
+                    onChange={e => setEditRpm({ ...editRpm, rpm: e.target.value })}
+                    className="input-base !w-16 text-xs !py-1" autoFocus
+                    onKeyDown={e => { if (e.key === 'Enter') handleSaveRpm(); if (e.key === 'Escape') setEditRpm(null); }} />
+                  <button onClick={handleSaveRpm} className="text-emerald-400 hover:text-emerald-300 text-[10px]">OK</button>
+                </div>
+              ) : (
+                <button onClick={() => setEditRpm({ id: ch.id, rpm: String(ch.rpm) })}
+                  className="text-zinc-500 hover:text-zinc-300 transition-colors" title="RPM aanpassen">
+                  RPM: €{ch.rpm.toFixed(2)}
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Dashboard ──
 
 export default function DashboardPage() {
   const projects = useStore((state) => state.projects);
@@ -93,7 +322,6 @@ export default function DashboardPage() {
         defaultLanguage: newLanguage,
         defaultSubtitles: newSubtitles,
       });
-      // Reset
       setNewName(''); setNewDesc(''); setNewYoutubeId(''); setNewVideoType('ai'); setNewVisualStyle('3d-render');
       setNewDrive(''); setNewVoiceId(''); setNewScriptLength(8); setNewOutputFormat('youtube-1080p');
       setNewAspectRatio('landscape'); setNewLanguage('EN'); setNewSubtitles(true);
@@ -165,6 +393,9 @@ export default function DashboardPage() {
         </div>
         <button onClick={() => setShowNewChannel(true)} className="btn-primary"><Plus className="w-4 h-4" /> Nieuw Kanaal</button>
       </div>
+
+      {/* ═══ ANALYTICS PANEL ═══ */}
+      <AnalyticsPanel />
 
       {/* Queue */}
       {(runningProject || queuedProjects.length > 0) && (
@@ -243,7 +474,6 @@ export default function DashboardPage() {
               <button onClick={() => setShowNewChannel(false)} className="btn-icon !p-1.5"><X className="w-4 h-4" /></button>
             </div>
             <div className="p-6 space-y-6">
-              {/* Basis */}
               <div>
                 <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Basis Info</p>
                 <div className="grid grid-cols-2 gap-4">
@@ -253,8 +483,6 @@ export default function DashboardPage() {
                   <div><label className="block text-xs text-zinc-500 mb-1">Drive Folder ID</label><input type="text" value={newDrive} onChange={e => setNewDrive(e.target.value)} placeholder="Optioneel" className="input-base text-sm" /></div>
                 </div>
               </div>
-
-              {/* Video Type */}
               <div>
                 <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Video Type & Stijl</p>
                 <div className="grid grid-cols-2 gap-4">
@@ -266,8 +494,6 @@ export default function DashboardPage() {
                   )}
                 </div>
               </div>
-
-              {/* Defaults */}
               <div>
                 <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Standaard Instellingen</p>
                 <div className="grid grid-cols-2 gap-4">
