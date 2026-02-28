@@ -20,7 +20,7 @@ export const DEFAULT_STEPS: StepDefinition[] = [
   { stepNumber: 10, name: 'Timestamps Ophalen',         description: 'Het ophalen van de timestamps van de tekst',   executor: 'Assembly AI',      readyToUse: true },
   { stepNumber: 11, name: 'Scene Prompts',              description: 'Het genereren van image prompts',              executor: 'Elevate AI',       readyToUse: true },
   { stepNumber: 12, name: 'Assets Zoeken',              description: 'B-roll footage zoeken en downloaden',        executor: 'Sonar + TwelveLabs', readyToUse: true },
-  { stepNumber: 13, name: 'Clips Downloaden',           description: 'Het downloaden van benodigde clips',           executor: 'N8N',              readyToUse: true },
+  { stepNumber: 13, name: 'Clips Downloaden',           description: 'YouTube clips downloaden via API',            executor: 'Video Download API', readyToUse: true },
   { stepNumber: 14, name: 'Images Genereren',           description: 'Het genereren van images',                     executor: 'Elevate',          readyToUse: true },
   { stepNumber: 15, name: 'Video Scenes Genereren',     description: 'Het genereren van videos',                     executor: 'Elevate',          readyToUse: true },
   { stepNumber: 16, name: 'Director\'s Cut',            description: 'De video editing bepalen',                     executor: 'Claude Opus',      readyToUse: false },

@@ -1,28 +1,27 @@
 /**
- * Asset Search Service v3 — B-Roll Pipeline Complete Rebuild
+ * Asset Search Service v4 — Streaming Hybrid B-Roll Pipeline
  * 
- * 5-Fasen Flow:
- * 1. Script → Segmenten + Zoekqueries (LLM gebatcht)
- * 2. Database Check (AssetClip + TwelveLabs indexes)
- * 3. Nieuwe Footage Ophalen (Sonar → YouTube/Google Images)
- * 4. TwelveLabs Validatie & Indexering (parallel)
- * 5. Output (b-roll-plan.json + bestanden)
+ * Streaming Architecture:
+ * - LLM batch klaar → direct door naar DB check → Sonar → Download → Validatie
+ * - Geen wachten tot alle fasen volledig klaar zijn
  * 
- * Draait alleen bij: Trending, Documentary, Compilation, Spokesperson
- * Niet bij: AI type (die gebruikt stap 14+15)
+ * Hybrid Search:
+ * - Laag 1: Hoofdbronnen (volledige speeches, persconferenties) → TwelveLabs index
+ * - Laag 2: Gevarieerde B-roll per segment → YouTube + nieuwssites + social media
  * 
- * Parallellisatie:
- * - LLM queries: 15 segmenten per batch
- * - Sonar URL zoeken: 10 segmenten per batch, 3 parallel
- * - Video downloads: 10 parallel
- * - Image downloads: 15 parallel
- * - TwelveLabs validatie: 5 parallel
+ * API's:
+ * - Sonar-pro via Elevate Chat API (real-time web search, geen Perplexity key nodig)
+ * - video-download-api (YouTube downloads)
+ * - TwelveLabs (validatie + hergebruik index)
+ * - LLM/Sonnet (query generatie, script analyse)
+ * 
+ * Draait bij: Trending, Documentary, Compilation, Spokesperson
+ * Niet bij: AI type (stap 14+15)
  */
 
 import prisma from '../db.js';
 import { TwelveLabsService } from './twelvelabs.js';
-import { llmJsonPrompt, LLM_MODELS } from './llm.js';
-import { PerplexityService } from './perplexity.js';
+import { llmSimplePrompt, LLM_MODELS } from './llm.js';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -34,35 +33,46 @@ interface BRollConfig {
   projectDir: string;
   projectName: string;
   channelName?: string;
-  settings: any;          // Settings record uit DB
-  videoType: string;      // 'trending' | 'documentary' | 'compilation' | 'spokesperson'
+  settings: any;
+  videoType: string;
 }
 
 interface VoiceoverSegment {
   id: number;
-  timestamp_start_ms: number;
-  timestamp_end_ms: number;
+  timestamp_start: number;  // seconden
+  timestamp_end: number;    // seconden
   spoken_text: string;
-  duration_ms: number;
+  duration: number;         // seconden
 }
 
 interface BRollRequest {
   id: number;
-  timestamp_start_ms: number;
-  timestamp_end_ms: number;
+  timestamp_start: number;
+  timestamp_end: number;
   spoken_text: string;
   search_query: string;
   preferred_type: 'video' | 'image';
   context: string;
   fallback_query: string;
+  is_key_event: boolean;  // Hoort bij een hoofdbron?
+  key_event_id?: number;  // Welke hoofdbron?
+}
+
+interface KeySource {
+  id: number;
+  description: string;
+  search_query: string;
+  youtube_url?: string;
+  local_path?: string;
+  twelvelabs_video_id?: string;
 }
 
 interface BRollResult {
   id: number;
-  timestamp_start_ms: number;
-  timestamp_end_ms: number;
+  timestamp_start: number;
+  timestamp_end: number;
   asset_type: 'video' | 'image';
-  source: 'database' | 'twelvelabs_index' | 'youtube' | 'google_image' | 'failed';
+  source: 'database' | 'twelvelabs_index' | 'key_source' | 'youtube' | 'news_image' | 'skipped';
   file_path: string;
   source_url: string;
   source_start_s?: number;
@@ -74,35 +84,36 @@ interface BRollResult {
 
 interface BRollPlan {
   segments: BRollResult[];
+  key_sources: KeySource[];
   stats: {
     total_segments: number;
     from_database: number;
     from_twelve_labs: number;
-    from_youtube_new: number;
-    from_google_image: number;
-    failed: number;
+    from_key_source: number;
+    from_youtube: number;
+    from_news_image: number;
+    skipped: number;
     total_time_ms: number;
   };
-  clip_gaps: Array<{ start_ms: number; end_ms: number; clip_id: number }>;
+  clip_gaps: Array<{ start: number; end: number; clip_id: number }>;
 }
 
 // ══════════════════════════════════════════════════
 // CONSTANTS
 // ══════════════════════════════════════════════════
 
-const SEGMENT_MIN_MS = 3000;       // Min 3 seconden per segment
-const SEGMENT_MAX_MS = 6000;       // Max 6 seconden per segment
-const SEGMENT_TARGET_MS = 4500;    // Target 4.5 seconden
-const MAX_CLIP_REUSE = 3;          // Max 3x hergebruik per video
-const MIN_REUSE_GAP_MS = 120_000;  // Min 2 minuten tussen hergebruik
-const TWELVE_LABS_MIN_SCORE = 0.6; // Minimum validatie score
-const LLM_BATCH_SIZE = 15;        // Segmenten per LLM batch call
-const SONAR_BATCH_SIZE = 10;       // Segmenten per Sonar batch
-const SONAR_PARALLEL = 3;          // Parallelle Sonar batches
-const VIDEO_DOWNLOAD_PARALLEL = 10;// Parallelle video downloads
-const IMAGE_DOWNLOAD_PARALLEL = 15;// Parallelle image downloads
-const TWELVELABS_PARALLEL = 5;     // Parallelle TwelveLabs validaties
+const SEGMENT_TARGET_S = 4.5;
+const SEGMENT_MAX_S = 6;
+const MAX_CLIP_REUSE = 3;
+const MIN_REUSE_GAP_S = 120;
+const TWELVE_LABS_MIN_SCORE = 0.6;
+const LLM_BATCH_SIZE = 15;
+const SONAR_BATCH_SIZE = 3;
+const VIDEO_DOWNLOAD_PARALLEL = 8;
+const IMAGE_DOWNLOAD_PARALLEL = 12;
+const TWELVELABS_PARALLEL = 5;
 const VIDEO_DOWNLOAD_API_BASE = 'https://p.lbserver.xyz';
+const ELEVATE_CHAT_URL = 'https://chat-api.elevate.uno/v1/chat/completions';
 
 // ══════════════════════════════════════════════════
 // UTILITY: Parallel executor met concurrency limiet
@@ -122,7 +133,7 @@ async function parallelLimit<T, R>(
       try {
         results[i] = await fn(items[i], i);
       } catch (error: any) {
-        console.error(`[Parallel] Item ${i} fout: ${error.message}`);
+        console.error("[Parallel] Item " + i + " fout: " + error.message);
         results[i] = undefined as any;
       }
     }
@@ -134,6 +145,95 @@ async function parallelLimit<T, R>(
 }
 
 // ══════════════════════════════════════════════════
+// UTILITY: Sonar-pro call via Elevate Chat API
+// ══════════════════════════════════════════════════
+
+async function callSonarPro(
+  elevateApiKey: string,
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens: number = 1500
+): Promise<string> {
+  try {
+    const response = await fetch(ELEVATE_CHAT_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + elevateApiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'sonar-pro',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        max_tokens: maxTokens,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error("Sonar-pro API fout (" + response.status + "): " + text.slice(0, 200));
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || '';
+  } catch (error: any) {
+    if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+      throw new Error('Sonar-pro timeout (60s)');
+    }
+    throw error;
+  }
+}
+
+// ══════════════════════════════════════════════════
+// UTILITY: Robuuste JSON parser
+// ══════════════════════════════════════════════════
+
+function parseJsonSafe(text: string): any[] {
+  const cleaned = text.trim().replace(/^```json?\s*/g, '').replace(/\s*```$/g, '');
+
+  // Probeer array
+  const arrStart = cleaned.indexOf('[');
+  const arrEnd = cleaned.lastIndexOf(']');
+  if (arrStart !== -1 && arrEnd > arrStart) {
+    try { return JSON.parse(cleaned.slice(arrStart, arrEnd + 1)); } catch {}
+  }
+
+  // Probeer object met array property
+  const objStart = cleaned.indexOf('{');
+  const objEnd = cleaned.lastIndexOf('}');
+  if (objStart !== -1 && objEnd > objStart) {
+    try {
+      const obj = JSON.parse(cleaned.slice(objStart, objEnd + 1));
+      return obj.segments || obj.queries || obj.results || obj.data || obj.sources || obj.key_sources || [];
+    } catch {}
+  }
+
+  return [];
+}
+
+// ══════════════════════════════════════════════════
+// UTILITY: Extract URLs from text
+// ══════════════════════════════════════════════════
+
+function extractYouTubeUrls(text: string): string[] {
+  const regex = /https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/g;
+  const urls: string[] = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    urls.push('https://www.youtube.com/watch?v=' + match[1]);
+  }
+  return [...new Set(urls)];
+}
+
+function extractImageUrls(text: string): string[] {
+  const regex = /https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)/gi;
+  return [...new Set(text.match(regex) || [])];
+}
+
+// ══════════════════════════════════════════════════
 // MAIN: executeAssetSearch (Stap 12)
 // ══════════════════════════════════════════════════
 
@@ -141,457 +241,483 @@ export async function executeAssetSearch(config: BRollConfig): Promise<BRollPlan
   const startTime = Date.now();
   const { projectDir: projDir, projectName, settings } = config;
 
-  console.log(`\n${'═'.repeat(60)}`);
-  console.log(`[B-Roll] Start Asset Pipeline voor "${projectName}"`);
-  console.log(`${'═'.repeat(60)}\n`);
+  console.log("\n" + "═".repeat(60));
+  console.log("[B-Roll] Start Streaming Hybrid Pipeline voor \"" + projectName + "\"");
+  console.log("═".repeat(60) + "\n");
 
-  // Maak output directories
   const brollDir = path.join(projDir, 'assets', 'b-roll');
   await fs.mkdir(brollDir, { recursive: true });
 
-  // ─── FASE 1: Script → Segmenten + Zoekqueries ───
-  console.log(`[B-Roll] ▶ Fase 1: Script analyseren en segmenten maken...`);
-  const phase1Start = Date.now();
+  // ─── PRE-ANALYSE: Script + Taal + Hoofdbronnen ───
+  console.log("[B-Roll] ▶ Pre-analyse: Script, taal en hoofdbronnen...");
 
   const { segments, clipGaps } = await buildSegments(projDir);
-  console.log(`[B-Roll]   ${segments.length} segmenten, ${clipGaps.length} clip gaps`);
+  console.log("[B-Roll]   " + segments.length + " segmenten, " + clipGaps.length + " clip gaps");
 
-  const requests = await generateSearchQueries(segments, projDir, settings);
-  console.log(`[B-Roll]   ${requests.length} zoekqueries gegenereerd (${Date.now() - phase1Start}ms)`);
-
-  // ─── FASE 2: Database Check ───
-  console.log(`\n[B-Roll] ▶ Fase 2: Database checken (AssetClip + TwelveLabs)...`);
-  const phase2Start = Date.now();
-
-  const results: BRollResult[] = new Array(requests.length);
-  const unmatchedRequests: BRollRequest[] = [];
-  const usedClipIds = new Map<string, { count: number; lastUsedAtMs: number }>();
-
-  // Check AssetClip database
-  for (let i = 0; i < requests.length; i++) {
-    const req = requests[i];
-    const dbMatch = await searchAssetClipDB(req, usedClipIds);
-
-    if (dbMatch) {
-      results[i] = {
-        id: req.id,
-        timestamp_start_ms: req.timestamp_start_ms,
-        timestamp_end_ms: req.timestamp_end_ms,
-        asset_type: dbMatch.isVideo ? 'video' : 'image',
-        source: 'database',
-        file_path: dbMatch.localPath,
-        source_url: dbMatch.sourceUrl,
-        search_query: req.search_query,
-        asset_clip_id: dbMatch.id,
-        twelve_labs_score: dbMatch.quality || undefined,
-      };
-
-      // Track hergebruik
-      const tracking = usedClipIds.get(dbMatch.id) || { count: 0, lastUsedAtMs: 0 };
-      tracking.count++;
-      tracking.lastUsedAtMs = req.timestamp_start_ms;
-      usedClipIds.set(dbMatch.id, tracking);
-
-      // Update DB usage
-      await prisma.assetClip.update({
-        where: { id: dbMatch.id },
-        data: { timesUsed: { increment: 1 }, lastUsedAt: new Date() },
-      }).catch(() => {});
-    } else {
-      unmatchedRequests.push(req);
-    }
+  if (segments.length === 0) {
+    console.log("[B-Roll]   Geen segmenten — pipeline klaar");
+    const emptyPlan: BRollPlan = {
+      segments: [], key_sources: [], clip_gaps: clipGaps,
+      stats: { total_segments: 0, from_database: 0, from_twelve_labs: 0, from_key_source: 0, from_youtube: 0, from_news_image: 0, skipped: 0, total_time_ms: Date.now() - startTime },
+    };
+    await fs.writeFile(path.join(projDir, 'assets', 'b-roll-plan.json'), JSON.stringify(emptyPlan, null, 2));
+    return emptyPlan;
   }
 
-  // Check TwelveLabs index voor kanaal
+  // Lees script en research voor context
+  let scriptText = '';
+  try { scriptText = await fs.readFile(path.join(projDir, 'script', 'script.txt'), 'utf-8'); } catch {}
+  let researchJson: any = {};
+  try { researchJson = JSON.parse(await fs.readFile(path.join(projDir, 'research', 'research.json'), 'utf-8')); } catch {}
+
+  const llmKeys = { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey };
+
+  // Script analyse: taal, key events, hergebruik-strategie
+  const scriptAnalysis = await analyzeScript(scriptText, researchJson, llmKeys);
+  console.log("[B-Roll]   Taal: " + scriptAnalysis.language + " | Key events: " + scriptAnalysis.keySources.length + " | Max hergebruik: " + scriptAnalysis.maxReuse);
+
+  // ─── HOOFDBRONNEN OPHALEN (parallel met segment processing) ───
+  const keySources: KeySource[] = scriptAnalysis.keySources;
+  let keySourcesPromise: Promise<void> | null = null;
+
+  if (keySources.length > 0 && settings.elevateApiKey) {
+    console.log("[B-Roll]   Hoofdbronnen zoeken via Sonar-pro...");
+    keySourcesPromise = fetchKeySources(keySources, settings, brollDir);
+  }
+
+  // ─── STREAMING PIPELINE: LLM → DB → Sonar → Download ───
+  console.log("\n[B-Roll] ▶ Streaming pipeline starten...");
+
+  const allResults: BRollResult[] = new Array(segments.length);
+  const usedClipIds = new Map<string, { count: number; lastUsedAt_s: number }>();
+
+  // TwelveLabs setup
   let twelvelabs: TwelveLabsService | null = null;
   let channelIndexId: string | null = null;
-
   if (settings.twelveLabsApiKey) {
     twelvelabs = new TwelveLabsService({ apiKey: settings.twelveLabsApiKey });
     if (config.channelName) {
       try {
-        const indexName = `channel-${config.channelName.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 40)}`;
+        const indexName = ("channel-" + config.channelName.replace(/[^a-zA-Z0-9]/g, '-')).slice(0, 48);
         channelIndexId = await twelvelabs.getOrCreateIndex(indexName);
-        console.log(`[B-Roll]   TwelveLabs index: ${indexName} (${channelIndexId})`);
+      } catch (e: any) {
+        console.log("[B-Roll]   TwelveLabs index fout: " + e.message);
+      }
+    }
+  }
 
-        // Zoek in bestaande index voor ongematchte segmenten
-        const tlMatched: number[] = [];
-        for (const req of unmatchedRequests) {
+  // Maak LLM batches
+  const batches: VoiceoverSegment[][] = [];
+  for (let i = 0; i < segments.length; i += LLM_BATCH_SIZE) {
+    batches.push(segments.slice(i, i + LLM_BATCH_SIZE));
+  }
+
+  // Streaming: elke batch doorloopt direct het hele pad
+  let completedBatches = 0;
+
+  await parallelLimit(batches, 2, async (batch, batchIdx) => {
+    const batchStart = Date.now();
+    console.log("[B-Roll]   Batch " + (batchIdx + 1) + "/" + batches.length + " (" + batch.length + " segmenten)...");
+
+    // ── STAP A: LLM queries genereren ──
+    const requests = await generateBatchQueries(batch, scriptAnalysis, llmKeys);
+
+    // ── STAP B: Database check ──
+    const unmatchedRequests: BRollRequest[] = [];
+    for (const req of requests) {
+      const globalIdx = segments.findIndex(s => s.id === req.id);
+      
+      // Check key source match
+      if (req.is_key_event && req.key_event_id != null) {
+        const ks = keySources.find(k => k.id === req.key_event_id);
+        if (ks?.local_path) {
+          allResults[globalIdx] = {
+            id: req.id, timestamp_start: req.timestamp_start, timestamp_end: req.timestamp_end,
+            asset_type: 'video', source: 'key_source', file_path: ks.local_path,
+            source_url: ks.youtube_url || '', search_query: req.search_query,
+          };
+          continue;
+        }
+      }
+
+      // Check AssetClip database
+      const dbMatch = await searchAssetClipDB(req, usedClipIds, scriptAnalysis.maxReuse);
+      if (dbMatch) {
+        allResults[globalIdx] = {
+          id: req.id, timestamp_start: req.timestamp_start, timestamp_end: req.timestamp_end,
+          asset_type: dbMatch.isVideo ? 'video' : 'image', source: 'database',
+          file_path: dbMatch.localPath, source_url: dbMatch.sourceUrl,
+          search_query: req.search_query, asset_clip_id: dbMatch.id,
+        };
+        const tracking = usedClipIds.get(dbMatch.id) || { count: 0, lastUsedAt_s: 0 };
+        tracking.count++; tracking.lastUsedAt_s = req.timestamp_start;
+        usedClipIds.set(dbMatch.id, tracking);
+        continue;
+      }
+
+      // Check TwelveLabs index
+      if (twelvelabs && channelIndexId) {
+        try {
           const searchResults = await twelvelabs.searchInIndex(channelIndexId, req.search_query, 3);
-          const bestMatch = searchResults.find(r => r.score >= TWELVE_LABS_MIN_SCORE);
-
-          if (bestMatch) {
-            const idx = requests.findIndex(r => r.id === req.id);
-            results[idx] = {
-              id: req.id,
-              timestamp_start_ms: req.timestamp_start_ms,
-              timestamp_end_ms: req.timestamp_end_ms,
-              asset_type: 'video',
-              source: 'twelvelabs_index',
-              file_path: '',
-              source_url: '',
-              source_start_s: bestMatch.start,
-              source_end_s: bestMatch.end,
-              search_query: req.search_query,
-              twelve_labs_score: bestMatch.score,
+          const best = searchResults.find(r => r.score >= TWELVE_LABS_MIN_SCORE);
+          if (best) {
+            allResults[globalIdx] = {
+              id: req.id, timestamp_start: req.timestamp_start, timestamp_end: req.timestamp_end,
+              asset_type: 'video', source: 'twelvelabs_index', file_path: '',
+              source_url: '', source_start_s: best.start, source_end_s: best.end,
+              search_query: req.search_query, twelve_labs_score: best.score,
             };
-            tlMatched.push(req.id);
+            continue;
           }
-        }
-
-        // Verwijder TL-matched items uit unmatchedRequests
-        if (tlMatched.length > 0) {
-          console.log(`[B-Roll]   ${tlMatched.length} matches uit TwelveLabs index`);
-          for (const id of tlMatched) {
-            const idx = unmatchedRequests.findIndex(r => r.id === id);
-            if (idx !== -1) unmatchedRequests.splice(idx, 1);
-          }
-        }
-      } catch (e: any) {
-        console.log(`[B-Roll]   TwelveLabs index fout (niet-kritiek): ${e.message}`);
+        } catch {}
       }
-    }
-  }
 
-  const dbMatches = requests.length - unmatchedRequests.length;
-  console.log(`[B-Roll]   ${dbMatches} matches gevonden, ${unmatchedRequests.length} nog te zoeken (${Date.now() - phase2Start}ms)`);
-
-  // ─── FASE 3: Nieuwe Footage Ophalen ───
-  console.log(`\n[B-Roll] ▶ Fase 3: Nieuwe footage ophalen via Sonar + Downloads...`);
-  const phase3Start = Date.now();
-
-  if (unmatchedRequests.length > 0) {
-    // Split in video en image requests
-    const videoRequests = unmatchedRequests.filter(r => r.preferred_type === 'video');
-    const imageRequests = unmatchedRequests.filter(r => r.preferred_type === 'image');
-
-    console.log(`[B-Roll]   ${videoRequests.length} video requests, ${imageRequests.length} image requests`);
-
-    // ── Video: Sonar → YouTube URLs → Download ──
-    if (videoRequests.length > 0) {
-      const videoUrls = await fetchYouTubeUrlsViaSonar(videoRequests, settings);
-      console.log(`[B-Roll]   ${videoUrls.filter(v => v.url).length}/${videoRequests.length} YouTube URLs gevonden`);
-
-      // Download videos parallel
-      const videoDownloads = await parallelLimit(
-        videoRequests.map((req, i) => ({ req, urlInfo: videoUrls[i] })),
-        VIDEO_DOWNLOAD_PARALLEL,
-        async ({ req, urlInfo }) => {
-          if (!urlInfo?.url) return null;
-          return downloadYouTubeVideo(urlInfo.url, req, brollDir, settings);
-        }
-      );
-
-      // Map resultaten terug
-      for (let i = 0; i < videoRequests.length; i++) {
-        const req = videoRequests[i];
-        const download = videoDownloads[i];
-        const idx = requests.findIndex(r => r.id === req.id);
-
-        if (download?.filePath) {
-          results[idx] = {
-            id: req.id,
-            timestamp_start_ms: req.timestamp_start_ms,
-            timestamp_end_ms: req.timestamp_end_ms,
-            asset_type: 'video',
-            source: 'youtube',
-            file_path: download.filePath,
-            source_url: download.sourceUrl,
-            search_query: req.search_query,
-          };
-        }
-      }
+      unmatchedRequests.push(req);
     }
 
-    // ── Images: Sonar → Google Image URLs → Download ──
-    if (imageRequests.length > 0) {
-      const imageUrls = await fetchImageUrlsViaSonar(imageRequests, settings);
-      console.log(`[B-Roll]   ${imageUrls.filter(v => v.url).length}/${imageRequests.length} image URLs gevonden`);
+    // ── STAP C: Sonar-pro zoeken + Download ──
+    if (unmatchedRequests.length > 0 && settings.elevateApiKey) {
+      console.log("[B-Roll]   Unmatched: " + unmatchedRequests.length + " (video: " + unmatchedRequests.filter(r => r.preferred_type === "video").length + ", image: " + unmatchedRequests.filter(r => r.preferred_type === "image").length + ")");
+      const videoReqs = unmatchedRequests.filter(r => r.preferred_type === 'video');
+      const imageReqs = unmatchedRequests.filter(r => r.preferred_type === 'image');
 
-      // Download images parallel
-      const imageDownloads = await parallelLimit(
-        imageRequests.map((req, i) => ({ req, urlInfo: imageUrls[i] })),
-        IMAGE_DOWNLOAD_PARALLEL,
-        async ({ req, urlInfo }) => {
-          if (!urlInfo?.url) return null;
-          return downloadImage(urlInfo.url, req, brollDir);
-        }
-      );
+      // Video: Sonar → YouTube URLs → Download
+      if (videoReqs.length > 0) {
+        const videoUrls = await fetchVideoUrlsViaSonar(videoReqs, settings, scriptAnalysis.language);
+        console.log("[B-Roll]   Sonar video zoeken voor " + videoReqs.length + " segments...");
 
-      for (let i = 0; i < imageRequests.length; i++) {
-        const req = imageRequests[i];
-        const download = imageDownloads[i];
-        const idx = requests.findIndex(r => r.id === req.id);
+        console.log("[B-Roll]   Video URLs gevonden: " + videoUrls.filter(u => u?.url).length + "/" + videoReqs.length);
+        await parallelLimit(
+          videoReqs.map((req, i) => ({ req, urlInfo: videoUrls[i] })),
+          VIDEO_DOWNLOAD_PARALLEL,
+          async ({ req, urlInfo }) => {
+            const globalIdx = segments.findIndex(s => s.id === req.id);
+            if (!urlInfo?.url) return;
+            console.log("[B-Roll]   Downloading " + urlInfo.url.slice(0, 60) + "...");
 
-        if (download?.filePath) {
-          results[idx] = {
-            id: req.id,
-            timestamp_start_ms: req.timestamp_start_ms,
-            timestamp_end_ms: req.timestamp_end_ms,
-            asset_type: 'image',
-            source: 'google_image',
-            file_path: download.filePath,
-            source_url: download.sourceUrl,
-            search_query: req.search_query,
-          };
-        }
-      }
-    }
-
-    // Probeer video-failed segmenten als image fallback
-    const failedVideoReqs = videoRequests.filter(req => {
-      const idx = requests.findIndex(r => r.id === req.id);
-      return !results[idx]?.file_path;
-    });
-
-    if (failedVideoReqs.length > 0) {
-      console.log(`[B-Roll]   ${failedVideoReqs.length} mislukte video requests → probeer als image fallback...`);
-      const fallbackImageUrls = await fetchImageUrlsViaSonar(failedVideoReqs, settings);
-
-      const fallbackDownloads = await parallelLimit(
-        failedVideoReqs.map((req, i) => ({ req, urlInfo: fallbackImageUrls[i] })),
-        IMAGE_DOWNLOAD_PARALLEL,
-        async ({ req, urlInfo }) => {
-          if (!urlInfo?.url) return null;
-          return downloadImage(urlInfo.url, req, brollDir);
-        }
-      );
-
-      for (let i = 0; i < failedVideoReqs.length; i++) {
-        const req = failedVideoReqs[i];
-        const download = fallbackDownloads[i];
-        const idx = requests.findIndex(r => r.id === req.id);
-
-        if (download?.filePath) {
-          results[idx] = {
-            id: req.id,
-            timestamp_start_ms: req.timestamp_start_ms,
-            timestamp_end_ms: req.timestamp_end_ms,
-            asset_type: 'image',
-            source: 'google_image',
-            file_path: download.filePath,
-            source_url: download.sourceUrl,
-            search_query: req.fallback_query || req.search_query,
-          };
-        }
-      }
-    }
-  }
-
-  console.log(`[B-Roll]   Downloads klaar (${Date.now() - phase3Start}ms)`);
-
-  // ─── FASE 4: TwelveLabs Validatie ───
-  console.log(`\n[B-Roll] ▶ Fase 4: TwelveLabs validatie (parallel)...`);
-  const phase4Start = Date.now();
-
-  if (twelvelabs) {
-    // Verzamel alle nieuw gedownloade video's voor validatie
-    const videosToValidate = results
-      .filter(r => r && r.file_path && r.asset_type === 'video' && r.source !== 'database' && r.source !== 'twelvelabs_index')
-      .map(r => ({
-        id: r.id,
-        filePath: r.file_path,
-        searchQuery: r.search_query,
-      }));
-
-    if (videosToValidate.length > 0) {
-      console.log(`[B-Roll]   ${videosToValidate.length} video's valideren...`);
-
-      // Maak project-specifieke index voor validatie + hergebruik
-      const projectIndexName = `broll-${projectName.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 40)}`;
-      let projectIndexId: string | null = null;
-
-      try {
-        projectIndexId = await twelvelabs.getOrCreateIndex(projectIndexName);
-      } catch (e: any) {
-        console.log(`[B-Roll]   TwelveLabs index aanmaken mislukt: ${e.message}`);
-      }
-
-      if (projectIndexId) {
-        // Parallel validatie
-        const validationResults = await parallelLimit(
-          videosToValidate,
-          TWELVELABS_PARALLEL,
-          async (video) => {
-            try {
-              const result = await twelvelabs!.validateLocalVideo({
-                filePath: video.filePath,
-                expectedDescription: video.searchQuery,
-                projectIndexId: projectIndexId!,
-                cleanup: false, // Bewaar in index voor hergebruik
-              });
-              return { id: video.id, ...result };
-            } catch (e: any) {
-              console.log(`[B-Roll]   Validatie ${video.id} fout: ${e.message}`);
-              return { id: video.id, score: 0.5, description: '', matches: true, tags: [] };
+            const download = await downloadYouTubeVideo(urlInfo.url, req, brollDir, settings);
+            if (download?.filePath) {
+              allResults[globalIdx] = {
+                id: req.id, timestamp_start: req.timestamp_start, timestamp_end: req.timestamp_end,
+                asset_type: 'video', source: 'youtube', file_path: download.filePath,
+                source_url: download.sourceUrl, search_query: req.search_query,
+              };
             }
           }
         );
+      }
 
-        // Update scores in results
-        for (const validation of validationResults) {
-          if (!validation) continue;
-          const result = results.find(r => r?.id === validation.id);
-          if (result) {
-            result.twelve_labs_score = validation.score;
-            if (!validation.matches && validation.score < TWELVE_LABS_MIN_SCORE) {
-              console.log(`[B-Roll]   Segment ${validation.id}: lage score (${validation.score.toFixed(2)}) — markeer als zwak`);
+      // Images: Sonar → News image URLs → Download
+      if (imageReqs.length > 0) {
+        const imageUrls = await fetchImageUrlsViaSonar(imageReqs, settings, scriptAnalysis.language);
+
+        await parallelLimit(
+          imageReqs.map((req, i) => ({ req, urlInfo: imageUrls[i] })),
+          IMAGE_DOWNLOAD_PARALLEL,
+          async ({ req, urlInfo }) => {
+            const globalIdx = segments.findIndex(s => s.id === req.id);
+            if (!urlInfo?.url) return;
+            console.log("[B-Roll]   Downloading " + urlInfo.url.slice(0, 60) + "...");
+
+            const download = await downloadImage(urlInfo.url, req, brollDir);
+            if (download?.filePath) {
+              allResults[globalIdx] = {
+                id: req.id, timestamp_start: req.timestamp_start, timestamp_end: req.timestamp_end,
+                asset_type: 'image', source: 'news_image', file_path: download.filePath,
+                source_url: download.sourceUrl, search_query: req.search_query,
+              };
             }
           }
-        }
+        );
+      }
+
+      // Fallback: mislukte video requests → probeer als image
+      const failedVideoReqs = videoReqs.filter(req => {
+        const globalIdx = segments.findIndex(s => s.id === req.id);
+        return !allResults[globalIdx]?.file_path;
+      });
+
+      if (failedVideoReqs.length > 0) {
+        const fallbackUrls = await fetchImageUrlsViaSonar(failedVideoReqs, settings, scriptAnalysis.language);
+        await parallelLimit(
+          failedVideoReqs.map((req, i) => ({ req, urlInfo: fallbackUrls[i] })),
+          IMAGE_DOWNLOAD_PARALLEL,
+          async ({ req, urlInfo }) => {
+            const globalIdx = segments.findIndex(s => s.id === req.id);
+            if (!urlInfo?.url) return;
+            console.log("[B-Roll]   Downloading " + urlInfo.url.slice(0, 60) + "...");
+            const download = await downloadImage(urlInfo.url, req, brollDir);
+            if (download?.filePath) {
+              allResults[globalIdx] = {
+                id: req.id, timestamp_start: req.timestamp_start, timestamp_end: req.timestamp_end,
+                asset_type: 'image', source: 'news_image', file_path: download.filePath,
+                source_url: download.sourceUrl, search_query: req.fallback_query || req.search_query,
+              };
+            }
+          }
+        );
       }
     }
 
-    // Upload ook naar kanaal-index voor toekomstig hergebruik
-    if (channelIndexId) {
-      const newVideos = results.filter(r => r && r.file_path && r.asset_type === 'video' && r.source === 'youtube');
-      if (newVideos.length > 0) {
-        console.log(`[B-Roll]   ${newVideos.length} video's uploaden naar kanaal-index voor hergebruik...`);
-        // Fire and forget — dit hoeft niet te blokkeren
-        parallelLimit(newVideos.slice(0, 20), 3, async (video) => {
+    completedBatches++;
+    const found = requests.filter(r => {
+      const idx = segments.findIndex(s => s.id === r.id);
+      return allResults[idx]?.file_path || allResults[idx]?.source === 'twelvelabs_index';
+    }).length;
+    console.log("[B-Roll]   Batch " + (batchIdx + 1) + " klaar: " + found + "/" + requests.length + " gevonden (" + (Date.now() - batchStart) + "ms)");
+  });
+
+  // Wacht op hoofdbronnen als die nog bezig zijn
+  if (keySourcesPromise) {
+    console.log("[B-Roll]   Wachten op hoofdbronnen...");
+    await keySourcesPromise;
+  }
+
+  // ─── TwelveLabs Validatie (optioneel, voor nieuwe video's) ───
+  if (twelvelabs) {
+    const videosToValidate = allResults
+      .filter(r => r && r.file_path && r.asset_type === 'video' && r.source !== 'database' && r.source !== 'twelvelabs_index')
+      .slice(0, 30);
+
+    if (videosToValidate.length > 0) {
+      console.log("[B-Roll]   " + videosToValidate.length + " video's valideren via TwelveLabs...");
+      const projectIndexName = ("broll-" + projectName.replace(/[^a-zA-Z0-9]/g, '-')).slice(0, 48);
+      try {
+        const projectIndexId = await twelvelabs.getOrCreateIndex(projectIndexName);
+        await parallelLimit(videosToValidate, TWELVELABS_PARALLEL, async (video) => {
           try {
-            await twelvelabs!.uploadVideoFile(channelIndexId!, video.file_path);
+            const result = await twelvelabs!.validateLocalVideo({
+              filePath: video.file_path, expectedDescription: video.search_query,
+              projectIndexId, cleanup: false,
+            });
+            video.twelve_labs_score = result.score;
           } catch {}
+        });
+      } catch {}
+    }
+
+    // Upload naar kanaal-index (fire and forget)
+    if (channelIndexId) {
+      const newVideos = allResults.filter(r => r && r.file_path && r.asset_type === 'video' && r.source === 'youtube').slice(0, 20);
+      if (newVideos.length > 0) {
+        parallelLimit(newVideos, 3, async (video) => {
+          try { await twelvelabs!.uploadVideoFile(channelIndexId!, video.file_path); } catch {}
           return null;
         }).catch(() => {});
       }
     }
-  } else {
-    console.log(`[B-Roll]   Geen TwelveLabs API key — validatie overgeslagen`);
   }
 
-  console.log(`[B-Roll]   Validatie klaar (${Date.now() - phase4Start}ms)`);
+  // ─── OUTPUT ───
+  console.log("\n[B-Roll] ▶ Output genereren...");
 
-  // ─── FASE 5: Output ───
-  console.log(`\n[B-Roll] ▶ Fase 5: Output genereren...`);
-
-  // Vul lege results (failed)
-  for (let i = 0; i < requests.length; i++) {
-    if (!results[i]) {
-      const req = requests[i];
-      results[i] = {
-        id: req.id,
-        timestamp_start_ms: req.timestamp_start_ms,
-        timestamp_end_ms: req.timestamp_end_ms,
-        asset_type: req.preferred_type,
-        source: 'failed',
-        file_path: '',
-        source_url: '',
-        search_query: req.search_query,
+  // Vul lege results → skipped
+  for (let i = 0; i < segments.length; i++) {
+    if (!allResults[i]) {
+      const seg = segments[i];
+      allResults[i] = {
+        id: seg.id, timestamp_start: seg.timestamp_start, timestamp_end: seg.timestamp_end,
+        asset_type: 'video', source: 'skipped', file_path: '', source_url: '',
+        search_query: '',
       };
     }
   }
 
   // Sla nieuwe assets op in database
-  const newAssets = results.filter(r => r.file_path && r.source !== 'database' && r.source !== 'twelvelabs_index' && r.source !== 'failed');
-  for (const asset of newAssets) {
-    try {
-      const clip = await prisma.assetClip.create({
-        data: {
-          sourceUrl: asset.source_url || '',
-          videoId: '',
-          title: asset.search_query.slice(0, 100),
-          startTime: String(Math.floor((asset.source_start_s || 0))),
-          endTime: String(Math.floor((asset.source_end_s || 0))),
-          localPath: asset.file_path,
-          tags: JSON.stringify([asset.search_query]),
-          description: asset.search_query,
-          category: asset.asset_type === 'video' ? 'b-roll-video' : 'b-roll-image',
-          subjects: '[]',
-          mood: null,
-          quality: asset.twelve_labs_score || null,
-        },
-      });
-      asset.asset_clip_id = clip.id;
-    } catch (err: any) {
-      // Niet-kritiek
+  for (const asset of allResults) {
+    if (asset.file_path && asset.source !== 'database' && asset.source !== 'twelvelabs_index' && asset.source !== 'skipped') {
+      try {
+        const clip = await prisma.assetClip.create({
+          data: {
+            sourceUrl: asset.source_url || '', videoId: '',
+            title: asset.search_query.slice(0, 100),
+            startTime: String(Math.floor(asset.source_start_s || 0)),
+            endTime: String(Math.floor(asset.source_end_s || 0)),
+            localPath: asset.file_path,
+            tags: JSON.stringify([asset.search_query]),
+            description: asset.search_query,
+            category: asset.asset_type === 'video' ? 'b-roll-video' : 'b-roll-image',
+            subjects: '[]', mood: null,
+            quality: asset.twelve_labs_score || null,
+          },
+        });
+        asset.asset_clip_id = clip.id;
+      } catch {}
     }
   }
 
-  // Bouw stats
   const totalTime = Date.now() - startTime;
   const plan: BRollPlan = {
-    segments: results.filter(r => r != null),
+    segments: allResults.filter(r => r != null),
+    key_sources: keySources,
     stats: {
-      total_segments: results.length,
-      from_database: results.filter(r => r?.source === 'database').length,
-      from_twelve_labs: results.filter(r => r?.source === 'twelvelabs_index').length,
-      from_youtube_new: results.filter(r => r?.source === 'youtube').length,
-      from_google_image: results.filter(r => r?.source === 'google_image').length,
-      failed: results.filter(r => r?.source === 'failed').length,
+      total_segments: allResults.length,
+      from_database: allResults.filter(r => r?.source === 'database').length,
+      from_twelve_labs: allResults.filter(r => r?.source === 'twelvelabs_index').length,
+      from_key_source: allResults.filter(r => r?.source === 'key_source').length,
+      from_youtube: allResults.filter(r => r?.source === 'youtube').length,
+      from_news_image: allResults.filter(r => r?.source === 'news_image').length,
+      skipped: allResults.filter(r => r?.source === 'skipped').length,
       total_time_ms: totalTime,
     },
     clip_gaps: clipGaps,
   };
 
-  // Schrijf output
-  const planPath = path.join(projDir, 'assets', 'b-roll-plan.json');
-  await fs.writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+  await fs.writeFile(path.join(projDir, 'assets', 'b-roll-plan.json'), JSON.stringify(plan, null, 2), 'utf-8');
 
-  console.log(`\n${'═'.repeat(60)}`);
-  console.log(`[B-Roll] ✓ Pipeline klaar in ${(totalTime / 1000).toFixed(1)}s`);
-  console.log(`[B-Roll]   Totaal: ${plan.stats.total_segments} segmenten`);
-  console.log(`[B-Roll]   Database: ${plan.stats.from_database} | TwelveLabs: ${plan.stats.from_twelve_labs}`);
-  console.log(`[B-Roll]   YouTube: ${plan.stats.from_youtube_new} | Images: ${plan.stats.from_google_image}`);
-  console.log(`[B-Roll]   Mislukt: ${plan.stats.failed}`);
-  console.log(`${'═'.repeat(60)}\n`);
+  console.log("\n" + "═".repeat(60));
+  console.log("[B-Roll] ✓ Pipeline klaar in " + (totalTime / 1000).toFixed(1) + "s");
+  console.log("[B-Roll]   Totaal: " + plan.stats.total_segments);
+  console.log("[B-Roll]   DB: " + plan.stats.from_database + " | TL: " + plan.stats.from_twelve_labs + " | Key: " + plan.stats.from_key_source);
+  console.log("[B-Roll]   YT: " + plan.stats.from_youtube + " | IMG: " + plan.stats.from_news_image + " | Skip: " + plan.stats.skipped);
+  console.log("═".repeat(60) + "\n");
 
   return plan;
 }
 
 // ══════════════════════════════════════════════════
-// FASE 1: Build Segments from Timestamps
+// SCRIPT ANALYSE: taal, key events, strategie
+// ══════════════════════════════════════════════════
+
+async function analyzeScript(
+  scriptText: string,
+  researchJson: any,
+  llmKeys: any
+): Promise<{
+  language: string;
+  keySources: KeySource[];
+  maxReuse: number;
+  topicSummary: string;
+}> {
+  const defaultResult = { language: 'en', keySources: [], maxReuse: 3, topicSummary: '' };
+  if (!scriptText) return defaultResult;
+
+  try {
+    const scriptPreview = scriptText.slice(0, 3000);
+    const title = researchJson.title || researchJson.topic || '';
+
+    const rawResponse = await llmSimplePrompt(
+      llmKeys,
+      "You analyze video scripts. Return ONLY JSON, no other text.",
+      "Analyze this script and return JSON:\n" +
+      "1. language: the script language code (en, nl, de, etc.)\n" +
+      "2. topic_summary: 1-sentence summary of the video topic\n" +
+      "3. key_events: array of 2-5 major events/sources mentioned that would have dedicated video footage (press conferences, speeches, incidents, protests etc). Each with: id (1-5), description, search_query (YouTube search terms).\n" +
+      "4. max_reuse: how many times a single source video can be reused (2-5, more for narrow topics, less for broad topics)\n\n" +
+      "Title: " + title + "\n\nScript:\n" + scriptPreview + "\n\nReturn JSON only: {\"language\":\"en\",\"topic_summary\":\"...\",\"key_events\":[{\"id\":1,\"description\":\"...\",\"search_query\":\"...\"}],\"max_reuse\":3}",
+      { model: LLM_MODELS.SONNET, maxTokens: 2000, temperature: 0.3 }
+    );
+
+    const parsed = parseJsonSafe(rawResponse);
+    // parseJsonSafe returns array, but we expect object — try direct parse
+    let analysis: any;
+    try {
+      const cleaned = rawResponse.trim().replace(/^```json?\s*/g, '').replace(/\s*```$/g, '');
+      const objStart = cleaned.indexOf('{');
+      const objEnd = cleaned.lastIndexOf('}');
+      if (objStart !== -1 && objEnd > objStart) {
+        analysis = JSON.parse(cleaned.slice(objStart, objEnd + 1));
+      }
+    } catch {}
+
+    if (!analysis) return defaultResult;
+
+    return {
+      language: analysis.language || 'en',
+      topicSummary: analysis.topic_summary || '',
+      maxReuse: Math.min(Math.max(analysis.max_reuse || 3, 1), 10),
+      keySources: (analysis.key_events || []).map((e: any, i: number) => ({
+        id: e.id || i + 1,
+        description: e.description || '',
+        search_query: e.search_query || '',
+      })),
+    };
+  } catch (error: any) {
+    console.log("[B-Roll]   Script analyse fout: " + error.message);
+    return defaultResult;
+  }
+}
+
+// ══════════════════════════════════════════════════
+// HOOFDBRONNEN OPHALEN via Sonar-pro
+// ══════════════════════════════════════════════════
+
+async function fetchKeySources(
+  keySources: KeySource[],
+  settings: any,
+  brollDir: string,
+): Promise<void> {
+  if (!settings.elevateApiKey || keySources.length === 0) return;
+
+  await parallelLimit(keySources, 3, async (source) => {
+    try {
+      const response = await callSonarPro(
+        settings.elevateApiKey,
+        "You find YouTube video URLs. Return only YouTube URLs, one per line.",
+        "Find the full YouTube video for: " + source.search_query + ". " +
+        "Prefer: full unedited footage, C-SPAN, official channels, news networks. " +
+        "Return the best YouTube URL only.",
+        500
+      );
+
+      const urls = extractYouTubeUrls(response);
+      if (urls.length > 0) {
+        source.youtube_url = urls[0];
+        console.log("[B-Roll]   Key source " + source.id + ": " + urls[0]);
+
+        // Download
+        const outputPath = path.join(brollDir, "key-source-" + source.id + ".mp4");
+        const download = await downloadVideoFile(urls[0], outputPath, settings);
+        if (download) {
+          source.local_path = outputPath;
+        }
+      }
+    } catch (error: any) {
+      console.log("[B-Roll]   Key source " + source.id + " fout: " + error.message);
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════
+// BUILD SEGMENTS from Timestamps
 // ══════════════════════════════════════════════════
 
 async function buildSegments(projDir: string): Promise<{
   segments: VoiceoverSegment[];
-  clipGaps: Array<{ start_ms: number; end_ms: number; clip_id: number }>;
+  clipGaps: Array<{ start: number; end: number; clip_id: number }>;
 }> {
-  // Lees timestamps
   const timestampsPath = path.join(projDir, 'audio', 'timestamps.json');
   const timestampsRaw = JSON.parse(await fs.readFile(timestampsPath, 'utf-8'));
   const words: Array<{ text: string; start: number; end: number }> = timestampsRaw.words || [];
 
-  if (words.length === 0) {
-    throw new Error('timestamps.json bevat geen woorden');
-  }
+  if (words.length === 0) throw new Error('timestamps.json bevat geen woorden');
 
-  // Lees clip-positions (optioneel)
-  let clipGaps: Array<{ start_ms: number; end_ms: number; clip_id: number }> = [];
+  let clipGaps: Array<{ start: number; end: number; clip_id: number }> = [];
   try {
     const clipPosPath = path.join(projDir, 'audio', 'clip-positions.json');
     const clipData = JSON.parse(await fs.readFile(clipPosPath, 'utf-8'));
     clipGaps = (clipData.clips || []).map((c: any) => ({
-      start_ms: c.timeline_start || c.voiceover_pause_at || 0,
-      end_ms: c.timeline_end || (c.timeline_start + c.clip_duration * 1000) || 0,
+      start: c.timeline_start || c.voiceover_pause_at || 0,
+      end: c.timeline_end || (c.timeline_start + (c.clip_duration || 0)) || 0,
       clip_id: c.clip_id || 0,
     }));
-  } catch {
-    // Geen clip-positions, dat is OK
-  }
+  } catch {}
 
-  // Groepeer woorden in segmenten van 3-6 seconden
   const segments: VoiceoverSegment[] = [];
   let segmentId = 1;
   let currentWords: typeof words = [];
   let segmentStart = words[0]?.start || 0;
 
   for (const word of words) {
-    // Check of dit woord in een clip-gap zit
-    const inClipGap = clipGaps.some(g =>
-      word.start >= g.start_ms && word.start <= g.end_ms
-    );
+    const inClipGap = clipGaps.some(g => word.start >= g.start && word.start <= g.end);
 
     if (inClipGap) {
-      // Flush huidige segment als er woorden zijn
       if (currentWords.length > 0) {
         const lastWord = currentWords[currentWords.length - 1];
         segments.push({
-          id: segmentId++,
-          timestamp_start_ms: segmentStart,
-          timestamp_end_ms: lastWord.end,
+          id: segmentId++, timestamp_start: segmentStart, timestamp_end: lastWord.end,
           spoken_text: currentWords.map(w => w.text).join(' '),
-          duration_ms: lastWord.end - segmentStart,
+          duration: lastWord.end - segmentStart,
         });
         currentWords = [];
       }
@@ -602,182 +728,122 @@ async function buildSegments(projDir: string): Promise<{
     currentWords.push(word);
     const segmentDuration = word.end - segmentStart;
 
-    // Segment afsluiten als we de target duur bereiken
-    if (segmentDuration >= SEGMENT_TARGET_MS && currentWords.length >= 3) {
+    if (segmentDuration >= SEGMENT_TARGET_S && currentWords.length >= 3) {
       segments.push({
-        id: segmentId++,
-        timestamp_start_ms: segmentStart,
-        timestamp_end_ms: word.end,
+        id: segmentId++, timestamp_start: segmentStart, timestamp_end: word.end,
         spoken_text: currentWords.map(w => w.text).join(' '),
-        duration_ms: word.end - segmentStart,
+        duration: word.end - segmentStart,
       });
       currentWords = [];
       segmentStart = word.end;
-    }
-    // Forceer afsluiting bij max duur
-    else if (segmentDuration >= SEGMENT_MAX_MS) {
+    } else if (segmentDuration >= SEGMENT_MAX_S) {
       segments.push({
-        id: segmentId++,
-        timestamp_start_ms: segmentStart,
-        timestamp_end_ms: word.end,
+        id: segmentId++, timestamp_start: segmentStart, timestamp_end: word.end,
         spoken_text: currentWords.map(w => w.text).join(' '),
-        duration_ms: word.end - segmentStart,
+        duration: word.end - segmentStart,
       });
       currentWords = [];
       segmentStart = word.end;
     }
   }
 
-  // Flush resterende woorden
   if (currentWords.length > 0) {
     const lastWord = currentWords[currentWords.length - 1];
     segments.push({
-      id: segmentId++,
-      timestamp_start_ms: segmentStart,
-      timestamp_end_ms: lastWord.end,
+      id: segmentId++, timestamp_start: segmentStart, timestamp_end: lastWord.end,
       spoken_text: currentWords.map(w => w.text).join(' '),
-      duration_ms: lastWord.end - segmentStart,
+      duration: lastWord.end - segmentStart,
     });
   }
 
-  // Filter te korte segmenten (minder dan 1.5 sec)
-  const filteredSegments = segments.filter(seg => seg.duration_ms >= 1500);
-
-  console.log(`[B-Roll]   Woorden: ${words.length} → Segmenten: ${filteredSegments.length} (${segments.length - filteredSegments.length} te kort verwijderd)`);
+  const filteredSegments = segments.filter(seg => seg.duration >= 1.5);
+  console.log("[B-Roll]   Woorden: " + words.length + " → Segmenten: " + filteredSegments.length + " (" + (segments.length - filteredSegments.length) + " te kort verwijderd)");
 
   return { segments: filteredSegments, clipGaps };
 }
 
 // ══════════════════════════════════════════════════
-// FASE 1b: LLM Search Query Generation (gebatcht)
+// LLM: Generate queries for a batch
 // ══════════════════════════════════════════════════
 
-async function generateSearchQueries(
-  segments: VoiceoverSegment[],
-  projDir: string,
-  settings: any,
+async function generateBatchQueries(
+  batch: VoiceoverSegment[],
+  scriptAnalysis: { language: string; keySources: KeySource[]; topicSummary: string },
+  llmKeys: any
 ): Promise<BRollRequest[]> {
-  const llmKeys = { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey };
+  const keyEventsList = scriptAnalysis.keySources.map(k => "ID " + k.id + ": " + k.description).join('; ');
 
-  // Lees research context (optioneel)
-  let researchContext = '';
   try {
-    const researchPath = path.join(projDir, 'research', 'research.json');
-    const research = JSON.parse(await fs.readFile(researchPath, 'utf-8'));
-    researchContext = `Video topic: ${research.title || research.topic || 'unknown'}. ${(research.summary || research.description || '').slice(0, 500)}`;
-  } catch {}
+    const segmentList = batch.map(s =>
+      "ID " + s.id + ": \"" + s.spoken_text + "\" (" + s.timestamp_start.toFixed(1) + "s - " + s.timestamp_end.toFixed(1) + "s)"
+    ).join('\n');
 
-  // Lees script voor extra context
-  let scriptContext = '';
-  try {
-    const scriptPath = path.join(projDir, 'script', 'script.txt');
-    const script = await fs.readFile(scriptPath, 'utf-8');
-    scriptContext = script.slice(0, 1000);
-  } catch {}
+    const rawResponse = await llmSimplePrompt(
+      llmKeys,
+      "You are an expert video editor generating B-roll search queries for a " + scriptAnalysis.language + " video.\n" +
+      "The video is about: " + scriptAnalysis.topicSummary + "\n" +
+      (keyEventsList ? "Key events in this video: " + keyEventsList + "\n" : "") +
+      "\nRULES:\n" +
+      "- Search queries must be visually descriptive, 3-8 words\n" +
+      "- Language of visual on-screen text must match: " + scriptAnalysis.language + "\n" +
+      "- Prefer video for: actions, events, locations, people, footage\n" +
+      "- Use image ONLY for: data, charts, graphs, logos, documents\n" +
+      "- If a segment relates to a key event, set is_key_event=true and key_event_id\n" +
+      "- Fallback query should be broader (2-4 words)\n" +
+      "\nReturn ONLY a JSON array:\n" +
+      "[{\"id\":1,\"search_query\":\"...\",\"preferred_type\":\"video\",\"context\":\"...\",\"fallback_query\":\"...\",\"is_key_event\":false,\"key_event_id\":null}]",
+      "Segments:\n" + segmentList + "\n\nGenerate for ALL " + batch.length + " segments. JSON array only.",
+      { model: LLM_MODELS.SONNET, maxTokens: 4096, temperature: 0.4 }
+    );
 
-  // Batch LLM calls
-  const batches: VoiceoverSegment[][] = [];
-  for (let i = 0; i < segments.length; i += LLM_BATCH_SIZE) {
-    batches.push(segments.slice(i, i + LLM_BATCH_SIZE));
+    const parsed = parseJsonSafe(rawResponse);
+
+    return batch.map(seg => {
+      const match = parsed.find((p: any) => p.id === seg.id) || parsed[batch.indexOf(seg)];
+      return {
+        id: seg.id,
+        timestamp_start: seg.timestamp_start,
+        timestamp_end: seg.timestamp_end,
+        spoken_text: seg.spoken_text,
+        search_query: match?.search_query || seg.spoken_text.split(/\s+/).slice(0, 6).join(' '),
+        preferred_type: match?.preferred_type === 'image' ? 'image' as const : 'video' as const,
+        context: match?.context || '',
+        fallback_query: match?.fallback_query || seg.spoken_text.split(/\s+/).slice(0, 3).join(' '),
+        is_key_event: !!match?.is_key_event,
+        key_event_id: match?.key_event_id || undefined,
+      };
+    });
+  } catch (error: any) {
+    console.log("[B-Roll]   LLM batch fout: " + error.message + " — fallback queries");
+    return batch.map(seg => ({
+      id: seg.id, timestamp_start: seg.timestamp_start, timestamp_end: seg.timestamp_end,
+      spoken_text: seg.spoken_text,
+      search_query: seg.spoken_text.split(/\s+/).slice(0, 6).join(' '),
+      preferred_type: 'video' as const, context: 'Fallback',
+      fallback_query: seg.spoken_text.split(/\s+/).slice(0, 3).join(' '),
+      is_key_event: false,
+    }));
   }
-
-  const allRequests: BRollRequest[] = [];
-
-  for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-    const batch = batches[batchIdx];
-    console.log(`[B-Roll]   LLM batch ${batchIdx + 1}/${batches.length} (${batch.length} segmenten)...`);
-
-    try {
-      const segmentList = batch.map(s =>
-        `ID ${s.id}: "${s.spoken_text}" (${s.timestamp_start_ms}ms - ${s.timestamp_end_ms}ms)`
-      ).join('\n');
-
-      const result = await llmJsonPrompt<any>(
-        llmKeys,
-        `You are an expert video editor generating B-roll search queries.
-For each voiceover segment, generate a visual search query and determine if video or image is more appropriate.
-
-RULES:
-- Search queries must be in ENGLISH, 3-8 words, visually descriptive
-- Prefer "video" for: actions, people, events, locations, emotions, environments
-- Use "image" ONLY for: data/statistics, charts, graphs, documents, specific logos
-- Fallback query should be broader (2-4 words)
-- Context explains why this B-roll is needed
-
-Return ONLY a JSON array, one object per segment:
-[{"id": 1, "search_query": "...", "preferred_type": "video", "context": "...", "fallback_query": "..."}]`,
-        `Video context: ${researchContext || scriptContext || 'Unknown topic'}
-
-Segments to process:
-${segmentList}
-
-Generate search queries for ALL ${batch.length} segments. Return JSON array only.`,
-        { model: LLM_MODELS.SONNET, maxTokens: 4096, temperature: 0.4 }
-      );
-
-      // Parse result — kan array of object met array zijn
-      const parsed: any[] = Array.isArray(result) ? result : (result.segments || result.queries || []);
-
-      for (const seg of batch) {
-        const match = parsed.find((p: any) => p.id === seg.id) || parsed[batch.indexOf(seg)];
-        allRequests.push({
-          id: seg.id,
-          timestamp_start_ms: seg.timestamp_start_ms,
-          timestamp_end_ms: seg.timestamp_end_ms,
-          spoken_text: seg.spoken_text,
-          search_query: match?.search_query || seg.spoken_text.split(/\s+/).slice(0, 6).join(' '),
-          preferred_type: match?.preferred_type === 'image' ? 'image' : 'video',
-          context: match?.context || '',
-          fallback_query: match?.fallback_query || seg.spoken_text.split(/\s+/).slice(0, 3).join(' '),
-        });
-      }
-    } catch (error: any) {
-      console.log(`[B-Roll]   LLM batch ${batchIdx + 1} fout: ${error.message} — gebruik fallback queries`);
-      for (const seg of batch) {
-        allRequests.push({
-          id: seg.id,
-          timestamp_start_ms: seg.timestamp_start_ms,
-          timestamp_end_ms: seg.timestamp_end_ms,
-          spoken_text: seg.spoken_text,
-          search_query: seg.spoken_text.split(/\s+/).slice(0, 6).join(' '),
-          preferred_type: 'video',
-          context: 'Fallback — LLM fout',
-          fallback_query: seg.spoken_text.split(/\s+/).slice(0, 3).join(' '),
-        });
-      }
-    }
-  }
-
-  // Schrijf requests naar disk voor debugging
-  const requestsPath = path.join(projDir, 'assets', 'b-roll-requests.json');
-  await fs.writeFile(requestsPath, JSON.stringify({
-    segments: allRequests,
-    total_segments: allRequests.length,
-    clip_gaps_excluded: true,
-  }, null, 2), 'utf-8');
-
-  return allRequests;
 }
 
 // ══════════════════════════════════════════════════
-// FASE 2: Database Search (AssetClip)
+// DATABASE SEARCH (AssetClip)
 // ══════════════════════════════════════════════════
 
 async function searchAssetClipDB(
   req: BRollRequest,
-  usedClips: Map<string, { count: number; lastUsedAtMs: number }>
+  usedClips: Map<string, { count: number; lastUsedAt_s: number }>,
+  maxReuse: number
 ): Promise<any | null> {
   try {
     const queryWords = req.search_query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
     if (queryWords.length === 0) return null;
 
-    // Zoek op beschrijving en tags
     const clips = await prisma.assetClip.findMany({
       where: {
         AND: [
           { localPath: { not: '' } },
-          {
-            OR: queryWords.slice(0, 5).map(word => ({
+          { OR: queryWords.slice(0, 5).map(word => ({
               OR: [
                 { description: { contains: word } },
                 { tags: { contains: word } },
@@ -791,122 +857,90 @@ async function searchAssetClipDB(
       take: 10,
     });
 
-    if (clips.length === 0) return null;
-
-    // Score en filter
     for (const clip of clips) {
       const tracking = usedClips.get(clip.id);
-
-      // Check hergebruik-regels
       if (tracking) {
-        if (tracking.count >= MAX_CLIP_REUSE) continue;
-        if (req.timestamp_start_ms - tracking.lastUsedAtMs < MIN_REUSE_GAP_MS) continue;
+        if (tracking.count >= maxReuse) continue;
+        if (req.timestamp_start - tracking.lastUsedAt_s < MIN_REUSE_GAP_S) continue;
       }
 
-      // Check of bestand bestaat
-      try {
-        await fs.access(clip.localPath);
-      } catch {
-        continue; // Bestand niet gevonden, skip
-      }
+      try { await fs.access(clip.localPath); } catch { continue; }
 
-      // Score berekenen
       let score = 0;
       const clipDesc = (clip.description || '').toLowerCase();
       const clipTags: string[] = (() => { try { return JSON.parse(clip.tags || '[]'); } catch { return []; } })();
-
       for (const word of queryWords) {
         if (clipDesc.includes(word)) score += 2;
         if (clipTags.some((t: string) => t.toLowerCase().includes(word))) score += 3;
       }
-
       if (clip.quality && clip.quality > 0.7) score += 2;
       score -= (clip.timesUsed || 0) * 0.5;
 
       if (score >= 4) {
-        return {
-          ...clip,
-          isVideo: clip.localPath.endsWith('.mp4') || clip.localPath.endsWith('.webm'),
-        };
+        return { ...clip, isVideo: clip.localPath.endsWith('.mp4') || clip.localPath.endsWith('.webm') };
       }
     }
-
     return null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 // ══════════════════════════════════════════════════
-// FASE 3a: Sonar → YouTube Video URLs
+// SONAR-PRO: Fetch YouTube Video URLs
 // ══════════════════════════════════════════════════
 
-async function fetchYouTubeUrlsViaSonar(
+async function fetchVideoUrlsViaSonar(
   requests: BRollRequest[],
-  settings: any
+  settings: any,
+  language: string
 ): Promise<Array<{ url: string; title?: string } | null>> {
-  if (!settings.perplexityApiKey) {
-    console.log('[B-Roll]   Geen Perplexity API key — skip YouTube URL zoeken');
-    return requests.map(() => null);
-  }
+  if (!settings.elevateApiKey) return requests.map(() => null);
 
-  const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
   const results: Array<{ url: string; title?: string } | null> = new Array(requests.length).fill(null);
 
-  // Batch Sonar calls
   const batches: BRollRequest[][] = [];
   for (let i = 0; i < requests.length; i += SONAR_BATCH_SIZE) {
     batches.push(requests.slice(i, i + SONAR_BATCH_SIZE));
   }
 
-  // Process batches met parallel limiet
-  await parallelLimit(batches, SONAR_PARALLEL, async (batch, batchIdx) => {
+  await parallelLimit(batches, 3, async (batch, batchIdx) => {
     try {
       const queryList = batch.map((r, i) =>
-        `${i + 1}. "${r.search_query}" (needed: ${(r.timestamp_end_ms - r.timestamp_start_ms) / 1000}s B-roll)`
+        (i + 1) + ". " + r.search_query + " (" + (r.timestamp_end - r.timestamp_start).toFixed(1) + "s footage needed)"
       ).join('\n');
 
-      const response = await perplexity.research(
-        `You are a video research assistant. Find specific YouTube video URLs for B-roll footage.
-For each search query, find ONE specific YouTube video URL that shows the described scene.
-Prefer: news footage, documentaries, stock footage channels, official channels.
-Avoid: music videos, podcasts, shorts, private/age-restricted videos.
-
-IMPORTANT: Return ONLY a JSON array. No markdown, no explanation.
-Format: [{"index": 1, "url": "https://www.youtube.com/watch?v=...", "title": "Video Title"}, ...]
-If you cannot find a suitable video, set url to empty string "".`,
-        `Find YouTube videos for these B-roll needs:\n${queryList}`
+      const response = await callSonarPro(
+        settings.elevateApiKey,
+        "Find YouTube video URLs for B-roll footage. For each query find ONE YouTube URL. " +
+        "Prefer: news footage, official channels, documentaries. " +
+        "Video content language should match: " + language + ". " +
+        "Avoid: music videos, podcasts, shorts. " +
+        "Return ONLY YouTube URLs, one per line, numbered to match the queries.",
+        "Find YouTube videos for:\n" + queryList,
+        1500
       );
 
-      // Parse response
-      let parsed: any[] = [];
-      try {
-        const jsonStr = response.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
-        const firstBracket = jsonStr.indexOf('[');
-        const lastBracket = jsonStr.lastIndexOf(']');
-        if (firstBracket !== -1 && lastBracket > firstBracket) {
-          parsed = JSON.parse(jsonStr.slice(firstBracket, lastBracket + 1));
-        }
-      } catch {
-        // Probeer individuele URLs te extracten
-        const urlMatches = response.match(/https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[a-zA-Z0-9_-]{11}/g);
-        if (urlMatches) {
-          parsed = urlMatches.map((url, i) => ({ index: i + 1, url }));
-        }
-      }
+      const urls = extractYouTubeUrls(response);
+      const lines = response.split('\n');
 
-      // Map terug naar results array
       for (let i = 0; i < batch.length; i++) {
-        const match = parsed.find((p: any) => p.index === i + 1) || parsed[i];
-        if (match?.url && match.url.includes('youtube.com/watch')) {
-          const globalIdx = requests.indexOf(batch[i]);
-          if (globalIdx !== -1) {
-            results[globalIdx] = { url: match.url, title: match.title };
+        // Probeer URL te matchen op regelnummer
+        const lineMatch = lines.find(l => l.match(new RegExp("^\\s*" + (i + 1) + "[.):] ")));
+        if (lineMatch) {
+          const lineUrls = extractYouTubeUrls(lineMatch);
+          if (lineUrls.length > 0) {
+            const globalIdx = requests.indexOf(batch[i]);
+            if (globalIdx !== -1) results[globalIdx] = { url: lineUrls[0] };
+            continue;
           }
+        }
+        // Fallback: gebruik URLs in volgorde
+        if (urls[i]) {
+          const globalIdx = requests.indexOf(batch[i]);
+          if (globalIdx !== -1) results[globalIdx] = { url: urls[i] };
         }
       }
     } catch (error: any) {
-      console.log(`[B-Roll]   Sonar video batch ${batchIdx + 1} fout: ${error.message}`);
+      console.log("[B-Roll]   Sonar video batch " + (batchIdx + 1) + " fout: " + error.message);
     }
     return null;
   });
@@ -915,19 +949,16 @@ If you cannot find a suitable video, set url to empty string "".`,
 }
 
 // ══════════════════════════════════════════════════
-// FASE 3b: Sonar → Google Image URLs
+// SONAR-PRO: Fetch News Image URLs
 // ══════════════════════════════════════════════════
 
 async function fetchImageUrlsViaSonar(
   requests: BRollRequest[],
-  settings: any
+  settings: any,
+  language: string
 ): Promise<Array<{ url: string; title?: string } | null>> {
-  if (!settings.perplexityApiKey) {
-    console.log('[B-Roll]   Geen Perplexity API key — skip image URL zoeken');
-    return requests.map(() => null);
-  }
+  if (!settings.elevateApiKey) return requests.map(() => null);
 
-  const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
   const results: Array<{ url: string; title?: string } | null> = new Array(requests.length).fill(null);
 
   const batches: BRollRequest[][] = [];
@@ -935,51 +966,29 @@ async function fetchImageUrlsViaSonar(
     batches.push(requests.slice(i, i + SONAR_BATCH_SIZE));
   }
 
-  await parallelLimit(batches, SONAR_PARALLEL, async (batch, batchIdx) => {
+  await parallelLimit(batches, 3, async (batch, batchIdx) => {
     try {
       const queryList = batch.map((r, i) =>
-        `${i + 1}. "${r.search_query}" — need a high-resolution image`
+        (i + 1) + ". " + r.search_query
       ).join('\n');
 
-      const response = await perplexity.research(
-        `You are a visual research assistant. Find high-quality image URLs from the web.
-For each query, find ONE direct image URL (.jpg, .png, .webp) from a reliable source.
-Prefer: news agencies (Reuters, AP, Getty), Wikipedia Commons, official sources, high-res photos.
-Avoid: thumbnail URLs, tiny images, social media avatars, watermarked stock photos.
-
-IMPORTANT: Return ONLY a JSON array. No markdown, no explanation.
-Format: [{"index": 1, "url": "https://example.com/image.jpg", "title": "Image description"}, ...]
-If you cannot find a suitable image, set url to empty string "".`,
-        `Find images for these B-roll needs:\n${queryList}`
+      const response = await callSonarPro(
+        settings.elevateApiKey,
+        "Find high-quality news images from the web. " +
+        "For each query find ONE direct image URL (.jpg, .png, .webp). " +
+        "Prefer: news agencies (Reuters, AP, Getty), official sources. " +
+        "Include the full URL for each. Return numbered list matching the queries.",
+        "Find images for:\n" + queryList,
+        1500
       );
 
-      let parsed: any[] = [];
-      try {
-        const jsonStr = response.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
-        const firstBracket = jsonStr.indexOf('[');
-        const lastBracket = jsonStr.lastIndexOf(']');
-        if (firstBracket !== -1 && lastBracket > firstBracket) {
-          parsed = JSON.parse(jsonStr.slice(firstBracket, lastBracket + 1));
-        }
-      } catch {
-        // Probeer URLs te extracten
-        const urlMatches = response.match(/https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)/gi);
-        if (urlMatches) {
-          parsed = urlMatches.map((url, i) => ({ index: i + 1, url }));
-        }
-      }
-
-      for (let i = 0; i < batch.length; i++) {
-        const match = parsed.find((p: any) => p.index === i + 1) || parsed[i];
-        if (match?.url && match.url.startsWith('http')) {
-          const globalIdx = requests.indexOf(batch[i]);
-          if (globalIdx !== -1) {
-            results[globalIdx] = { url: match.url, title: match.title };
-          }
-        }
+      const urls = extractImageUrls(response);
+      for (let i = 0; i < batch.length && i < urls.length; i++) {
+        const globalIdx = requests.indexOf(batch[i]);
+        if (globalIdx !== -1) results[globalIdx] = { url: urls[i] };
       }
     } catch (error: any) {
-      console.log(`[B-Roll]   Sonar image batch ${batchIdx + 1} fout: ${error.message}`);
+      console.log("[B-Roll]   Sonar image batch " + (batchIdx + 1) + " fout: " + error.message);
     }
     return null;
   });
@@ -988,151 +997,93 @@ If you cannot find a suitable image, set url to empty string "".`,
 }
 
 // ══════════════════════════════════════════════════
-// FASE 3c: Download YouTube Video via video-download-api
+// DOWNLOAD: YouTube Video via video-download-api
 // ══════════════════════════════════════════════════
+
+async function downloadVideoFile(
+  youtubeUrl: string,
+  outputPath: string,
+  settings: any
+): Promise<boolean> {
+  const apiKey = settings.videoDownloadApiKey;
+  if (!apiKey) return false;
+
+  try {
+    const encodedUrl = encodeURIComponent(youtubeUrl);
+    const apiUrl = VIDEO_DOWNLOAD_API_BASE + "/ajax/download.php?format=1080&url=" + encodedUrl + "&apikey=" + apiKey;
+
+    const response = await fetch(apiUrl, { signal: AbortSignal.timeout(60_000) });
+    if (!response.ok) return false;
+
+    const data = await response.json();
+    if (!data.success || !data.content) return false;
+
+    const decoded = Buffer.from(data.content, 'base64').toString('utf-8');
+    const urlMatch = decoded.match(/href="([^"]+)"/i) || decoded.match(/(https?:\/\/[^\s"'<>]+)/i);
+    if (!urlMatch?.[1]) return false;
+
+    const videoResponse = await fetch(urlMatch[1], { signal: AbortSignal.timeout(300_000) });
+    if (!videoResponse.ok) return false;
+
+    const arrayBuffer = await videoResponse.arrayBuffer();
+    const videoBuffer = Buffer.from(arrayBuffer);
+    if (videoBuffer.length < 10_000) return false;
+
+    await fs.writeFile(outputPath, videoBuffer);
+    return true;
+  } catch { return false; }
+}
 
 async function downloadYouTubeVideo(
   youtubeUrl: string,
   req: BRollRequest,
   outputDir: string,
-  settings: any,
+  settings: any
 ): Promise<{ filePath: string; sourceUrl: string } | null> {
-  const apiKey = settings.videoDownloadApiKey;
-  if (!apiKey) {
-    console.log(`[B-Roll]   Geen videoDownloadApiKey — skip YouTube download`);
-    return null;
-  }
-
-  try {
-    const encodedUrl = encodeURIComponent(youtubeUrl);
-    const apiUrl = `${VIDEO_DOWNLOAD_API_BASE}/ajax/download.php?format=720&url=${encodedUrl}&apikey=${apiKey}`;
-
-    const response = await fetch(apiUrl, {
-      signal: AbortSignal.timeout(60_000), // 60s timeout per request
-    });
-
-    if (!response.ok) {
-      console.log(`[B-Roll]   Download API fout ${response.status} voor segment ${req.id}`);
-      return null;
-    }
-
-    const data = await response.json();
-    if (!data.success || !data.content) {
-      console.log(`[B-Roll]   Download API niet succesvol voor segment ${req.id}`);
-      return null;
-    }
-
-    // Decodeer base64 content om download URL te vinden
-    const decoded = Buffer.from(data.content, 'base64').toString('utf-8');
-    const urlMatch = decoded.match(/href="([^"]+)"/i) || decoded.match(/(https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)/i);
-
-    if (!urlMatch?.[1]) {
-      // Fallback: probeer elke URL uit de decoded content
-      const anyUrl = decoded.match(/(https?:\/\/[^\s"'<>]+)/i);
-      if (!anyUrl?.[1]) {
-        console.log(`[B-Roll]   Geen download URL gevonden in API response voor segment ${req.id}`);
-        return null;
-      }
-    }
-
-    const downloadUrl = urlMatch?.[1] || '';
-    if (!downloadUrl) return null;
-
-    const outputPath = path.join(outputDir, `segment-${String(req.id).padStart(4, '0')}.mp4`);
-
-    // Download het videobestand
-    const videoResponse = await fetch(downloadUrl, {
-      signal: AbortSignal.timeout(120_000), // 2 min timeout
-    });
-
-    if (!videoResponse.ok || !videoResponse.body) {
-      console.log(`[B-Roll]   Video download mislukt voor segment ${req.id}: ${videoResponse.status}`);
-      return null;
-    }
-
-    // Stream naar bestand via ArrayBuffer (Node.js compatible)
-    const arrayBuffer = await videoResponse.arrayBuffer();
-    const videoBuffer = Buffer.from(arrayBuffer);
-
-    if (videoBuffer.length < 10_000) {
-      console.log(`[B-Roll]   Gedownload bestand te klein (${videoBuffer.length} bytes) voor segment ${req.id}`);
-      return null;
-    }
-
-    await fs.writeFile(outputPath, videoBuffer);
-    console.log(`[B-Roll]   ✓ Video segment ${req.id} gedownload (${(videoBuffer.length / 1024 / 1024).toFixed(1)}MB)`);
-
+  const outputPath = path.join(outputDir, "segment-" + String(req.id).padStart(4, '0') + ".mp4");
+  const success = await downloadVideoFile(youtubeUrl, outputPath, settings);
+  if (success) {
+    console.log("[B-Roll]   ✓ Video segment " + req.id);
     return { filePath: outputPath, sourceUrl: youtubeUrl };
-  } catch (error: any) {
-    if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-      console.log(`[B-Roll]   YouTube download timeout voor segment ${req.id}`);
-    } else {
-      console.log(`[B-Roll]   YouTube download fout segment ${req.id}: ${error.message}`);
-    }
-    return null;
   }
+  return null;
 }
 
 // ══════════════════════════════════════════════════
-// FASE 3d: Download Image
+// DOWNLOAD: Image
 // ══════════════════════════════════════════════════
 
 async function downloadImage(
   imageUrl: string,
   req: BRollRequest,
-  outputDir: string,
+  outputDir: string
 ): Promise<{ filePath: string; sourceUrl: string } | null> {
   try {
     const response = await fetch(imageUrl, {
       signal: AbortSignal.timeout(30_000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; VideoProducer/1.0)',
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VideoProducer/1.0)' },
     });
+    if (!response.ok) return null;
 
-    if (!response.ok) {
-      return null;
-    }
-
-    // Bepaal extensie op basis van content-type
     const contentType = response.headers.get('content-type') || '';
     let ext = '.jpg';
     if (contentType.includes('png')) ext = '.png';
     else if (contentType.includes('webp')) ext = '.webp';
-    else if (contentType.includes('gif')) ext = '.gif';
 
-    const outputPath = path.join(outputDir, `segment-${String(req.id).padStart(4, '0')}${ext}`);
-
-    // Download via ArrayBuffer (Node.js compatible)
+    const outputPath = path.join(outputDir, "segment-" + String(req.id).padStart(4, '0') + ext);
     const arrayBuffer = await response.arrayBuffer();
     const imageBuffer = Buffer.from(arrayBuffer);
 
-    if (imageBuffer.length < 5_000) {
-      return null; // Te klein
-    }
+    if (imageBuffer.length < 5_000) return null;
 
-    // Magic byte check — is het echt een image?
-    const header = imageBuffer.slice(0, 4);
-    const isJpeg = header[0] === 0xFF && header[1] === 0xD8;
-    const isPng = header[0] === 0x89 && header[1] === 0x50;
-    const isWebp = header[0] === 0x52 && header[1] === 0x49;
-    const isGif = header[0] === 0x47 && header[1] === 0x49;
-
-    if (!isJpeg && !isPng && !isWebp && !isGif) {
-      console.log(`[B-Roll]   Gedownload bestand is geen image voor segment ${req.id}`);
-      return null;
-    }
+    // Magic byte check
+    const h = imageBuffer.slice(0, 4);
+    const isImage = (h[0] === 0xFF && h[1] === 0xD8) || (h[0] === 0x89 && h[1] === 0x50) ||
+                    (h[0] === 0x52 && h[1] === 0x49) || (h[0] === 0x47 && h[1] === 0x49);
+    if (!isImage) return null;
 
     await fs.writeFile(outputPath, imageBuffer);
-    console.log(`[B-Roll]   ✓ Image segment ${req.id} gedownload (${(imageBuffer.length / 1024).toFixed(0)}KB)`);
-
+    console.log("[B-Roll]   ✓ Image segment " + req.id);
     return { filePath: outputPath, sourceUrl: imageUrl };
-  } catch (error: any) {
-    if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-      console.log(`[B-Roll]   Image download timeout voor segment ${req.id}`);
-    } else {
-      console.log(`[B-Roll]   Image download fout segment ${req.id}: ${error.message}`);
-    }
-    return null;
-  }
+  } catch { return null; }
 }

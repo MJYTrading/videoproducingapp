@@ -45,7 +45,7 @@ interface LLMKeys {
 export const LLM_MODELS = {
   OPUS: 'claude-opus-4.5',
   SONNET: 'claude-sonnet-4.5',
-  SONAR: 'sonar-deep-research',
+  SONAR: 'sonar-pro',
   GEMINI: 'gemini-3-pro',
   GPT5: 'gpt-5',
   DEEPSEEK: 'deepseek-v3.1',

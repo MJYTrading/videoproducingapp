@@ -1398,11 +1398,13 @@ export async function executeStep7(project: any, settings: any) {
     totalSegments: plan.stats.total_segments,
     fromDatabase: plan.stats.from_database,
     fromTwelveLabs: plan.stats.from_twelve_labs,
-    fromYouTube: plan.stats.from_youtube_new,
-    fromGoogleImage: plan.stats.from_google_image,
-    failed: plan.stats.failed,
+    fromKeySource: plan.stats.from_key_source,
+    fromYouTube: plan.stats.from_youtube,
+    fromNewsImage: plan.stats.from_news_image,
+    skipped: plan.stats.skipped,
     totalTimeMs: plan.stats.total_time_ms,
     clipGaps: plan.clip_gaps.length,
+    keySources: plan.key_sources.length,
   };
 }
 
@@ -1430,14 +1432,15 @@ function pickKenBurnsType(scene: any): string {
 }
 
 
-// ── Stap 8: YouTube clips ophalen via N8N ──
+// ── Stap 8: YouTube clips downloaden via video-download-api ──
 
 export async function executeStep8(project: any, settings: any) {
   const projPath = projectDir(project.name);
-  const statusPath = path.join(projPath, 'assets', 'clips-status.json');
+  const clipsDir = path.join(projPath, 'assets', 'clips');
+  await ensureDir(clipsDir);
 
   if (!project.useClips) {
-    console.log('[Step 8] Clips niet ingeschakeld — stap overgeslagen');
+    console.log('[Step 13] Clips niet ingeschakeld — stap overgeslagen');
     return { skipped: true, reason: 'YouTube clips zijn niet ingeschakeld voor dit project' };
   }
 
@@ -1448,7 +1451,7 @@ export async function executeStep8(project: any, settings: any) {
     clips = clipData.clips || clipData || [];
     if (!Array.isArray(clips)) clips = [];
   } catch {
-    console.log('[Step 8] clip-positions.json niet gevonden, check scene-prompts.json...');
+    console.log('[Step 13] clip-positions.json niet gevonden, check scene-prompts.json...');
     try {
       const scenePrompts = await readJson<any>(path.join(projPath, 'assets', 'scene-prompts.json'));
       const clipScenes = (scenePrompts.scenes || []).filter((s: any) => s.type === 'clip');
@@ -1462,56 +1465,152 @@ export async function executeStep8(project: any, settings: any) {
   }
 
   if (clips.length === 0) {
-    console.log('[Step 8] Geen clips gevonden — stap overgeslagen');
+    console.log('[Step 13] Geen clips gevonden — stap overgeslagen');
     return { skipped: true, reason: 'Geen clips gevonden in clip-positions.json of scene-prompts.json' };
   }
 
   clips = clips.map((c: any, i: number) => ({
     clip_id: c.clip_id || i + 1,
     url: c.url || c.source_url || '',
-    start: c.start || c.source_start || '00:00',
-    end: c.end || c.source_end || '00:10',
+    source_start: c.source_start || c.start || '00:00',
+    source_end: c.source_end || c.end || '00:10',
+    clip_duration: c.clip_duration || 0,
   }));
 
-  try { await fs.unlink(statusPath); } catch {}
-
-  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/clip-downloader';
-
-  const payload = {
-    project: project.name,
-    output_dir: path.join(projPath, 'assets', 'clips') + '/',
-    output_format: project.output === 'youtube_short' ? 'portrait' : 'landscape',
-    clips,
-  };
-
-  console.log(`[Step 8] ${clips.length} clips sturen naar ${n8nUrl}...`);
-
-  const response = await fetch(n8nUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+  const apiKey = settings.videoDownloadApiKey;
+  if (!apiKey) {
+    throw new Error('videoDownloadApiKey niet ingesteld in Settings — kan geen clips downloaden');
   }
 
-  const webhookResult = await response.json();
-  console.log('[Step 8] N8N response: ' + JSON.stringify(webhookResult));
+  const VIDEO_DOWNLOAD_API_BASE = 'https://p.lbserver.xyz';
+  console.log(`[Step 13] ${clips.length} clips downloaden via video-download-api...`);
 
-  console.log('[Step 8] Wachten op status: ' + statusPath);
-  const status = await pollForStatus(statusPath, 5000, 600000);
+  const results: Array<{ clip_id: number; success: boolean; path?: string; error?: string }> = [];
 
-  console.log(`[Step 8] Clips klaar! ${status.clips_downloaded || 0}/${status.total_clips || 0} gedownload`);
+  // Download clips parallel (max 5 tegelijk)
+  const PARALLEL_LIMIT = 5;
+  let nextIdx = 0;
+
+  async function downloadWorker() {
+    while (nextIdx < clips.length) {
+      const idx = nextIdx++;
+      const clip = clips[idx];
+      const clipId = clip.clip_id;
+
+      if (!clip.url || !clip.url.includes('youtube.com') && !clip.url.includes('youtu.be')) {
+        console.log(`[Step 13] Clip ${clipId}: geen geldige YouTube URL — skip`);
+        results[idx] = { clip_id: clipId, success: false, error: 'Geen geldige YouTube URL' };
+        continue;
+      }
+
+      try {
+        // Parse start/end tijden naar seconden
+        const startSec = parseTimeToSeconds(clip.source_start);
+        const endSec = parseTimeToSeconds(clip.source_end);
+
+        const encodedUrl = encodeURIComponent(clip.url);
+        let apiUrl = `${VIDEO_DOWNLOAD_API_BASE}/ajax/download.php?format=1080&url=${encodedUrl}&apikey=${apiKey}`;
+        
+        // Voeg start/end toe als ze zinvol zijn
+        if (startSec > 0 || endSec > 0) {
+          if (startSec > 0) apiUrl += `&start_time=${startSec}`;
+          if (endSec > startSec) apiUrl += `&end_time=${endSec}`;
+        }
+
+        console.log(`[Step 13] Clip ${clipId}: downloading ${clip.url} (${clip.source_start} - ${clip.source_end})...`);
+
+        const response = await fetch(apiUrl, {
+          signal: AbortSignal.timeout(120_000), // 2 min timeout per clip
+        });
+
+        if (!response.ok) {
+          throw new Error(`API fout ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data.success || !data.content) {
+          throw new Error('API response niet succesvol');
+        }
+
+        // Decodeer base64 content om download URL te vinden
+        const decoded = Buffer.from(data.content, 'base64').toString('utf-8');
+        const urlMatch = decoded.match(/href="([^"]+)"/i) || decoded.match(/(https?:\/\/[^\s"'<>]+)/i);
+
+        if (!urlMatch?.[1]) {
+          throw new Error('Geen download URL gevonden in API response');
+        }
+
+        const downloadUrl = urlMatch[1];
+        const outputPath = path.join(clipsDir, `clip-${String(clipId).padStart(3, '0')}.mp4`);
+
+        // Download het videobestand
+        const videoResponse = await fetch(downloadUrl, {
+          signal: AbortSignal.timeout(300_000), // 5 min timeout voor grote clips
+        });
+
+        if (!videoResponse.ok) {
+          throw new Error(`Video download mislukt: ${videoResponse.status}`);
+        }
+
+        const arrayBuffer = await videoResponse.arrayBuffer();
+        const videoBuffer = Buffer.from(arrayBuffer);
+
+        if (videoBuffer.length < 10_000) {
+          throw new Error(`Gedownload bestand te klein (${videoBuffer.length} bytes)`);
+        }
+
+        await fs.writeFile(outputPath, videoBuffer);
+        console.log(`[Step 13] ✓ Clip ${clipId} gedownload (${(videoBuffer.length / 1024 / 1024).toFixed(1)}MB)`);
+
+        results[idx] = { clip_id: clipId, success: true, path: outputPath };
+      } catch (error: any) {
+        console.log(`[Step 13] ✗ Clip ${clipId} mislukt: ${error.message}`);
+        results[idx] = { clip_id: clipId, success: false, error: error.message };
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(PARALLEL_LIMIT, clips.length) }, () => downloadWorker());
+  await Promise.all(workers);
+
+  // Schrijf status bestand voor backwards compatibility
+  const downloaded = results.filter(r => r?.success).length;
+  const failed = results.filter(r => r && !r.success).length;
+
+  const statusData = {
+    status: 'completed',
+    clips_downloaded: downloaded,
+    clips_failed: failed,
+    total_clips: clips.length,
+    results: results.filter(r => r != null),
+  };
+
+  await writeJson(path.join(projPath, 'assets', 'clips-status.json'), statusData);
+
+  console.log(`[Step 13] Klaar! ${downloaded}/${clips.length} clips gedownload, ${failed} mislukt`);
+
+  if (downloaded === 0 && clips.length > 0) {
+    throw new Error(`Alle ${clips.length} clips mislukt bij downloaden`);
+  }
 
   return {
     skipped: false,
-    clipsDownloaded: status.clips_downloaded || 0,
-    clipsFailed: status.clips_failed || 0,
-    totalClips: status.total_clips || 0,
-    results: status.results || [],
+    clipsDownloaded: downloaded,
+    clipsFailed: failed,
+    totalClips: clips.length,
+    results: results.filter(r => r != null),
   };
+}
+
+/** Parse tijdstring (MM:SS of HH:MM:SS of seconden) naar seconden */
+function parseTimeToSeconds(timeStr: string | number): number {
+  if (typeof timeStr === 'number') return timeStr;
+  if (!timeStr) return 0;
+  
+  const parts = timeStr.split(':').map(Number);
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return Number(timeStr) || 0;
 }
 
 
