@@ -13,6 +13,7 @@ import channelRoutes from './routes/channels.js';
 import voiceRoutes from './routes/voices.js';
 import ideationRoutes from './routes/ideation.js';
 import assetClipRoutes from './routes/asset-clips.js';
+import assetImageRoutes from './routes/asset-images.js';
 import mediaLibraryRoutes from './routes/media-library.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,6 +42,7 @@ app.use('/api/channels', channelRoutes);
 app.use('/api/voices', voiceRoutes);
 app.use('/api/ideation', ideationRoutes);
 app.use('/api/asset-clips', assetClipRoutes);
+app.use('/api/asset-images', assetImageRoutes);
 app.use('/api/media', mediaLibraryRoutes);
 
 const frontendPath = path.join(__dirname, '..', 'dist-frontend');

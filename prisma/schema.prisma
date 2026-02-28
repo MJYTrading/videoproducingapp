@@ -390,3 +390,28 @@ model EditingKnowledge {
 
   channel       Channel  @relation(fields: [channelId], references: [id])
 }
+
+// ─── Asset Images Library ───────────────────────────────
+
+model AssetImage {
+  id            String    @id @default(cuid())
+  sourceUrl     String
+  localPath     String
+  thumbnailPath String?
+  title         String
+  description   String    @default("")
+  tags          String    @default("[]")
+  category      String    @default("general")
+  subjects      String    @default("[]")
+  mood          String?
+  style         String?
+  source        String    @default("pipeline")
+  width         Int?
+  height        Int?
+  fileSize      Int?
+  quality       Float?
+  timesUsed     Int       @default(0)
+  lastUsedAt    DateTime?
+  projectId     String?
+  createdAt     DateTime  @default(now())
+}

@@ -17,6 +17,7 @@ import SfxLibraryPage from './pages/SfxLibraryPage';
 import OverlayLibraryPage from './pages/OverlayLibraryPage';
 import SpecialEditsPage from './pages/SpecialEditsPage';
 import ClipLibraryPage from './pages/ClipLibraryPage';
+import ImageLibraryPage from './pages/ImageLibraryPage';
 import LoginPage from './pages/LoginPage';
 
 function AppContent() {

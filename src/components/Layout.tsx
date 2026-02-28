@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Film, FolderOpen, Settings, LogOut, Palette, Tv, Mic, Sparkles, Lightbulb, Music, Volume2, Layers, Wand2, Scissors } from 'lucide-react';
+import { Film, FolderOpen, Settings, LogOut, Palette, Tv, Mic, Sparkles, Lightbulb, Music, Volume2, Layers, Wand2, Scissors, Image } from 'lucide-react';
 import Toast from './Toast';
 import { auth } from '../api';
 
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { path: '/sfx', icon: Volume2, label: 'Sound Effects' },
   { path: '/overlays', icon: Layers, label: 'Overlays' },
   { path: '/special-edits', icon: Wand2, label: 'Special Edits' },
+  { path: '/images', icon: Image, label: 'Images' },
   { path: '/clip-library', icon: Scissors, label: 'Clip Library' },
   { type: 'divider' as const },
   { path: '/settings', icon: Settings, label: 'Settings' },
