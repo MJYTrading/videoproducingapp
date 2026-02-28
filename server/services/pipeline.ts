@@ -210,14 +210,33 @@ export async function executeStep2(project: any, llmKeys: { elevateApiKey?: stri
     throw new Error('Geen transcripts gevonden. Voer eerst stap 1 uit.');
   }
 
+  // Haal research data op (stap 2) voor context
+  let researchContext = '';
+  try {
+    const research = await readJson(path.join(projPath, 'research', 'research.json'));
+    const brief = research.research_brief || research;
+    researchContext = `\n\nONDERWERP CONTEXT (uit research):
+Titel: ${project.title}
+${brief.video_metadata?.topic_one_sentence ? `Kern: ${brief.video_metadata.topic_one_sentence}` : ''}
+${brief.video_metadata?.primary_emotion_to_evoke ? `Gewenste emotie: ${brief.video_metadata.primary_emotion_to_evoke}` : ''}
+${brief.the_crisis?.crisis_name ? `Crisis: ${brief.the_crisis.crisis_name}` : ''}
+${brief.the_crisis?.why_it_matters ? `Belang: ${brief.the_crisis.why_it_matters}` : ''}
+
+Gebruik deze context om de toon, emotie en pacing van het style profile af te stemmen op dit specifieke onderwerp.`;
+  } catch {
+    console.log('[Style Profile] Geen research.json beschikbaar, profiel alleen op transcripts gebaseerd');
+  }
+
   const userPrompt = `Analyseer deze ${transcriptTexts.length} referentie transcripts en maak een style profile JSON:
 
 ${transcriptTexts.map((t, i) => `=== TRANSCRIPT ${i + 1} ===\n${t.slice(0, 10000)}\n`).join('\n')}
+${researchContext}
 
 Let op:
 - Tel het werkelijke aantal secties in elk transcript
 - Neem het gemiddelde als basis
 - Bepaal genre en mood
+${researchContext ? '- Stem de emotionele toon af op het onderwerp uit de research context' : ''}
 - Geef ALLEEN de JSON terug, geen extra tekst`;
 
   const styleProfile = await llmJsonPrompt(
@@ -284,12 +303,33 @@ export async function executeStep3(project: any, llmKeys: { elevateApiKey?: stri
   let clipInfo = '';
   const clips = project.referenceClips || [];
   const montageClips = project.montageClips || [];
-  if (project.useClips && (clips.length > 0 || montageClips.length > 0)) {
+
+  // Haal clips-research.json op (stap 4) voor trending clips
+  let trendingClips: any[] = [];
+  try {
+    const clipsResearch = await readJson(path.join(projPath, 'research', 'clips-research.json'));
+    trendingClips = (clipsResearch.clips || []).filter((c: any) => c.validated !== false);
+  } catch {}
+
+  if (project.useClips && (clips.length > 0 || montageClips.length > 0 || trendingClips.length > 0)) {
+    const allClips = [
+      ...clips,
+      ...montageClips.map((c: any) => `${c.url} ${c.startTime} - ${c.endTime}`),
+      ...trendingClips.map((c: any) => `${c.url} (${c.timestamp_start || '00:00'}-${c.timestamp_end || '00:15'}) — ${c.description || c.title || ''}`),
+    ];
+
     clipInfo = `\n\nCLIP INTEGRATIE:
 Er moeten [CLIP] markers in het script op plekken waar echte footage het verhaal versterkt.
-Beschikbare clips: ${JSON.stringify([...clips, ...montageClips.map((c: any) => `${c.url} ${c.startTime} - ${c.endTime}`)])}
+Beschikbare clips (${allClips.length} stuks):
+${allClips.map((c, i) => `  ${i + 1}. ${typeof c === 'string' ? c : JSON.stringify(c)}`).join('\n')}
+
 Formaat: [CLIP: URL HH:MM:SS - HH:MM:SS]
-Regels: maximaal 1 clip per 2-3 minuten, tekst voor en na moet vloeiend aansluiten.`;
+Regels:
+- Gebruik de meest impactvolle clips op strategische momenten
+- Plaats clips op plekken waar visueel bewijs de tekst versterkt
+- Maximaal 1 clip per 1-2 minuten narration
+- De tekst voor en na moet vloeiend aansluiten op de clip
+- Geef korte context in het script waarom de kijker deze clip ziet`;
   }
 
   const userPrompt = `Schrijf een YouTube script met de volgende specificaties:
@@ -846,7 +886,7 @@ export async function executeStep6b(project: any, settings: any, log: StepLogger
   };
 }
 
-// ── Stap 4: Voiceover genereren (via N8N) ──
+// ── Stap 4: Voiceover genereren (direct Elevate TTS API) ──
 
 const VOICES_PATH = '/root/.openclaw/workspace/video-producer/presets/voices.json';
 
@@ -866,7 +906,7 @@ async function resolveVoiceId(voiceName: string): Promise<{ voice_id: string; na
   );
 
   if (!match) {
-    console.warn('[Step 4] Voice "' + voiceName + '" niet gevonden, fallback naar eerste voice');
+    console.warn('[Step 8] Voice "' + voiceName + '" niet gevonden, fallback naar eerste voice');
     if (voices.length === 0) throw new Error('Geen voices beschikbaar in voices.json');
     return { voice_id: voices[0].voice_id, name: voices[0].name };
   }
@@ -880,7 +920,7 @@ async function pollForStatus(statusPath: string, intervalMs: number, timeoutMs: 
     try {
       const content = await readJson<any>(statusPath);
       if (content.status === 'completed') return content;
-      if (content.status === 'failed') throw new Error(content.error || 'N8N workflow failed');
+      if (content.status === 'failed') throw new Error(content.error || 'Workflow failed');
     } catch (e: any) {
       if (e.message && !e.message.includes('ENOENT') && !e.message.includes('Unexpected')) {
         throw e;
@@ -891,11 +931,112 @@ async function pollForStatus(statusPath: string, intervalMs: number, timeoutMs: 
   throw new Error('Timeout: status.json niet gevonden of niet voltooid binnen de tijdslimiet');
 }
 
+/**
+ * Elevate TTS API — directe aanroep zonder N8N
+ * POST /v2/media → type: "tts" → poll tot completed → download result_url
+ */
+async function elevateTTS(params: {
+  apiKey: string;
+  text: string;
+  voiceId: string;
+  outputPath: string;
+  stability?: number;
+  similarityBoost?: number;
+  speed?: number;
+}): Promise<{ duration: number; fileSizeKb: number }> {
+  const ELEVATE_BASE = 'https://public-api.elevate.uno';
+  const headers = {
+    'Authorization': `Bearer ${params.apiKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  // 1. Maak TTS task aan
+  console.log(`[TTS] Elevate TTS starten (${params.text.split(/\s+/).length} woorden)...`);
+  const createResponse = await fetch(`${ELEVATE_BASE}/v2/media`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      type: 'tts',
+      prompt: params.text,
+      voice_id: params.voiceId,
+      stability: params.stability ?? 0.5,
+      similarity_boost: params.similarityBoost ?? 0.75,
+      speed: params.speed ?? 1.0,
+    }),
+  });
+
+  if (!createResponse.ok) {
+    const errText = await createResponse.text();
+    throw new Error(`Elevate TTS fout (${createResponse.status}): ${errText.slice(0, 300)}`);
+  }
+
+  const createData = await createResponse.json();
+  if (!createData.success || !createData.data?.id) {
+    throw new Error('Elevate TTS: geen task ID ontvangen');
+  }
+
+  const taskId = createData.data.id;
+  console.log(`[TTS] Task aangemaakt: ${taskId}`);
+
+  // 2. Poll tot completed (max 5 minuten)
+  const startTime = Date.now();
+  const timeout = 300_000;
+  const pollInterval = 5_000;
+
+  while (Date.now() - startTime < timeout) {
+    await new Promise(r => setTimeout(r, pollInterval));
+
+    const statusResponse = await fetch(`${ELEVATE_BASE}/v2/media/${taskId}?type=tts`, { headers });
+    if (!statusResponse.ok) continue;
+
+    const statusData = await statusResponse.json();
+    const status = statusData.data?.status;
+
+    if (status === 'completed' && statusData.data?.result_url) {
+      const resultUrl = statusData.data.result_url;
+      console.log(`[TTS] Klaar! Downloaden van ${resultUrl.slice(0, 60)}...`);
+
+      // 3. Download het audiobestand
+      const audioResponse = await fetch(resultUrl);
+      if (!audioResponse.ok) throw new Error(`Audio download mislukt: ${audioResponse.status}`);
+
+      const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+      const fsImport = await import('fs/promises');
+      const pathImport = await import('path');
+      await fsImport.mkdir(pathImport.dirname(params.outputPath), { recursive: true });
+      await fsImport.writeFile(params.outputPath, audioBuffer);
+
+      const fileSizeKb = Math.round(audioBuffer.length / 1024);
+
+      // 4. Haal duur op via ffprobe
+      let duration = 0;
+      try {
+        const { execSync } = await import('child_process');
+        const probeOutput = execSync(
+          `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${params.outputPath}"`,
+          { encoding: 'utf-8', timeout: 10_000 }
+        ).trim();
+        duration = parseFloat(probeOutput) || 0;
+      } catch {}
+
+      console.log(`[TTS] Opgeslagen: ${params.outputPath} (${fileSizeKb} KB, ${duration.toFixed(1)}s)`);
+      return { duration, fileSizeKb };
+    }
+
+    if (status === 'failed') {
+      throw new Error(`Elevate TTS mislukt: ${statusData.data?.error || 'onbekend'}`);
+    }
+
+    // Nog bezig (queued, processing)
+  }
+
+  throw new Error('Elevate TTS timeout (5 minuten)');
+}
+
 export async function executeStep4(project: any, settings: any, log: StepLogger = noopLog) {
   const projPath = projectDir(project.name);
   const scriptVoiceoverPath = path.join(projPath, 'script', 'script-voiceover.txt');
   const outputPath = path.join(projPath, 'audio', 'voiceover.mp3');
-  const statusPath = path.join(projPath, 'audio', 'voiceover-status.json');
 
   // Check of schoon script bestaat, zo niet: maak het aan
   let scriptText: string;
@@ -903,7 +1044,7 @@ export async function executeStep4(project: any, settings: any, log: StepLogger 
     scriptText = await readText(scriptVoiceoverPath);
     if (!scriptText.trim()) throw new Error('Bestand is leeg');
   } catch {
-    console.log('[Step 4] script-voiceover.txt niet gevonden, maak aan vanuit script.txt...');
+    console.log('[Step 8] script-voiceover.txt niet gevonden, maak aan vanuit script.txt...');
     const scriptPath = path.join(projPath, 'script', 'script.txt');
     const script = await readText(scriptPath);
     scriptText = script.replace(/\[CLIP:.*?\]\n?/g, '').replace(/\n{3,}/g, '\n\n').trim();
@@ -912,55 +1053,39 @@ export async function executeStep4(project: any, settings: any, log: StepLogger 
 
   // Zoek voice_id op
   const voice = await resolveVoiceId(project.voice);
-  console.log('[Step 4] Voice: ' + voice.name + ' (' + voice.voice_id + ')');
+  console.log('[Step 8] Voice: ' + voice.name + ' (' + voice.voice_id + ')');
   await log(`Voice geselecteerd: ${voice.name} (${voice.voice_id})`);
   await log(`Script: ${scriptText.split(/\s+/).length} woorden`);
 
   // Zorg dat audio dir bestaat
   await ensureDir(path.join(projPath, 'audio'));
 
-  // Verwijder oude status en audio zodat polling schoon is
-  try { await fs.unlink(statusPath); } catch {}
+  // Verwijder oude audio
   try { await fs.unlink(outputPath); } catch {}
 
-  // Stuur webhook naar N8N — nu met tekst en API key in payload
-  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/audio-generator';
-
-  const payload = {
-    project: project.name,
-    text: scriptText,
-    output_path: outputPath,
-    voice_id: voice.voice_id,
-    model: 'eleven_flash_v2_5',
-    elevate_api_key: settings.elevateApiKey,
-  };
-
-  console.log('[Step 4] Webhook sturen naar ' + n8nUrl + '...');
-
-  const response = await fetch(n8nUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error('N8N webhook mislukt (' + response.status + '): ' + body);
+  // Check API key
+  if (!settings.elevateApiKey) {
+    throw new Error('Elevate API key niet geconfigureerd in Settings. Nodig voor TTS.');
   }
 
-  const webhookResult = await response.json();
-  console.log('[Step 4] N8N response: ' + JSON.stringify(webhookResult));
+  // Direct Elevate TTS API call
+  const result = await elevateTTS({
+    apiKey: settings.elevateApiKey,
+    text: scriptText,
+    voiceId: voice.voice_id,
+    outputPath,
+    stability: 0.5,
+    similarityBoost: 0.75,
+    speed: 1.0,
+  });
 
-  // Poll status.json (max 3 minuten)
-  console.log('[Step 4] Wachten op status: ' + statusPath);
-  const status = await pollForStatus(statusPath, 5000, 180000);
-
-  console.log('[Step 4] Voiceover klaar! ' + (status.file_size_kb || 0) + ' KB, ' + (status.duration || 0).toFixed(1) + 's');
+  console.log(`[Step 8] Voiceover klaar! ${result.fileSizeKb} KB, ${result.duration.toFixed(1)}s`);
+  await log(`Voiceover klaar: ${result.fileSizeKb} KB, ${result.duration.toFixed(1)}s`);
 
   return {
     audioPath: outputPath,
-    fileSizeKb: status.file_size_kb || 0,
-    duration: status.duration || 0,
+    fileSizeKb: result.fileSizeKb,
+    duration: result.duration,
     voiceName: voice.name,
     voiceId: voice.voice_id,
   };
@@ -1262,7 +1387,7 @@ export async function executeStep8(project: any, settings: any) {
   const statusPath = path.join(projPath, 'assets', 'clips-status.json');
 
   if (!project.useClips) {
-    console.log('[Step 13] Clips niet ingeschakeld — stap overgeslagen');
+    console.log('[Step 8] Clips niet ingeschakeld — stap overgeslagen');
     return { skipped: true, reason: 'YouTube clips zijn niet ingeschakeld voor dit project' };
   }
 
@@ -1273,7 +1398,7 @@ export async function executeStep8(project: any, settings: any) {
     clips = clipData.clips || clipData || [];
     if (!Array.isArray(clips)) clips = [];
   } catch {
-    console.log('[Step 13] clip-positions.json niet gevonden, check scene-prompts.json...');
+    console.log('[Step 8] clip-positions.json niet gevonden, check scene-prompts.json...');
     try {
       const scenePrompts = await readJson<any>(path.join(projPath, 'assets', 'scene-prompts.json'));
       const clipScenes = (scenePrompts.scenes || []).filter((s: any) => s.type === 'clip');
@@ -1282,13 +1407,12 @@ export async function executeStep8(project: any, settings: any) {
         url: s.clip_url || '',
         start: s.clip_start || '00:00',
         end: s.clip_end || '00:10',
-        description: s.text || s.description || '',
       })).filter((c: any) => c.url);
     } catch {}
   }
 
   if (clips.length === 0) {
-    console.log('[Step 13] Geen clips gevonden — stap overgeslagen');
+    console.log('[Step 8] Geen clips gevonden — stap overgeslagen');
     return { skipped: true, reason: 'Geen clips gevonden in clip-positions.json of scene-prompts.json' };
   }
 
@@ -1297,7 +1421,6 @@ export async function executeStep8(project: any, settings: any) {
     url: c.url || c.source_url || '',
     start: c.start || c.source_start || '00:00',
     end: c.end || c.source_end || '00:10',
-    description: c.description || c.context_for_script || '',
   }));
 
   try { await fs.unlink(statusPath); } catch {}
@@ -1311,7 +1434,7 @@ export async function executeStep8(project: any, settings: any) {
     clips,
   };
 
-  console.log(`[Step 13] ${clips.length} clips sturen naar ${n8nUrl}...`);
+  console.log(`[Step 8] ${clips.length} clips sturen naar ${n8nUrl}...`);
 
   const response = await fetch(n8nUrl, {
     method: 'POST',
@@ -1325,82 +1448,12 @@ export async function executeStep8(project: any, settings: any) {
   }
 
   const webhookResult = await response.json();
-  console.log('[Step 13] N8N response: ' + JSON.stringify(webhookResult));
+  console.log('[Step 8] N8N response: ' + JSON.stringify(webhookResult));
 
-  console.log('[Step 13] Wachten op status: ' + statusPath);
+  console.log('[Step 8] Wachten op status: ' + statusPath);
   const status = await pollForStatus(statusPath, 5000, 600000);
 
-  const clipsDownloaded = status.clips_downloaded || 0;
-  console.log(`[Step 13] Clips klaar! ${clipsDownloaded}/${status.total_clips || 0} gedownload`);
-
-  // ── Twelve Labs validatie op gedownloade clips ──
-  let validationResults: any[] = [];
-  if (settings.twelveLabsApiKey && clipsDownloaded > 0) {
-    try {
-      const { TwelveLabsService } = await import('./twelvelabs.js');
-      const tl = new TwelveLabsService({ apiKey: settings.twelveLabsApiKey });
-      
-      const healthy = await tl.healthCheck();
-      if (healthy) {
-        // Haal clips-research.json op voor verwachte beschrijvingen
-        let clipsResearch: any = null;
-        try {
-          clipsResearch = await readJson(path.join(projPath, 'research', 'clips-research.json'));
-        } catch {}
-
-        // Verzamel gedownloade clip bestanden
-        const clipsDir = path.join(projPath, 'assets', 'clips');
-        const downloadedFiles = status.results?.filter((r: any) => r.success && r.path) || [];
-        
-        if (downloadedFiles.length > 0) {
-          console.log(`[Step 13] Twelve Labs validatie op ${downloadedFiles.length} gedownloade clips...`);
-          
-          const videosToValidate = downloadedFiles.map((r: any) => {
-            // Zoek matching clip info voor de beschrijving
-            const clipInfo = clips.find((c: any) => c.clip_id === r.clip_id) || {};
-            const researchClip = clipsResearch?.clips?.find((c: any) => 
-              c.url && clipInfo.url && c.url.includes(clipInfo.url.split('v=')[1]?.slice(0, 11))
-            );
-            
-            return {
-              filePath: r.path,
-              expectedDescription: researchClip?.description || clipInfo.description || project.title,
-              id: r.clip_id || r.path,
-            };
-          }).filter((v: any) => v.filePath);
-
-          if (videosToValidate.length > 0) {
-            const results = await tl.validateBatch({
-              videos: videosToValidate,
-              projectName: project.name.slice(0, 30),
-            });
-
-            for (const [id, result] of results.entries()) {
-              validationResults.push({ id, ...result });
-              if (!result.matches) {
-                console.log(`[Step 13] ⚠ Clip ${id}: lage relevantie (score ${result.score.toFixed(2)})`);
-              }
-            }
-
-            const matchCount = validationResults.filter(r => r.matches).length;
-            console.log(`[Step 13] Twelve Labs: ${matchCount}/${validationResults.length} clips relevant`);
-          }
-        }
-      }
-    } catch (e: any) {
-      console.log(`[Step 13] Twelve Labs validatie overgeslagen: ${e.message}`);
-    }
-  }
-
-  // Sla validatie resultaten op
-  if (validationResults.length > 0) {
-    await writeJson(path.join(projPath, 'assets', 'clips-validation.json'), {
-      validated_at: new Date().toISOString(),
-      results: validationResults,
-      total: validationResults.length,
-      relevant: validationResults.filter(r => r.matches).length,
-    });
-  }
+  console.log(`[Step 8] Clips klaar! ${status.clips_downloaded || 0}/${status.total_clips || 0} gedownload`);
 
   return {
     skipped: false,
@@ -1408,11 +1461,6 @@ export async function executeStep8(project: any, settings: any) {
     clipsFailed: status.clips_failed || 0,
     totalClips: status.total_clips || 0,
     results: status.results || [],
-    validation: validationResults.length > 0 ? {
-      total: validationResults.length,
-      relevant: validationResults.filter(r => r.matches).length,
-      lowRelevance: validationResults.filter(r => !r.matches).map(r => r.id),
-    } : null,
   };
 }
 
@@ -1975,14 +2023,12 @@ export async function executeStepResearch(project: any, settings: any): Promise<
   // Ultieme fallback: basis template
   if (!researchTemplate) {
     researchTemplate = {
-      research_brief: {
-        video_metadata: { working_title: '', topic_one_sentence: '', primary_emotion_to_evoke: '', target_length_minutes: '' },
-        key_facts: { what_happened: '', when: '', where: '', who_is_involved: [], why_it_matters: '', current_status: '' },
-        timeline_of_events: { events: [{ date: '', what_happened: '', significance: '', source: '' }] },
-        key_players: { players: [{ name: '', role: '', stance_or_position: '', notable_quotes: '' }] },
-        statistics_and_data: { figures: [{ number: '', what_it_represents: '', source: '' }] },
-        sources: { primary_sources: [{ type: '', title: '', url_or_reference: '', key_information_obtained: '' }] },
-      },
+      topic: "",
+      summary: "",
+      key_facts: [],
+      timeline: [],
+      key_figures: [],
+      sources: []
     };
   }
 
@@ -1993,7 +2039,7 @@ export async function executeStepResearch(project: any, settings: any): Promise<
     referenceVideoInfo = `Referentie video URLs: ${config.referenceVideos.filter((v: string) => v).join(', ')}`;
   }
 
-  // 3. Perplexity research uitvoeren (met validatie + retry)
+  // 3. Perplexity research uitvoeren
   const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
 
   const result = await perplexity.executeResearch({
@@ -2001,26 +2047,14 @@ export async function executeStepResearch(project: any, settings: any): Promise<
     description: project.description || '',
     researchTemplate,
     referenceVideoInfo,
-    maxRetries: 2,
   });
 
   // 4. Opslaan als research.json
   await writeJson(path.join(researchDir, 'research.json'), result);
 
-  // 5. Kwaliteitsrapport loggen
-  const brief = result.research_brief || result;
-  const statsCount = brief.statistics_and_data?.figures?.length || brief.statistics_and_facts?.figures?.length || 0;
-  const eventsCount = brief.timeline_of_events?.events?.length || brief.chronological_timeline?.events?.length || 0;
-  const sourcesCount = brief.sources?.primary_sources?.length || 0;
+  console.log(`[Pipeline] Stap 2: Research JSON opgeslagen voor ${project.name}`);
 
-  console.log(`[Pipeline] Stap 2: Research opgeslagen voor "${project.name}"`);
-  console.log(`[Pipeline] Stap 2: ${eventsCount} events, ${statsCount} stats, ${sourcesCount} bronnen`);
-
-  return { 
-    success: true, 
-    researchFile: 'research/research.json',
-    quality: { events: eventsCount, statistics: statsCount, sources: sourcesCount },
-  };
+  return { success: true, researchFile: 'research/research.json' };
 }
 
 // ══════════════════════════════════════════════════
@@ -2037,7 +2071,7 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
   }
 
   // 1. Bepaal max clip duur
-  let maxClipDuration = 15;
+  let maxClipDuration = 15; // default
   if (project.channelId) {
     const prismaImport = await import('../db.js');
     const prismaClient = prismaImport.default;
@@ -2063,10 +2097,11 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
   try {
     researchData = await readJson(path.join(researchDir, 'research.json'));
   } catch {
+    // research.json niet beschikbaar — geen probleem
     console.log('[Pipeline] Stap 4: Geen research.json gevonden, doorgaan zonder');
   }
 
-  // 4. Perplexity clips research (met YouTube URL validatie)
+  // 4. Perplexity clips research
   const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
 
   const result = await perplexity.executeTrendingClipsResearch({
@@ -2076,78 +2111,14 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
     usedClips,
     maxClipDuration,
     videoType: project.videoType || 'ai',
-    youtubeTranscriptApiKey: settings.youtubeTranscriptApiKey || '',
   });
 
-  // 5. Optioneel: Twelve Labs validatie op gevonden clips
-  // Dit checkt of de clip content daadwerkelijk relevant is voor het onderwerp
-  if (settings.twelveLabsApiKey && result.clips && result.clips.length > 0) {
-    try {
-      const { TwelveLabsService } = await import('./twelvelabs.js');
-      const tl = new TwelveLabsService({ apiKey: settings.twelveLabsApiKey });
-      
-      // Health check eerst
-      const healthy = await tl.healthCheck();
-      if (healthy) {
-        console.log(`[Pipeline] Stap 4: Twelve Labs validatie op ${result.clips.length} clips...`);
-        
-        // We kunnen hier niet de video's uploaden (ze zijn nog niet gedownload),
-        // maar we slaan de verwachte beschrijvingen op zodat stap 13 ze kan valideren
-        result.twelve_labs_pending = true;
-        result.clips = result.clips.map((clip: any) => ({
-          ...clip,
-          expected_content: clip.description || clip.context_for_script || '',
-          twelve_labs_validated: false,
-        }));
-        console.log(`[Pipeline] Stap 4: Twelve Labs validatie wordt uitgevoerd na download (stap 13)`);
-      }
-    } catch (e: any) {
-      console.log(`[Pipeline] Stap 4: Twelve Labs check overgeslagen: ${e.message}`);
-    }
-  }
-
-  // 6. Opslaan als clips-research.json
+  // 5. Opslaan als clips-research.json
   await writeJson(path.join(researchDir, 'clips-research.json'), result);
 
-  // 7. Update kanaal usedClips
-  if (project.channelId && result.clips?.length > 0) {
-    try {
-      const prismaImport = await import('../db.js');
-      const prismaClient = prismaImport.default;
-      
-      const newUsedClips = [...usedClips];
-      for (const clip of result.clips) {
-        if (!clip.url) continue;
-        const existing = newUsedClips.find(c => c.url === clip.url);
-        if (existing) {
-          existing.timesUsed++;
-        } else {
-          newUsedClips.push({ url: clip.url, timesUsed: 1 });
-        }
-      }
-      
-      await prismaClient.channel.update({
-        where: { id: project.channelId },
-        data: { usedClips: JSON.stringify(newUsedClips) },
-      });
-      console.log(`[Pipeline] Stap 4: usedClips bijgewerkt (${newUsedClips.length} clips totaal)`);
-    } catch (e: any) {
-      console.log(`[Pipeline] Stap 4: usedClips update mislukt (niet-kritiek): ${e.message}`);
-    }
-  }
+  console.log(`[Pipeline] Stap 4: ${result.total_clips_found || result.clips?.length || 0} clips gevonden voor ${project.name}`);
 
-  const validatedCount = result.clips?.filter((c: any) => c.validated).length || 0;
-  const totalClips = result.clips?.length || 0;
-
-  console.log(`[Pipeline] Stap 4: ${totalClips} clips gevonden${result.validated ? ` (${validatedCount} gevalideerd)` : ''} voor ${project.name}`);
-
-  return { 
-    success: true, 
-    clipsFile: 'research/clips-research.json', 
-    totalClips,
-    validatedClips: validatedCount,
-    validated: result.validated || false,
-  };
+  return { success: true, clipsFile: 'research/clips-research.json', totalClips: result.total_clips_found || result.clips?.length || 0 };
 }
 
 // ══════════════════════════════════════════════════

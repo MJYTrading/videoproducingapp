@@ -14,40 +14,95 @@
 
 import prisma from '../db.js';
 import {
+  executeStepResearch, executeStepTrendingClips, executeStepScriptOrchestrator, executeStepDirectorsCut,
+  executeStepSoundEffects, executeStepVideoEffects, executeStepFinalAssembly,
   executeStep0, executeStep1, executeStep2, executeStep3,
   executeStep4, executeStep5, executeStep6, executeStep6b,
   executeStep7, executeStep8, executeStep9, executeStep10,
   executeStep11, executeStep12, executeStep13, executeStep14,
 } from './pipeline.js';
 
+
+// ── VideoType-based stap activatie matrix ──
+// Per videotype: welke stappen actief zijn (true = actief, false = skip)
+// Stappen 0 (Ideation) en 1 (Formulier) zijn ALTIJD actief
+const VIDEO_TYPE_STEPS: Record<string, Record<number, boolean>> = {
+  ai: {
+    0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
+    8: true, 9: false, 10: true, 11: true, 12: false, 13: false, 14: true,
+    15: true, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  spokesperson_ai: {
+    0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
+    8: false, 9: true, 10: true, 11: true, 12: false, 13: false, 14: true,
+    15: true, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  trending: {
+    0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
+    8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
+    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  documentary: {
+    0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
+    8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
+    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  compilation: {
+    0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
+    8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
+    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+  spokesperson: {
+    0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
+    8: false, 9: true, 10: true, 11: false, 12: true, 13: true, 14: false,
+    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    22: true, 23: true, 24: false, 25: true,
+  },
+};
+
+/**
+ * Bepaal of een stap overgeslagen moet worden op basis van videoType
+ */
+function shouldSkipForVideoType(stepNumber: number, videoType: string): boolean {
+  const matrix = VIDEO_TYPE_STEPS[videoType];
+  if (!matrix) return false; // Onbekend type → niet skippen
+  return matrix[stepNumber] === false;
+}
+
 // Mapping: nieuwe stepNumbers → oude executors
 // Stappen die nog niet ready zijn worden automatisch geskipped
 const STEP_EXECUTOR_MAP: Record<number, string> = {
-  0: 'skip',           // Ideation - niet ready
-  1: 'executeStep0',   // Project Formulier (was stap 0)
-  2: 'skip',           // Research JSON - niet ready
-  3: 'executeStep1',   // Transcripts (was stap 1)
-  4: 'skip',           // Trending Clips Research - niet ready
-  5: 'executeStep2',   // Style Profile (was stap 2)
-  6: 'executeStep3',   // Script (was stap 3)
-  7: 'executeStep4',   // Voice Over (was stap 4)
-  8: 'skip',           // Avatar - niet ready
-  9: 'executeStep5',   // Timestamps (was stap 5)
-  10: 'executeStep6',  // Scene Prompts (was stap 6)
-  11: 'executeStep7',  // Assets (was stap 7)
-  12: 'executeStep8',  // Clips (was stap 8)
-  13: 'executeStep6b', // Images (was stap 65/6b)
-  14: 'executeStep9',  // Video Scenes (was stap 9)
-  15: 'skip',          // Orchestrator - niet ready
-  16: 'skip',          // Achtergrondmuziek - niet ready
-  17: 'executeStep11', // Color Grading (was stap 11)
-  18: 'executeStep12', // Subtitles (was stap 12)
-  19: 'skip',          // Overlay - niet ready
-  20: 'executeStep10', // Sound Effects (was stap 10 - video editing)
-  21: 'executeStep10', // Video Effects (was stap 10 - video editing)
-  22: 'executeStep13', // Final Export (was stap 13)
-  23: 'skip',          // Thumbnail - niet ready
-  24: 'executeStep14', // Drive Upload (was stap 14)
+  0: 'auto-complete',             // Ideation - direct completed bij start
+  1: 'executeStep0',             // Project Formulier
+  2: 'executeStepResearch',      // Research JSON - Elevate Sonar / Perplexity
+  3: 'executeStep1',             // Transcripts
+  4: 'executeStepTrendingClips', // Trending Clips - Elevate Sonar / Perplexity
+  5: 'executeStep2',             // Style Profile
+  6: 'executeStepScriptOrchestrator', // Script Orchestrator - Elevate Opus (NIEUW)
+  7: 'executeStep3',             // Script Schrijven
+  8: 'executeStep4',             // Voice Over
+  9: 'skip',                     // Avatar - niet ready
+  10: 'executeStep5',            // Timestamps
+  11: 'executeStep6',            // Scene Prompts
+  12: 'executeStep7',            // Assets Zoeken
+  13: 'executeStep8',            // Clips Downloaden
+  14: 'executeStep6b',           // Images Genereren
+  15: 'executeStep9',            // Video Scenes
+  16: 'executeStepDirectorsCut', // Director's Cut - Claude Opus
+  17: 'skip',                    // Achtergrondmuziek - niet ready
+  18: 'executeStep11',           // Color Grading
+  19: 'executeStep12',           // Subtitles
+  20: 'skip',                    // Overlay - niet ready
+  21: 'executeStepSoundEffects', // Sound Effects - ffmpeg + SFX Library
+  22: 'executeStepVideoEffects', // Video Effects - Python moviepy
+  23: 'executeStepFinalAssembly', // Final Assembly - directors-cut based
+  24: 'skip',                    // Thumbnail - niet ready
+  25: 'executeStep14',           // Drive Upload
 };
 
 // ── Types ──
@@ -90,39 +145,41 @@ const STEP_CONFIG: Record<number, {
 }> = {
   0:  { dependsOn: [],         timeout: 30_000,     maxRetries: 1, retryDelays: [0] },
   1:  { dependsOn: [0],        timeout: 30_000,     maxRetries: 1, retryDelays: [0] },
-  2:  { dependsOn: [1],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  2:  { dependsOn: [1],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   3:  { dependsOn: [1],        timeout: 120_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  4:  { dependsOn: [1],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  4:  { dependsOn: [1],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   5:  { dependsOn: [3],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  6:  { dependsOn: [5],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  7:  { dependsOn: [6],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  8:  { dependsOn: [6],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  9:  { dependsOn: [7],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  10: { dependsOn: [9],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
+  6:  { dependsOn: [2, 4, 5],  timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
+        isCheckpoint: true },
+  7:  { dependsOn: [6],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  8:  { dependsOn: [7],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  9:  { dependsOn: [7],        timeout: 180_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  10: { dependsOn: [8],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  11: { dependsOn: [10],       timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
         checkpointCondition: 'manual_image_mode' },
-  11: { dependsOn: [10],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  12: { dependsOn: [10],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
-  13: { dependsOn: [10],       timeout: 900_000,    maxRetries: 2, retryDelays: [10_000, 30_000],
+  12: { dependsOn: [11],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  13: { dependsOn: [11],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  14: { dependsOn: [11],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [10_000, 30_000],
         checkpointCondition: 'manual_image_mode' },
-  14: { dependsOn: [13],       timeout: 900_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  15: { dependsOn: [14],       timeout: 300_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  16: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  17: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
-  18: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
-  19: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  20: { dependsOn: [15],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  21: { dependsOn: [17, 18, 19, 20], timeout: 3_600_000, maxRetries: 2, retryDelays: [15_000, 30_000] },
-  22: { dependsOn: [21],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
-  23: { dependsOn: [22],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  24: { dependsOn: [22],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  15: { dependsOn: [14],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  16: { dependsOn: [15],       timeout: 300_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  17: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  18: { dependsOn: [16],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  19: { dependsOn: [16],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  20: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  21: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  22: { dependsOn: [15],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [15_000, 30_000] },
+  23: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  24: { dependsOn: [23],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
+  25: { dependsOn: [23],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
 };
 
 // Stap volgorde voor display(stepNumber waarden)
-const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
+const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
 
 // Parallel groep: stappen 65, 7, 8 mogen tegelijk starten zodra stap 6 klaar is
 // Parallel groepen: stappen die tegelijk mogen draaien na hun dependencies
-const PARALLEL_GROUPS = [[11, 12, 13], [17, 18, 19, 20], [23, 24]];
+const PARALLEL_GROUPS = [[12, 13, 14], [18, 19, 20, 21], [24, 25]];
 
 // ── Actieve pipelines in memory ──
 
@@ -153,7 +210,7 @@ async function getSettings() {
   return settings;
 }
 
-function getLlmKeys(settings: any) {
+export function getLlmKeys(settings: any) {
   return { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey };
 }
 
@@ -164,11 +221,19 @@ async function updateStepInDb(projectId: string, stepNumber: number, data: any) 
   });
 }
 
-async function addLog(projectId: string, level: string, step: number, source: string, message: string) {
+export async function addLog(projectId: string, level: string, step: number, source: string, message: string) {
   await prisma.logEntry.create({
     data: { level, step, source, message, projectId },
   });
   console.log(`[Pipeline][${level.toUpperCase()}] Stap ${step}: ${message}`);
+}
+
+export type StepLogger = (message: string, level?: string) => Promise<void>;
+
+export function createStepLogger(projectId: string, stepNumber: number, source: string): StepLogger {
+  return async (message: string, level: string = 'info') => {
+    await addLog(projectId, level, stepNumber, source, message);
+  };
 }
 
 async function updateProjectStatus(projectId: string, status: string) {
@@ -177,23 +242,28 @@ async function updateProjectStatus(projectId: string, status: string) {
 
 function getExecutorName(stepNumber: number): string {
   const map: Record<number, string> = {
-    0: 'App', 1: 'App', 2: 'Perplexity', 3: 'App',
-    4: 'Perplexity', 5: 'Elevate AI', 6: 'Elevate AI', 7: 'Elevate',
-    8: 'HeyGen', 9: 'Assembly AI', 10: 'Elevate AI', 11: 'TwelveLabs + N8N',
-    12: 'N8N', 13: 'Elevate', 14: 'Elevate', 15: 'Claude Opus',
-    16: 'FFMPEG', 17: 'FFMPEG', 18: 'FFMPEG', 19: 'FFMPEG',
-    20: 'FFMPEG', 21: 'FFMPEG', 22: 'FFMPEG', 23: 'App', 24: 'App',
+    0: 'App', 1: 'App', 2: 'Elevate Sonar', 3: 'App',
+    4: 'Elevate Sonar', 5: 'Elevate AI', 6: 'Elevate Opus', 7: 'Elevate AI',
+    8: 'Elevate', 9: 'HeyGen', 10: 'Assembly AI', 11: 'Elevate AI',
+    12: 'TwelveLabs + N8N', 13: 'N8N', 14: 'Elevate', 15: 'Elevate',
+    16: 'Claude Opus', 17: 'FFMPEG', 18: 'FFMPEG', 19: 'FFMPEG',
+    20: 'FFMPEG', 21: 'FFMPEG', 22: 'FFMPEG', 23: 'FFMPEG',
+    24: 'App', 25: 'App',
   };
   return map[stepNumber] || 'App';
 }
 
 function getStepName(stepNumber: number): string {
   const map: Record<number, string> = {
-    0: 'Config validatie', 1: 'Transcripts ophalen', 2: 'Style profile maken',
-    3: 'Script schrijven', 4: 'Voiceover genereren', 5: 'Timestamps genereren',
-    6: 'Script Schrijven', 7: 'Voice Over', 8: 'Avatar / Spokesperson',
-    7: 'Assets zoeken', 8: 'YouTube clips ophalen', 9: 'Video scenes genereren',
-    10: 'Video editing', 11: 'Color grading', 12: 'Subtitles', 13: 'Final export', 14: 'Google Drive upload',
+    0: 'Ideation', 1: 'Project Formulier', 2: 'Research JSON',
+    3: 'Transcripts Ophalen', 4: 'Trending Clips Research', 5: 'Style Profile',
+    6: 'Script Orchestrator', 7: 'Script Schrijven', 8: 'Voice Over',
+    9: 'Avatar / Spokesperson', 10: 'Timestamps Ophalen', 11: 'Scene Prompts',
+    12: 'Assets Zoeken', 13: 'Clips Downloaden', 14: 'Images Genereren',
+    15: 'Video Scenes Genereren', 16: "Director's Cut", 17: 'Achtergrondmuziek',
+    18: 'Color Grading', 19: 'Subtitles', 20: 'Overlay',
+    21: 'Sound Effects', 22: 'Video Effects', 23: 'Final Export',
+    24: 'Thumbnail', 25: 'Drive Upload',
   };
   return map[stepNumber] || `Stap ${stepNumber}`;
 }
@@ -233,6 +303,8 @@ async function executeStepWithRetry(
   const source = getExecutorName(stepNumber);
   const stepName = getStepName(stepNumber);
 
+  const stepLogger = createStepLogger(projectId, stepNumber, source);
+
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
     // Check of pipeline nog draait
     if (state.status !== 'running') {
@@ -268,7 +340,7 @@ async function executeStepWithRetry(
     try {
       // Voer stap uit met timeout
       const result = await Promise.race([
-        executeStepFunction(stepNumber, project, settings, llmKeys),
+        executeStepFunction(stepNumber, project, settings, llmKeys, stepLogger),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error(`Timeout: ${stepName} duurde langer dan ${config.timeout / 1000}s`)),
             config.timeout)
@@ -321,29 +393,42 @@ async function executeStepWithRetry(
 // ── Step function dispatcher ──
 
 async function executeStepFunction(
-  stepNumber: number, project: any, settings: any, llmKeys: any
+  stepNumber: number, project: any, settings: any, llmKeys: any, log?: StepLogger
 ): Promise<any> {
+  
+// ── VideoType-based stap activatie matrix ──
+// Per videotype: welke stappen actief zijn (true = actief, false = skip)
+// Stappen 0 (Ideation) en 1 (Formulier) zijn ALTIJD actief
+
+// Mapping: nieuwe stepNumbers (0-24) → oude executor functies
+  // Stap 0 en 1 worden direct completed bij pipeline start (niet hier)
   switch (stepNumber) {
-    case 0: {
-      const r = await executeStep0(project);
-      if (!r.valid) throw new Error(`Validatie fouten: ${r.errors.join(', ')}`);
-      return { projectPath: r.projectPath };
-    }
-    case 1: return executeStep1(project, settings.youtubeTranscriptApiKey);
-    case 2: return executeStep2(project, llmKeys);
-    case 3: return executeStep3(project, llmKeys);
-    case 4: return executeStep4(project, settings);
-    case 5: return executeStep5(project, settings);
-    case 6: return executeStep6(project, llmKeys);
-    case 13: return executeStep6b(project, settings);
-    case 7: return executeStep7(project, settings);
-    case 8: return executeStep8(project, settings);
-    case 9: return executeStep9(project, settings);
-    case 10: return executeStep10(project, settings);
-    case 11: return executeStep11(project, settings);
-    case 12: return executeStep12(project, settings);
-    case 13: return executeStep13(project, settings);
-    case 14: return executeStep14(project, settings);
+    // Stap 0: Ideation → direct completed bij start
+    // Stap 1: Project Formulier → direct completed bij start
+    case 2: return executeStepResearch(project, settings);                         // Research JSON → Elevate Sonar / Perplexity
+    case 3: return executeStep1(project, settings.youtubeTranscriptApiKey, log);        // Transcripts
+    case 4: return executeStepTrendingClips(project, settings);                    // Trending Clips → Elevate Sonar / Perplexity
+    case 5: return executeStep2(project, llmKeys);                                 // Style Profile
+    case 6: return executeStepScriptOrchestrator(project, settings, llmKeys);      // Script Orchestrator → Elevate Opus
+    case 7: return executeStep3(project, llmKeys, log);                                 // Script Schrijven
+    case 8: return executeStep4(project, settings, log);                                // Voice Over
+    case 9: throw new Error('Avatar/Spokesperson nog niet geïmplementeerd');       // Avatar → HeyGen (TODO)
+    case 10: return executeStep5(project, settings, log);                               // Timestamps
+    case 11: return executeStep6(project, llmKeys, log);                                // Scene Prompts
+    case 12: return executeStep7(project, settings);                               // Assets Zoeken
+    case 13: return executeStep8(project, settings);                               // Clips Downloaden
+    case 14: return executeStep6b(project, settings, log);                              // Images Genereren
+    case 15: return executeStep9(project, settings, log);                               // Video Scenes
+    case 16: return executeStepDirectorsCut(project, settings, llmKeys, log);            // Director's Cut
+    case 17: throw new Error('Achtergrondmuziek nog niet geïmplementeerd');        // Muziek (TODO)
+    case 18: return executeStep11(project, settings);                              // Color Grading
+    case 19: return executeStep12(project, settings);                              // Subtitles
+    case 20: throw new Error('Overlay nog niet geïmplementeerd');                  // Overlay (TODO)
+    case 21: return executeStepSoundEffects(project, settings);                    // Sound Effects
+    case 22: return executeStepVideoEffects(project, settings);                    // Video Effects
+    case 23: return executeStepFinalAssembly(project, settings, log);                   // Final Assembly
+    case 24: throw new Error('Thumbnail nog niet geïmplementeerd');                // Thumbnail (TODO)
+    case 25: return executeStep14(project, settings);                              // Drive Upload
     default: throw new Error(`Stap ${stepNumber} niet geïmplementeerd`);
   }
 }
@@ -355,7 +440,7 @@ function getReadySteps(state: PipelineState, project: any): number[] {
 
   // Special: stap 65 en 9 worden door runSceneStreaming afgehandeld
   // Ze komen NIET in de ready list — de orchestrator start ze apart
-  const STREAMING_STEPS = new Set([65, 9]);
+  const STREAMING_STEPS = new Set<number>(); // Streaming disabled — stap 13+14 draaien als normale stappen // 65=images streaming, 14=video scenes
 
   for (const stepNum of STEP_ORDER) {
     // Scene streaming stappen skippen — worden apart afgehandeld
@@ -385,10 +470,10 @@ function getReadySteps(state: PipelineState, project: any): number[] {
   // Special: check of scene streaming moet starten
   // Conditie: stap 6 is klaar, en 65+9 zijn nog niet gestart/klaar
   if (state.completedSteps.has(6) &&
-      !state.completedSteps.has(65) && !state.completedSteps.has(9) &&
-      !state.skippedSteps.has(65) && !state.skippedSteps.has(9) &&
-      !state.activeSteps.has(65) && !state.activeSteps.has(9)) {
-    ready.push(65); // Marker: 65 in ready = start scene streaming
+      !state.completedSteps.has(65) && !state.completedSteps.has(14) &&
+      !state.skippedSteps.has(65) && !state.skippedSteps.has(14) &&
+      !state.activeSteps.has(65) && !state.activeSteps.has(14)) {
+    // Streaming disabled — 13+14 worden normaal afgehandeld
   }
 
   return ready;
@@ -419,6 +504,7 @@ async function runPipeline(projectId: string) {
   while (state.status === 'running') {
     const freshProject = await getProjectData(projectId);
     const readySteps = getReadySteps(state, freshProject);
+    console.log("[Pipeline DEBUG] Ready steps:", readySteps, "Active:", Array.from(state.activeSteps), "Completed:", Array.from(state.completedSteps), "Skipped:", Array.from(state.skippedSteps));
 
     if (readySteps.length === 0) {
       // Niets meer te doen — zijn we klaar of wachten we?
@@ -469,43 +555,7 @@ async function runPipeline(projectId: string) {
     const stepPromises: Promise<void>[] = [];
 
     for (const stepNum of readySteps) {
-      // Special: stap 65 = start scene streaming (65 + 9 samen)
-      if (stepNum === 13) {
-        state.activeSteps.add(65);
-        state.activeSteps.add(9);
-
-        const streamPromise = (async () => {
-          try {
-            const streamResult = await runSceneStreaming(projectId, state);
-            state.activeSteps.delete(65);
-            state.activeSteps.delete(9);
-
-            if (state.status === 'review') {
-              // Manual mode: 65 staat op review, 9 is nog niet gestart
-              // completedSteps wordt niet gezet — wacht op approve
-              return;
-            }
-
-            // Auto mode: beide stappen zijn klaar
-            state.completedSteps.add(65);
-            if (streamResult.videosCompleted > 0) {
-              state.completedSteps.add(9);
-            } else if (streamResult.totalScenes > 0) {
-              state.failedSteps.set(9, 'Geen video scenes geslaagd');
-            } else {
-              state.skippedSteps.add(65);
-              state.skippedSteps.add(9);
-            }
-          } catch (err: any) {
-            state.activeSteps.delete(65);
-            state.activeSteps.delete(9);
-            state.failedSteps.set(65, err.message || 'Scene streaming mislukt');
-          }
-        })();
-
-        stepPromises.push(streamPromise);
-        continue;
-      }
+      // Scene streaming disabled — stap 13 en 14 draaien als normale stappen
 
       state.activeSteps.add(stepNum);
 
@@ -611,6 +661,54 @@ export async function startPipeline(projectId: string, fromQueue: boolean = fals
 
   activePipelines.set(projectId, state);
 
+  // ── Auto-skip disabled stappen op basis van enabledSteps ──
+  const enabledSteps: number[] = project.enabledSteps ? JSON.parse(project.enabledSteps) : [];
+  const hasEnabledSteps = Array.isArray(enabledSteps) && enabledSteps.length > 0;
+  
+  for (const stepNum of STEP_ORDER) {
+    if (state.completedSteps.has(stepNum) || state.skippedSteps.has(stepNum)) continue;
+    
+    // Skip op basis van videoType matrix
+    const videoType = project.videoType || 'ai';
+    if (shouldSkipForVideoType(stepNum, videoType)) {
+      state.skippedSteps.add(stepNum);
+      await updateStepInDb(projectId, stepNum, { status: 'skipped' });
+      await addLog(projectId, 'info', stepNum, 'App',
+        `${getStepName(stepNum)} overgeslagen (niet actief voor ${videoType})`);
+      continue;
+    }
+
+    // Skip als stap niet in enabledSteps zit (wanneer enabledSteps is ingesteld)
+    if (hasEnabledSteps && !enabledSteps.includes(stepNum)) {
+      state.skippedSteps.add(stepNum);
+      await updateStepInDb(projectId, stepNum, { status: 'skipped' });
+      await addLog(projectId, 'info', stepNum, 'App',
+        `${getStepName(stepNum)} overgeslagen (uitgeschakeld in project config)`);
+      continue;
+    }
+    
+    // Skip stappen die 'skip' als executor hebben in STEP_EXECUTOR_MAP (niet ready)
+    const executorMapping = STEP_EXECUTOR_MAP[stepNum];
+    if (executorMapping === 'skip') {
+      state.skippedSteps.add(stepNum);
+      await updateStepInDb(projectId, stepNum, { status: 'skipped' });
+      await addLog(projectId, 'info', stepNum, 'App',
+        `${getStepName(stepNum)} overgeslagen (nog niet geïmplementeerd)`);
+      continue;
+    }
+  }
+
+  // ── Stap 0 (Ideation) en 1 (Formulier) direct completed ──
+  // Deze stappen zijn al klaar als de pipeline start (het formulier is ingevuld)
+  for (const autoStep of [0, 1]) {
+    if (!state.completedSteps.has(autoStep) && !state.skippedSteps.has(autoStep)) {
+      state.completedSteps.add(autoStep);
+      await updateStepInDb(projectId, autoStep, { status: 'completed', duration: 0 });
+      await addLog(projectId, 'info', autoStep, 'App',
+        `${getStepName(autoStep)} automatisch voltooid`);
+    }
+  }
+
   await updateProjectStatus(projectId, 'running');
   await prisma.project.update({
     where: { id: projectId },
@@ -647,6 +745,7 @@ export async function pausePipeline(projectId: string): Promise<{ success: boole
 export async function resumePipeline(projectId: string): Promise<{ success: boolean }> {
   const state = activePipelines.get(projectId);
   if (state && state.status === 'paused') {
+    state.activeSteps.clear(); // Reset actieve stappen bij hervatten
     state.status = 'running';
     await updateProjectStatus(projectId, 'running');
     await addLog(projectId, 'info', 0, 'App', 'Pipeline hervat');
