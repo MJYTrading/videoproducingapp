@@ -376,7 +376,7 @@ router.get('/:id/image-file/*', async (req: Request, res: Response) => {
   }
 });
 
-export default router;
+
 
 // Lees project bestand (research.json, clips-research.json, style-profile.json, etc.)
 router.get('/:id/file/:filepath(*)', async (req: Request, res: Response) => {
@@ -407,3 +407,5 @@ router.get('/:id/file/:filepath(*)', async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+export default router;
