@@ -221,23 +221,39 @@ export async function executeFinalAssembly(project: any, settings: any): Promise
   const finalPath = path.join(outputDir, 'final.mp4');
 
   if (hasVoiceover || hasMusic || hasSfx) {
+    // ── Audio Loudness Normalisatie (EBU R128) ──
+    // Stap 1: Normaliseer elke audio track individueel naar target LUFS
+    // Stap 2: Mix alle genormaliseerde tracks
+    // Stap 3: Finale loudnorm op de hele mix (YouTube target: -14 LUFS)
+    //
+    // Targets:
+    //   Voiceover: -16 LUFS (primaire audio, moet duidelijk hoorbaar zijn)
+    //   SFX:       -18 LUFS (iets onder voiceover, maar duidelijk)
+    //   Music:     -30 LUFS (achtergrond, niet afleidend van voiceover)
+
     let audioInputs = '';
     const filterParts: string[] = [];
     let streamIdx = 1;
 
     if (hasVoiceover) {
       audioInputs += ` -i "${voiceoverPath}"`;
-      filterParts.push(`[${streamIdx}:a]volume=1.0[vo]`);
+      filterParts.push(
+        `[${streamIdx}:a]loudnorm=I=-16:TP=-1.5:LRA=11:print_format=none[vo]`
+      );
       streamIdx++;
     }
     if (hasMusic) {
       audioInputs += ` -i "${musicPath}"`;
-      filterParts.push(`[${streamIdx}:a]volume=0.12[bg]`);
+      filterParts.push(
+        `[${streamIdx}:a]loudnorm=I=-30:TP=-2:LRA=7:print_format=none[bg]`
+      );
       streamIdx++;
     }
     if (hasSfx) {
       audioInputs += ` -i "${sfxPath}"`;
-      filterParts.push(`[${streamIdx}:a]volume=0.4[sfx]`);
+      filterParts.push(
+        `[${streamIdx}:a]loudnorm=I=-18:TP=-1.5:LRA=11:print_format=none[sfx]`
+      );
       streamIdx++;
     }
 
@@ -246,8 +262,12 @@ export async function executeFinalAssembly(project: any, settings: any): Promise
     if (hasMusic) mixStreams.push('[bg]');
     if (hasSfx) mixStreams.push('[sfx]');
 
+    // Mix alle streams samen, dan finale loudnorm naar YouTube standaard (-14 LUFS)
     filterParts.push(
-      `${mixStreams.join('')}amix=inputs=${mixStreams.length}:duration=longest:dropout_transition=2[aout]`
+      `${mixStreams.join('')}amix=inputs=${mixStreams.length}:duration=longest:dropout_transition=2[amixed]`
+    );
+    filterParts.push(
+      `[amixed]loudnorm=I=-14:TP=-1:LRA=11:print_format=none[aout]`
     );
 
     const filterComplex = filterParts.join('; ');

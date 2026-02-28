@@ -15,7 +15,7 @@
 import prisma from '../db.js';
 import {
   executeStepResearch, executeStepTrendingClips, executeStepScriptOrchestrator, executeStepDirectorsCut,
-  executeStepSoundEffects, executeStepVideoEffects, executeStepFinalAssembly,
+  executeStepBackgroundMusic, executeStepSoundEffects, executeStepVideoEffects, executeStepFinalAssembly,
   executeStep0, executeStep1, executeStep2, executeStep3,
   executeStep4, executeStep5, executeStep6, executeStep6b,
   executeStep7, executeStep8, executeStep9, executeStep14,
@@ -25,43 +25,43 @@ import {
 // ── VideoType-based stap activatie matrix ──
 // Per videotype: welke stappen actief zijn (true = actief, false = skip)
 // Stappen 0 (Ideation) en 1 (Formulier) zijn ALTIJD actief
-// Stappen 17 (Muziek), 18 (Color Grading), 19 (Subtitles), 20 (Overlay) zijn ALTIJD skip
+// Stappen 18 (Color Grading), 19 (Subtitles), 20 (Overlay) zijn ALTIJD skip
 //   → Color Grading en Subtitles zitten nu in stap 23 (Final Assembly)
 const VIDEO_TYPE_STEPS: Record<string, Record<number, boolean>> = {
   ai: {
     0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
     8: true, 9: false, 10: true, 11: true, 12: false, 13: false, 14: true,
-    15: true, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
+    15: true, 16: true, 17: true, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   spokesperson_ai: {
     0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
     8: false, 9: true, 10: true, 11: true, 12: false, 13: false, 14: true,
-    15: true, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
+    15: true, 16: true, 17: true, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   trending: {
     0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
     8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
-    15: false, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
+    15: false, 16: true, 17: true, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   documentary: {
     0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
     8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
-    15: false, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
+    15: false, 16: true, 17: true, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   compilation: {
     0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
     8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
-    15: false, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
+    15: false, 16: true, 17: true, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   spokesperson: {
     0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
     8: false, 9: true, 10: true, 11: false, 12: true, 13: true, 14: false,
-    15: false, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
+    15: false, 16: true, 17: true, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
 };
@@ -95,7 +95,7 @@ const STEP_EXECUTOR_MAP: Record<number, string> = {
   14: 'executeStep6b',           // Images Genereren
   15: 'executeStep9',            // Video Scenes
   16: 'executeStepDirectorsCut', // Director's Cut - Claude Opus
-  17: 'skip',                    // Achtergrondmuziek - niet ready
+  17: 'executeStepBackgroundMusic', // Achtergrondmuziek - mood matching + ducking
   18: 'skip',                    // Color Grading — zit nu in Final Assembly (stap 23)
   19: 'skip',                    // Subtitles — zit nu in Final Assembly (stap 23)
   20: 'skip',                    // Overlay - niet ready
@@ -161,7 +161,7 @@ const STEP_CONFIG: Record<number, {
   21: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
   22: { dependsOn: [16],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [15_000, 30_000] },
   // FIXED: Final Assembly wacht op Director's Cut (16) + Sound Effects (21) + Video Effects (22)
-  23: { dependsOn: [16, 21, 22], timeout: 1_800_000, maxRetries: 2, retryDelays: [10_000, 30_000] },
+  23: { dependsOn: [16, 17, 21, 22], timeout: 1_800_000, maxRetries: 2, retryDelays: [10_000, 30_000] },
   24: { dependsOn: [23],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
   25: { dependsOn: [23],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
 };
@@ -170,7 +170,7 @@ const STEP_CONFIG: Record<number, {
 const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
 
 // Parallel groepen: stappen die tegelijk mogen draaien na hun dependencies
-const PARALLEL_GROUPS = [[12, 13, 14], [21, 22], [24, 25]];
+const PARALLEL_GROUPS = [[12, 13, 14], [17, 21, 22], [24, 25]];
 
 // ── Actieve pipelines in memory ──
 
@@ -411,7 +411,7 @@ async function executeStepFunction(
     case 14: return executeStep6b(project, settings, log);                              // Images Genereren
     case 15: return executeStep9(project, settings, log);                               // Video Scenes
     case 16: return executeStepDirectorsCut(project, settings, llmKeys, log);            // Director's Cut
-    case 17: throw new Error('Achtergrondmuziek nog niet geïmplementeerd');        // Muziek (TODO)
+    case 17: return executeStepBackgroundMusic(project, settings);                  // Achtergrondmuziek
     case 18: return { skipped: true, reason: 'Color Grading zit nu in Final Assembly (stap 23)' };
     case 19: return { skipped: true, reason: 'Subtitles zitten nu in Final Assembly (stap 23)' };
     case 20: throw new Error('Overlay nog niet geïmplementeerd');                  // Overlay (TODO)

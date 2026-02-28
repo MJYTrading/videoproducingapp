@@ -2172,6 +2172,16 @@ export async function executeStepDirectorsCut(project: any, settings: any, llmKe
 }
 
 // ══════════════════════════════════════════════════
+// STAP 17: BACKGROUND MUSIC
+// ══════════════════════════════════════════════════
+
+import { executeBackgroundMusic } from './background-music.js';
+
+export async function executeStepBackgroundMusic(project: any, settings: any, log?: any): Promise<any> {
+  return executeBackgroundMusic(project, settings);
+}
+
+// ══════════════════════════════════════════════════
 // STAP 21: SOUND EFFECTS
 // ══════════════════════════════════════════════════
 
