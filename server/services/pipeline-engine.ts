@@ -148,7 +148,7 @@ const STEP_CONFIG: Record<number, {
   10: { dependsOn: [8],        timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   11: { dependsOn: [10],       timeout: 300_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000],
         checkpointCondition: 'manual_image_mode' },
-  12: { dependsOn: [10, 11],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
+  12: { dependsOn: [10],            timeout: 5_400_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },  // 90 min timeout
   13: { dependsOn: [10, 11],       timeout: 600_000,    maxRetries: 3, retryDelays: [5_000, 15_000, 30_000] },
   14: { dependsOn: [11],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [10_000, 30_000],
         checkpointCondition: 'manual_image_mode' },
@@ -236,7 +236,7 @@ function getExecutorName(stepNumber: number): string {
     0: 'App', 1: 'App', 2: 'Elevate Sonar', 3: 'App',
     4: 'Elevate Sonar', 5: 'Elevate AI', 6: 'Elevate Opus', 7: 'Elevate AI',
     8: 'Elevate', 9: 'HeyGen', 10: 'Assembly AI', 11: 'Elevate AI',
-    12: 'TwelveLabs + N8N', 13: 'N8N', 14: 'Elevate', 15: 'Elevate',
+    12: 'Sonar + TwelveLabs', 13: 'N8N', 14: 'Elevate', 15: 'Elevate',
     16: 'Claude Opus', 17: 'FFMPEG', 18: 'FFMPEG', 19: 'FFMPEG',
     20: 'FFMPEG', 21: 'FFMPEG', 22: 'FFMPEG', 23: 'FFMPEG',
     24: 'App', 25: 'App',

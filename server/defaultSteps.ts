@@ -19,7 +19,7 @@ export const DEFAULT_STEPS: StepDefinition[] = [
   { stepNumber: 9,  name: 'Avatar / Spokesperson',      description: 'Het invoeren van de avatar / spokesperson',    executor: 'HeyGen',          readyToUse: false },
   { stepNumber: 10, name: 'Timestamps Ophalen',         description: 'Het ophalen van de timestamps van de tekst',   executor: 'Assembly AI',      readyToUse: true },
   { stepNumber: 11, name: 'Scene Prompts',              description: 'Het genereren van image prompts',              executor: 'Elevate AI',       readyToUse: true },
-  { stepNumber: 12, name: 'Assets Zoeken',              description: 'Het zoeken van benodigde assets',              executor: 'TwelveLabs + N8N', readyToUse: true },
+  { stepNumber: 12, name: 'Assets Zoeken',              description: 'B-roll footage zoeken en downloaden',        executor: 'Sonar + TwelveLabs', readyToUse: true },
   { stepNumber: 13, name: 'Clips Downloaden',           description: 'Het downloaden van benodigde clips',           executor: 'N8N',              readyToUse: true },
   { stepNumber: 14, name: 'Images Genereren',           description: 'Het genereren van images',                     executor: 'Elevate',          readyToUse: true },
   { stepNumber: 15, name: 'Video Scenes Genereren',     description: 'Het genereren van videos',                     executor: 'Elevate',          readyToUse: true },

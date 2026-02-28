@@ -1345,81 +1345,64 @@ export async function executeStep5(project: any, settings: any, log: StepLogger 
 
 export async function executeStep7(project: any, settings: any) {
   const projPath = projectDir(project.name);
-  const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
 
-  let scenePrompts: any;
+  // Stap 12 draait NIET bij AI type — die gebruikt stap 14+15
+  const videoType = (project.videoType || project.type || '').toLowerCase();
+  const aiTypes = ['ai', 'ai-generated', 'ai_generated'];
+  if (aiTypes.includes(videoType)) {
+    console.log(`[Step 12] Video type "${videoType}" is AI — stap overgeslagen (gebruikt stap 14+15)`);
+    return { skipped: true, reason: `Video type "${videoType}" gebruikt AI-generatie (stap 14+15), niet B-roll` };
+  }
+
+  // Check of timestamps bestaan (vereist)
+  const timestampsPath = path.join(projPath, 'audio', 'timestamps.json');
   try {
-    scenePrompts = await readJson(scenePromptsPath);
+    await fs.access(timestampsPath);
   } catch {
-    console.log('[Step 12] scene-prompts.json niet gevonden, skip...'); return { skipped: true, reason: 'Geen scene-prompts.json (stap 11 niet actief voor dit video type)' };
+    throw new Error('timestamps.json niet gevonden — stap 10 moet eerst voltooid zijn');
   }
 
-  const realImageScenes = (scenePrompts.scenes || []).filter(
-    (s: any) => s.asset_type === 'real_image'
-  );
+  // Haal kanaal naam op voor TwelveLabs index
+  let channelName: string | undefined;
+  try {
+    const projectData = await readJson<any>(path.join(projPath, 'project.json'));
+    channelName = projectData.channelName || projectData.channel_name;
+  } catch {}
 
-  if (realImageScenes.length === 0) {
-    console.log('[Step 12] Geen real_image scenes gevonden — stap overgeslagen');
-    return {
-      skipped: true,
-      reason: 'Geen scenes met asset_type "real_image" in scene-prompts.json',
-      totalScenes: scenePrompts.scenes?.length || 0,
-      realImageScenes: 0,
-    };
-  }
+  // Import en run de B-Roll pipeline
+  const { executeAssetSearch } = await import('./asset-search.js');
 
-  // Gebruik AssetSearchService
-  const { AssetSearchService } = await import('./asset-search.js');
-  const { getLlmKeys } = await import('./pipeline-engine.js');
-
-  const assetService = new AssetSearchService({
-    n8nBaseUrl: settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud',
-    pexelsApiKey: settings.pexelsApiKey || 'dCnXQyimW0Ds7Vw7OjvB2xDxAfeqQbhkOZpD9ZcS3lDbBtuIFVk7om43',
-    twelveLabsApiKey: settings.twelveLabsApiKey || '',
-    enableTwelveLabsValidation: !!settings.twelveLabsApiKey,
+  const plan = await executeAssetSearch({
+    projectDir: projPath,
+    projectName: project.name,
+    channelName,
+    settings,
+    videoType,
   });
 
-  const sceneRequests = realImageScenes.map((scene: any) => ({
-    sceneId: scene.id,
-    text: scene.text || '',
-    visualPrompt: scene.visual_prompt || scene.text || '',
-    duration: scene.duration || 5,
-    assetType: scene.asset_type || 'real_image',
-  }));
-
-  const outputFormat = project.output === 'youtube_short' ? 'portrait' : 'landscape';
-  const llmKeys = getLlmKeys(settings);
-
-  console.log(`[Step 12] ${sceneRequests.length} assets zoeken via AssetSearchService...`);
-
-  const results = await assetService.searchForScenes(sceneRequests, projPath, outputFormat, llmKeys);
-
-  // Sla asset-map op
+  // Bewaar ook asset-map.json voor backwards compatibility met andere stappen
   const assetMap = {
-    scenes: results.map(r => ({
-      scene_id: r.sceneId,
-      asset_path: r.assetPath,
-      source: r.source,
-      asset_clip_id: r.assetClipId || null,
-      quality_score: r.qualityScore,
-      is_video: r.isVideo,
+    scenes: plan.segments.map(s => ({
+      scene_id: s.id,
+      asset_path: s.file_path,
+      source: s.source,
+      asset_clip_id: s.asset_clip_id || null,
+      quality_score: s.twelve_labs_score || null,
+      is_video: s.asset_type === 'video',
     })),
   };
-
   await writeJson(path.join(projPath, 'assets', 'asset-map.json'), assetMap);
-
-  const found = results.filter(r => r.assetPath).length;
-  const fromLibrary = results.filter(r => r.source === 'library').length;
-
-  console.log(`[Step 12] Assets klaar! ${found}/${results.length} gevonden (${fromLibrary} uit library)`);
 
   return {
     skipped: false,
-    assetsFound: found,
-    assetsFailed: results.length - found,
-    total: results.length,
-    fromLibrary,
-    fromDownload: found - fromLibrary,
+    totalSegments: plan.stats.total_segments,
+    fromDatabase: plan.stats.from_database,
+    fromTwelveLabs: plan.stats.from_twelve_labs,
+    fromYouTube: plan.stats.from_youtube_new,
+    fromGoogleImage: plan.stats.from_google_image,
+    failed: plan.stats.failed,
+    totalTimeMs: plan.stats.total_time_ms,
+    clipGaps: plan.clip_gaps.length,
   };
 }
 

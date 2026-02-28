@@ -231,6 +231,65 @@ export default function PreviewTab({ project }: PreviewTabProps) {
         );
       }
 
+      case 12: { // Assets Zoeken (B-Roll)
+        const total = result?.totalSegments || result?.total || 0;
+        const fromDb = result?.fromDatabase || 0;
+        const fromTL = result?.fromTwelveLabs || 0;
+        const fromYT = result?.fromYouTube || 0;
+        const fromImg = result?.fromGoogleImage || 0;
+        const failed = result?.failed || 0;
+        const timeMs = result?.totalTimeMs || 0;
+        const found = total - failed;
+        const pct = total > 0 ? Math.round((found / total) * 100) : 0;
+        return (
+          <div>
+            <div className="flex gap-2 mb-3 flex-wrap">
+              <span className="text-[11px] px-2 py-0.5 bg-brand-500/15 text-brand-300 rounded-md border border-brand-500/20">{total} segmenten</span>
+              <span className="text-[11px] px-2 py-0.5 bg-emerald-500/15 text-emerald-300 rounded-md border border-emerald-500/20">{pct}% gevonden</span>
+              {timeMs > 0 && <span className="text-[11px] px-2 py-0.5 bg-surface-200 text-zinc-400 rounded-md border border-white/[0.04]">{(timeMs / 1000).toFixed(0)}s</span>}
+            </div>
+            <div className="grid grid-cols-5 gap-2 mb-3">
+              <div className="bg-surface-100 rounded-lg p-2 border border-white/[0.04] text-center">
+                <p className="text-[10px] text-zinc-600">Database</p>
+                <p className="text-sm font-bold text-zinc-300">{fromDb}</p>
+              </div>
+              <div className="bg-surface-100 rounded-lg p-2 border border-white/[0.04] text-center">
+                <p className="text-[10px] text-zinc-600">TwelveLabs</p>
+                <p className="text-sm font-bold text-zinc-300">{fromTL}</p>
+              </div>
+              <div className="bg-surface-100 rounded-lg p-2 border border-white/[0.04] text-center">
+                <p className="text-[10px] text-zinc-600">YouTube</p>
+                <p className="text-sm font-bold text-zinc-300">{fromYT}</p>
+              </div>
+              <div className="bg-surface-100 rounded-lg p-2 border border-white/[0.04] text-center">
+                <p className="text-[10px] text-zinc-600">Images</p>
+                <p className="text-sm font-bold text-zinc-300">{fromImg}</p>
+              </div>
+              <div className="bg-surface-100 rounded-lg p-2 border border-white/[0.04] text-center">
+                <p className="text-[10px] text-zinc-600">Mislukt</p>
+                <p className={`text-sm font-bold ${failed > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{failed}</p>
+              </div>
+            </div>
+            {/* Progress bar */}
+            <div className="w-full bg-surface-300 rounded-full h-2 overflow-hidden">
+              <div className="h-full flex">
+                {fromDb > 0 && <div className="bg-blue-500 h-full" style={{ width: `${(fromDb / total) * 100}%` }} />}
+                {fromTL > 0 && <div className="bg-purple-500 h-full" style={{ width: `${(fromTL / total) * 100}%` }} />}
+                {fromYT > 0 && <div className="bg-red-500 h-full" style={{ width: `${(fromYT / total) * 100}%` }} />}
+                {fromImg > 0 && <div className="bg-emerald-500 h-full" style={{ width: `${(fromImg / total) * 100}%` }} />}
+                {failed > 0 && <div className="bg-zinc-700 h-full" style={{ width: `${(failed / total) * 100}%` }} />}
+              </div>
+            </div>
+            <div className="flex gap-3 mt-2 text-[10px] text-zinc-500">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 bg-blue-500 rounded-full inline-block" />DB</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 bg-purple-500 rounded-full inline-block" />TL</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 bg-red-500 rounded-full inline-block" />YT</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 bg-emerald-500 rounded-full inline-block" />IMG</span>
+            </div>
+          </div>
+        );
+      }
+
       case 23: { // Final Export
         return (
           <div>
