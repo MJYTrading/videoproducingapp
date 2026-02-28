@@ -1,3 +1,4 @@
+import { projects } from '../api';
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, RotateCcw, Undo2, SkipForward, Bot, CheckCircle, X } from 'lucide-react';
 import { Project, Step, StepStatus } from '../types';
@@ -233,7 +234,7 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                             onClick={async () => {
                               setLoadingFiles(prev => ({ ...prev, [step.id]: true }));
                               try {
-                                const data = await api.projects.loadProjectFile(project.id, filePath);
+                                const data = await projects.loadProjectFile(project.id, filePath);
                                 if (data) setExpandedFiles(prev => ({ ...prev, [step.id]: data }));
                               } catch {}
                               setLoadingFiles(prev => ({ ...prev, [step.id]: false }));
