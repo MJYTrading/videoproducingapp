@@ -28,6 +28,7 @@ interface Store {
   resumePipeline: (projectId: string) => void;
   retryStep: (projectId: string, stepNumber: number) => void;
   skipStep: (projectId: string, stepNumber: number) => void;
+  rollbackToStep: (projectId: string, stepNumber: number) => void;
   retryFailed: (projectId: string) => void;
   forceContinue: (projectId: string) => void;
   submitFeedback: (projectId: string, stepNumber: number, feedback: string) => void;
@@ -218,6 +219,16 @@ export const useStore = create<Store>((set, get) => ({
       setTimeout(() => get().refreshProject(projectId), 500);
     } catch (error: any) {
       get().addToast('Overslaan mislukt: ' + error.message, 'error');
+    }
+  },
+
+  rollbackToStep: async (projectId: string, stepNumber: number) => {
+    try {
+      const result = await api.pipelineEngine.rollback(projectId, stepNumber);
+      get().addToast(`Pipeline teruggetrokken naar stap ${stepNumber} (${result.stepName})`, 'info');
+      setTimeout(() => get().refreshProject(projectId), 500);
+    } catch (error: any) {
+      get().addToast('Rollback mislukt: ' + error.message, 'error');
     }
   },
 

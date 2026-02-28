@@ -213,3 +213,70 @@ router.post('/queue/start-next', async (_req: Request, res: Response) => {
 });
 
 export default router;
+
+// Pipeline terugtrekken naar een specifieke stap
+// Alle stappen VANAF targetStep worden gereset naar 'pending'
+// Alle stappen VOOR targetStep blijven 'completed'
+router.post('/:id/rollback/:step', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.params.id;
+    const targetStep = parseInt(req.params.step);
+    
+    if (isNaN(targetStep) || targetStep < 0 || targetStep > 25) {
+      return res.status(400).json({ error: 'Ongeldig stapnummer (0-25)' });
+    }
+
+    // Pauzeer pipeline eerst
+    try { await pausePipeline(projectId); } catch {}
+
+    // Reset alle stappen >= targetStep naar pending
+    const stepsReset = await prisma.step.updateMany({
+      where: {
+        projectId,
+        stepNumber: { gte: targetStep },
+      },
+      data: {
+        status: 'pending',
+        result: null,
+        error: null,
+        duration: null,
+        startedAt: null,
+        retryCount: 0,
+      },
+    });
+
+    // Zorg dat alle stappen < targetStep op completed staan (als ze niet skipped zijn)
+    await prisma.step.updateMany({
+      where: {
+        projectId,
+        stepNumber: { lt: targetStep },
+        status: { notIn: ['completed', 'skipped'] },
+      },
+      data: { status: 'completed' },
+    });
+
+    // Zet project op paused zodat gebruiker op 'Hervatten' kan klikken
+    await prisma.project.update({
+      where: { id: projectId },
+      data: { status: 'paused' },
+    });
+
+    const stepName = await prisma.step.findFirst({
+      where: { projectId, stepNumber: targetStep },
+      select: { name: true },
+    });
+
+    console.log(`[Pipeline] Rollback naar stap ${targetStep} (${stepName?.name}) — ${stepsReset.count} stappen gereset`);
+
+    res.json({
+      success: true,
+      targetStep,
+      stepName: stepName?.name || `Stap ${targetStep}`,
+      stepsReset: stepsReset.count,
+      message: `Pipeline teruggetrokken naar stap ${targetStep}. Klik Hervatten om te starten.`,
+    });
+  } catch (error: any) {
+    console.error('Pipeline rollback error:', error);
+    res.status(500).json({ error: error.message || 'Rollback mislukt' });
+  }
+});

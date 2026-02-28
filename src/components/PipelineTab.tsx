@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, RotateCcw, SkipForward, Bot, CheckCircle, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, RotateCcw, Undo2, SkipForward, Bot, CheckCircle, X } from 'lucide-react';
 import { Project, Step, StepStatus } from '../types';
 import { useStore } from '../store';
 import ReviewPanel from './ReviewPanel';
@@ -16,6 +16,7 @@ export default function PipelineTab({ project }: PipelineTabProps) {
   const [aiThinking, setAiThinking] = useState<{ [key: number]: boolean }>({});
   const [aiResponse, setAiResponse] = useState<{ [key: number]: any }>({});
   const retryStep = useStore((state) => state.retryStep);
+  const rollbackToStep = useStore((state) => state.rollbackToStep);
   const skipStep = useStore((state) => state.skipStep);
 
   // Filter op enabledSteps
@@ -230,6 +231,18 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                     className="btn-secondary text-xs py-1.5"
                   >
                     <SkipForward className="w-3.5 h-3.5" /> Skip
+                  </button>
+                )}
+                {step.status === 'completed' && step.id > 0 && (
+                  <button
+                    onClick={() => {
+                      if (confirm(`Pipeline terugtrekken naar stap ${step.id} (${step.name})? Alle stappen vanaf hier worden gereset.`)) {
+                        rollbackToStep(project.id, step.id);
+                      }
+                    }}
+                    className="btn-secondary text-xs py-1.5 text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
+                  >
+                    <Undo2 className="w-3.5 h-3.5" /> Reset tot hier
                   </button>
                 )}
               </div>

@@ -2250,7 +2250,7 @@ Maak een gedetailleerde outline/blueprint voor deze video. Gebruik ALLE beschikb
 
   const response = await llmSimplePrompt(llmKeys, systemPrompt, userPrompt, {
     model: LLM_MODELS.OPUS,
-    maxTokens: 8192,
+    maxTokens: 16384,
     temperature: 0.6,
   });
 

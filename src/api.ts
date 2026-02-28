@@ -209,6 +209,11 @@ export const pipelineEngine = {
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Kon stap niet opnieuw starten'); }
     return res.json();
   },
+  async rollback(projectId: string, stepNumber: number): Promise<any> {
+    const res = await apiFetch(`/pipeline/${projectId}/rollback/${stepNumber}`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Rollback mislukt'); }
+    return res.json();
+  },
   async approveScene(projectId: string, sceneId: number, imagePath: string, clipOption: string): Promise<any> {
     const res = await apiFetch(`/pipeline/${projectId}/approve-scene`, {
       method: 'POST', body: JSON.stringify({ sceneId, imagePath, clipOption }),
