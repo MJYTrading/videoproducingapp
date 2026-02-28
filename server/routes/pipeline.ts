@@ -377,3 +377,33 @@ router.get('/:id/image-file/*', async (req: Request, res: Response) => {
 });
 
 export default router;
+
+// Lees project bestand (research.json, clips-research.json, style-profile.json, etc.)
+router.get('/:id/file/:filepath(*)', async (req: Request, res: Response) => {
+  try {
+    const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!project) return res.status(404).json({ error: 'Project niet gevonden' });
+
+    const basePath = `/root/.openclaw/workspace/projects/${project.name}`;
+    const filePath = `${basePath}/${req.params.filepath}`;
+
+    // Security: voorkom directory traversal
+    if (filePath.includes('..') || !filePath.startsWith(basePath)) {
+      return res.status(403).json({ error: 'Geen toegang' });
+    }
+
+    const fs = await import('fs/promises');
+    const content = await fs.readFile(filePath, 'utf-8');
+
+    // Probeer JSON te parsen
+    try {
+      const json = JSON.parse(content);
+      res.json(json);
+    } catch {
+      res.type('text/plain').send(content);
+    }
+  } catch (error: any) {
+    if (error.code === 'ENOENT') return res.status(404).json({ error: 'Bestand niet gevonden' });
+    res.status(500).json({ error: error.message });
+  }
+});

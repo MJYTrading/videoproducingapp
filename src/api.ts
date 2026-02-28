@@ -348,6 +348,12 @@ export const voices = {
 
 export const ideation = {
   // Brainstorm
+  async loadProjectFile(projectId: string, filepath: string): Promise<any> {
+    const res = await apiFetch(`/projects/${projectId}/file/${filepath}`);
+    if (!res.ok) return null;
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return text; }
+  },
   async brainstorm(data: { channelId: string; topic?: string; mode?: string; researchContext?: string }): Promise<any> {
     const res = await apiFetch('/ideation/brainstorm', { method: 'POST', body: JSON.stringify(data) });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Brainstorm mislukt'); }

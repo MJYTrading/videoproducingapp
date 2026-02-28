@@ -16,6 +16,8 @@ export default function PipelineTab({ project }: PipelineTabProps) {
   const [aiThinking, setAiThinking] = useState<{ [key: number]: boolean }>({});
   const [aiResponse, setAiResponse] = useState<{ [key: number]: any }>({});
   const retryStep = useStore((state) => state.retryStep);
+  const [expandedFiles, setExpandedFiles] = useState<Record<number, any>>({});
+  const [loadingFiles, setLoadingFiles] = useState<Record<number, boolean>>({});
   const rollbackToStep = useStore((state) => state.rollbackToStep);
   const skipStep = useStore((state) => state.skipStep);
 
@@ -222,16 +224,51 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                   <div className="p-4 bg-surface-200 border border-white/[0.04] rounded-lg mb-3">
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-xs text-zinc-500 font-semibold">Resultaat</p>
-                      <button
-                        onClick={() => {
-                          const el = document.getElementById(`result-${step.id}`);
-                          if (el) el.classList.toggle('max-h-[400px]');
-                          if (el) el.classList.toggle('max-h-[2000px]');
-                        }}
-                        className="text-[11px] text-brand-400 hover:text-brand-300"
-                      >
-                        Expand / Collapse
-                      </button>
+                      
+                const fileMap: Record<string, string> = {
+                  researchFile: 'research/research.json',
+                  clipsFile: 'research/clips-research.json',
+                  outlineFile: 'script_outline.json',
+                };
+                const filePath = parsed?.researchFile ? fileMap.researchFile
+                  : parsed?.clipsFile ? fileMap.clipsFile
+                  : parsed?.outlineFile ? (parsed.outlineFile.endsWith('.json') ? parsed.outlineFile : 'script_outline.json')
+                  : parsed?._source ? 'script/style-profile.json'
+                  : null;
+<div className="flex gap-3">
+                        {filePath && !expandedFiles[step.id] && (
+                          <button
+                            onClick={async () => {
+                              setLoadingFiles(prev => ({ ...prev, [step.id]: true }));
+                              try {
+                                const data = await api.projects.loadProjectFile(project.id, filePath);
+                                if (data) setExpandedFiles(prev => ({ ...prev, [step.id]: data }));
+                              } catch {}
+                              setLoadingFiles(prev => ({ ...prev, [step.id]: false }));
+                            }}
+                            className="text-xs text-brand-400 hover:text-brand-300"
+                          >
+                            {loadingFiles[step.id] ? 'Laden...' : 'Toon bestand'}
+                          </button>
+                        )}
+                        {expandedFiles[step.id] && (
+                          <button
+                            onClick={() => setExpandedFiles(prev => { const n = {...prev}; delete n[step.id]; return n; })}
+                            className="text-xs text-amber-400 hover:text-amber-300"
+                          >
+                            Verberg bestand
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            const el = document.getElementById(`result-${step.id}`);
+                            if (el) { el.style.maxHeight = el.style.maxHeight === '2000px' ? '400px' : '2000px'; }
+                          }}
+                          className="text-xs text-zinc-500 hover:text-zinc-300"
+                        >
+                          ↕ Resize
+                        </button>
+                      </div>
                     </div>
                     <pre
                       id={`result-${step.id}`}
@@ -244,6 +281,17 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                           : String(parsed).slice(0, 50000)
                       }
                     </pre>
+                    {expandedFiles[step.id] && (
+                      <div className="mt-3 border-t border-white/[0.06] pt-3">
+                        <p className="text-xs text-brand-400 font-semibold mb-2">📄 Bestandsinhoud</p>
+                        <pre className="text-sm text-zinc-300 overflow-x-auto max-h-[600px] overflow-y-auto font-mono whitespace-pre-wrap leading-relaxed bg-surface-300/40 p-3 rounded-lg">
+                          {typeof expandedFiles[step.id] === 'object'
+                            ? JSON.stringify(expandedFiles[step.id], null, 2)
+                            : String(expandedFiles[step.id])
+                          }
+                        </pre>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
