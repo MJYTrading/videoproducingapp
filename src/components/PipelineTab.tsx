@@ -225,8 +225,8 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                       <button
                         onClick={() => {
                           const el = document.getElementById(`result-${step.id}`);
-                          if (el) el.classList.toggle('max-h-48');
-                          if (el) el.classList.toggle('max-h-[600px]');
+                          if (el) el.classList.toggle('max-h-[400px]');
+                          if (el) el.classList.toggle('max-h-[2000px]');
                         }}
                         className="text-[11px] text-brand-400 hover:text-brand-300"
                       >
@@ -235,13 +235,13 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                     </div>
                     <pre
                       id={`result-${step.id}`}
-                      className="text-sm text-zinc-300 overflow-x-auto max-h-48 overflow-y-auto font-mono whitespace-pre-wrap leading-relaxed"
+                      className="text-sm text-zinc-300 overflow-x-auto max-h-[400px] overflow-y-auto font-mono whitespace-pre-wrap leading-relaxed"
                     >
                       {hasScript
-                        ? (parsed.script || parsed.scriptVoiceover || '').slice(0, 2000) + (((parsed.script || '').length > 2000) ? '\n\n... [truncated]' : '')
+                        ? (parsed.script || parsed.scriptVoiceover || '')
                         : typeof parsed === 'object'
                           ? JSON.stringify(parsed, null, 2)
-                          : String(parsed)
+                          : String(parsed).slice(0, 50000)
                       }
                     </pre>
                   </div>
