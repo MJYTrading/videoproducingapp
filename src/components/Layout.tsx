@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Film, FolderOpen, Settings, LogOut, Palette, Tv, Mic, Sparkles, Lightbulb, Music, Volume2, Layers, Wand2, Scissors, Image } from 'lucide-react';
+import { Film, FolderOpen, Settings, LogOut, Palette, Tv, Mic, Sparkles, Lightbulb, Music, Volume2, Layers, Wand2, Scissors, Image, Video, Clapperboard, BrainCircuit } from 'lucide-react';
 import Toast from './Toast';
 import { auth } from '../api';
 
@@ -8,14 +8,19 @@ const NAV_ITEMS = [
   { path: '/ideation', icon: Lightbulb, label: 'Ideation' },
   { type: 'divider' as const },
   { path: '/styles', icon: Palette, label: 'Styles' },
-  { path: '/voices', icon: Mic, label: 'Voices' },
   { type: 'divider' as const },
-  { path: '/music', icon: Music, label: 'Music' },
+  { path: '/voices', icon: Mic, label: 'Voices' },
+  { path: '/music', icon: Music, label: 'Background Music' },
   { path: '/sfx', icon: Volume2, label: 'Sound Effects' },
+  { type: 'divider' as const },
+  { path: '/images', icon: Image, label: 'Images' },
+  { path: '/b-roll', icon: Video, label: 'B-Roll Footage' },
+  { path: '/clip-library', icon: Scissors, label: 'Clips' },
+  { path: '/ai-images', icon: BrainCircuit, label: 'AI Images' },
+  { path: '/ai-scenes', icon: Clapperboard, label: 'AI Scenes' },
+  { type: 'divider' as const },
   { path: '/overlays', icon: Layers, label: 'Overlays' },
   { path: '/special-edits', icon: Wand2, label: 'Special Edits' },
-  { path: '/images', icon: Image, label: 'Images' },
-  { path: '/clip-library', icon: Scissors, label: 'Clip Library' },
   { type: 'divider' as const },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];

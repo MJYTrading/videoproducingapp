@@ -18,6 +18,9 @@ import OverlayLibraryPage from './pages/OverlayLibraryPage';
 import SpecialEditsPage from './pages/SpecialEditsPage';
 import ClipLibraryPage from './pages/ClipLibraryPage';
 import ImageLibraryPage from './pages/ImageLibraryPage';
+import BRollPage from './pages/BRollPage';
+import AIImagesPage from './pages/AIImagesPage';
+import AIScenesPage from './pages/AIScenesPage';
 import LoginPage from './pages/LoginPage';
 
 function AppContent() {
