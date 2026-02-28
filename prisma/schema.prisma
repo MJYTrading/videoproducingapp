@@ -86,6 +86,17 @@ model Channel {
   sfxEnabled            Boolean @default(true)
   specialEditsEnabled   Boolean @default(true)
 
+  // Standaard project instellingen
+  defaultScriptLengthMinutes Float    @default(8)
+  defaultVoiceId             String   @default("")
+  defaultOutputFormat        String   @default("youtube-1080p")
+  defaultAspectRatio         String   @default("landscape")
+  defaultSubtitles           Boolean  @default(true)
+  defaultLanguage            String   @default("EN")
+  defaultVisualStyle         String   @default("ai-3d-render")
+  defaultVisualStyleParent   String?  @default("ai")
+  referenceScriptUrls        String   @default("[]")
+
   // Relaties
   projects              Project[]
   ideas                 Idea[]
@@ -142,6 +153,7 @@ model Project {
 
   // NIEUW
   videoType           String    @default("ai")
+  subtitleStyle       String    @default("classic")
 
   channel             Channel?  @relation(fields: [channelId], references: [id])
   steps               Step[]

@@ -16,6 +16,8 @@ export type ColorGrading = 'Geen' | 'Cinematic Dark' | 'History Warm' | 'Vibrant
 
 export type OutputFormat = 'YouTube 1080p' | 'YouTube 4K' | 'Shorts';
 
+export type SubtitleStyle = 'classic' | 'modern' | 'karaoke' | 'minimal' | 'bold';
+
 export type LogLevel = 'info' | 'warn' | 'error';
 
 export interface MontageClip {
@@ -109,6 +111,7 @@ export interface Project {
   feedbackHistory: FeedbackEntry[];
   colorGrading: ColorGrading;
   subtitles: boolean;
+  subtitleStyle: SubtitleStyle;
   output: OutputFormat;
   status: ProjectStatus;
   steps: Step[];
@@ -121,8 +124,8 @@ export interface Project {
   queuePosition?: number;
   channelId?: string;
   driveUrl?: string;
-  // NIEUW
   videoType: VideoType;
+  enabledSteps?: number[];
 }
 
 export interface Settings {
@@ -145,7 +148,6 @@ export interface Settings {
   genaiProEnabled: boolean;
   genaiProImagesEnabled: boolean;
   videoDownloadApiKey: string;
-  // NIEUW
   perplexityApiKey: string;
   twelveLabsApiKey: string;
   nexlevApiKey: string;
@@ -159,19 +161,30 @@ export interface Channel {
   createdAt: string;
   updatedAt: string;
   projectCount?: number;
-  // NIEUW
   youtubeChannelId: string;
   defaultVideoType: VideoType;
-  competitors: string; // JSON array
+  competitors: string;
   maxClipDurationSeconds?: number;
   baseStyleProfile?: string;
   baseResearchTemplate?: string;
-  styleReferenceUrls: string; // JSON array
+  styleReferenceUrls: string;
   styleExtraInstructions: string;
-  usedClips: string; // JSON array
+  usedClips: string;
   overlayPresetId?: string;
   sfxEnabled: boolean;
   specialEditsEnabled: boolean;
+  // Standaard project instellingen
+  defaultScriptLengthMinutes: number;
+  defaultVoiceId: string;
+  defaultOutputFormat: string;
+  defaultAspectRatio: string;
+  defaultSubtitles: boolean;
+  defaultLanguage: Language;
+  defaultVisualStyle: string;
+  defaultVisualStyleParent?: string;
+  referenceScriptUrls: string;
+  // Inclusief projecten (bij getOne)
+  projects?: Project[];
 }
 
 export interface ConnectionStatus {
@@ -179,8 +192,6 @@ export interface ConnectionStatus {
   status: 'connected' | 'error' | 'testing' | 'untested';
   lastChecked?: string;
 }
-
-// ─── Nieuwe types voor libraries ────────────────────────
 
 export interface Idea {
   id: string;
@@ -257,7 +268,7 @@ export interface OverlayPreset {
   id: string;
   name: string;
   description?: string;
-  layers: string; // JSON
+  layers: string;
   isDefault: boolean;
   createdAt: string;
 }
@@ -303,4 +314,12 @@ export const VIDEO_TYPE_LABELS: Record<VideoType, string> = {
   documentary: 'Documentary',
   compilation: 'Compilatie',
   spokesperson: 'Spokesperson',
+};
+
+export const SUBTITLE_STYLE_LABELS: Record<SubtitleStyle, string> = {
+  classic: 'Classic — Wit met zwarte outline',
+  modern: 'Modern — Animated word highlighting',
+  karaoke: 'Karaoke — Woord voor woord oplichten',
+  minimal: 'Minimal — Klein, semi-transparant',
+  bold: 'Bold — Groot, gecentreerd',
 };

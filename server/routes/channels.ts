@@ -20,6 +20,33 @@ router.get('/', async (_req: Request, res: Response) => {
   }
 });
 
+// Haal één kanaal op met projecten
+router.get('/:id', async (req: Request, res: Response) => {
+  try {
+    const channel = await prisma.channel.findUnique({
+      where: { id: req.params.id as string },
+      include: {
+        projects: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            steps: { orderBy: { stepNumber: 'asc' } },
+          },
+        },
+        _count: { select: { projects: true } },
+      },
+    });
+    if (!channel) return res.status(404).json({ error: 'Kanaal niet gevonden' });
+    res.json({
+      ...channel,
+      projectCount: channel._count.projects,
+      _count: undefined,
+    });
+  } catch (error: any) {
+    console.error('GET /channels/:id error:', error);
+    res.status(500).json({ error: 'Kon kanaal niet ophalen' });
+  }
+});
+
 router.post('/', async (req: Request, res: Response) => {
   try {
     const { name, driveFolderId, description, ...rest } = req.body;
@@ -31,7 +58,6 @@ router.post('/', async (req: Request, res: Response) => {
       description: description || null,
     };
 
-    // Nieuwe velden overnemen indien meegegeven
     const optionalFields = [
       'youtubeChannelId', 'defaultVideoType', 'competitors',
       'maxClipDurationSeconds',
@@ -39,6 +65,10 @@ router.post('/', async (req: Request, res: Response) => {
       'styleReferenceUrls', 'styleExtraInstructions',
       'usedClips',
       'overlayPresetId', 'sfxEnabled', 'specialEditsEnabled',
+      // Standaard project instellingen
+      'defaultScriptLengthMinutes', 'defaultVoiceId', 'defaultOutputFormat',
+      'defaultAspectRatio', 'defaultSubtitles', 'defaultLanguage',
+      'defaultVisualStyle', 'defaultVisualStyleParent', 'referenceScriptUrls',
     ];
 
     for (const field of optionalFields) {
@@ -65,6 +95,10 @@ router.put('/:id', async (req: Request, res: Response) => {
       'styleReferenceUrls', 'styleExtraInstructions',
       'usedClips',
       'overlayPresetId', 'sfxEnabled', 'specialEditsEnabled',
+      // Standaard project instellingen
+      'defaultScriptLengthMinutes', 'defaultVoiceId', 'defaultOutputFormat',
+      'defaultAspectRatio', 'defaultSubtitles', 'defaultLanguage',
+      'defaultVisualStyle', 'defaultVisualStyleParent', 'referenceScriptUrls',
     ];
 
     for (const field of allowedFields) {

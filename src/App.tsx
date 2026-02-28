@@ -3,9 +3,10 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { auth } from './api';
 import { useStore } from './store';
 import Layout from './components/Layout';
-import ProjectsOverview from './pages/ProjectsOverview';
+import DashboardPage from './pages/DashboardPage';
 import NewProject from './pages/NewProject';
 import ProjectDetail from './pages/ProjectDetail';
+import ChannelDetailPage from './pages/ChannelDetailPage';
 import SettingsPage from './pages/SettingsPage';
 import StylePresetsPage from './pages/StylePresetsPage';
 import ChannelsPage from './pages/ChannelsPage';
@@ -40,7 +41,9 @@ function AppContent() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<ProjectsOverview />} />
+          <Route index element={<DashboardPage />} />
+          <Route path="channel/:channelId" element={<ChannelDetailPage />} />
+          <Route path="channel/:channelId/project/new" element={<NewProject />} />
           <Route path="project/new" element={<NewProject />} />
           <Route path="project/:id" element={<ProjectDetail />} />
           <Route path="settings" element={<SettingsPage />} />

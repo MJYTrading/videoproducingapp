@@ -18,6 +18,12 @@ export default function PipelineTab({ project }: PipelineTabProps) {
   const retryStep = useStore((state) => state.retryStep);
   const skipStep = useStore((state) => state.skipStep);
 
+  // Filter op enabledSteps
+  const enabledSteps = project.enabledSteps || [];
+  const visibleSteps = enabledSteps.length > 0
+    ? project.steps.filter(s => enabledSteps.includes(s.id))
+    : project.steps;
+
   const getStepStatusIcon = (status: StepStatus) => {
     switch (status) {
       case 'completed': return '✅';
@@ -42,28 +48,21 @@ export default function PipelineTab({ project }: PipelineTabProps) {
 
   const getExecutorBadge = (executor: string) => {
     const map: Record<string, string> = {
-      // Elevate = donkerblauw/wit
       'Elevate':        'bg-blue-900/60 text-blue-100 border-blue-700/40',
       'Elevate AI':     'bg-blue-900/60 text-blue-100 border-blue-700/40',
-      // Perplexity = zwart/wit
       'Perplexity':     'bg-zinc-900/80 text-zinc-100 border-zinc-600/40',
-      // Claude Opus = oranje/wit
       'Claude Opus':    'bg-orange-600/25 text-orange-200 border-orange-500/30',
-      // App = blauw/wit
       'App':            'bg-sky-600/20 text-sky-200 border-sky-500/25',
-      // Assembly AI = rood/wit
       'Assembly AI':    'bg-red-600/25 text-red-200 border-red-500/30',
-      // TwelveLabs = zwart/wit
       'TwelveLabs':     'bg-zinc-900/80 text-zinc-100 border-zinc-600/40',
       'TwelveLabs + N8N': 'bg-zinc-900/80 text-zinc-100 border-zinc-600/40',
-      // N8N = oranje/zwart
       'N8N':            'bg-orange-500/25 text-orange-900 border-orange-400/40',
-      // FFMPEG = geel/wit
-      'FFMPEG':         'bg-yellow-500/20 text-yellow-200 border-yellow-400/30',
-      // HeyGen = paars/wit
-      'HeyGen':         'bg-purple-600/25 text-purple-200 border-purple-500/30',
+      'Elevate Opus':   'bg-orange-600/25 text-orange-200 border-orange-500/30',
+      'Elevate Sonar':  'bg-violet-600/25 text-violet-200 border-violet-500/30',
+      'HeyGen':         'bg-teal-600/25 text-teal-200 border-teal-500/30',
+      'FFMPEG':         'bg-green-600/25 text-green-200 border-green-500/30',
     };
-    return map[executor] || 'bg-zinc-700/30 text-zinc-300 border-zinc-600/30';
+    return map[executor] || 'bg-zinc-800 text-zinc-300 border-zinc-600/40';
   };
 
   const getStepBorderColor = (status: StepStatus) => {
@@ -77,7 +76,7 @@ export default function PipelineTab({ project }: PipelineTabProps) {
     }
   };
 
-  const totalDuration = project.steps
+  const totalDuration = visibleSteps
     .filter((s) => s.status === 'completed' && s.duration)
     .reduce((sum, s) => sum + (s.duration || 0), 0);
 
@@ -87,10 +86,10 @@ export default function PipelineTab({ project }: PipelineTabProps) {
     return `${mins}m ${secs}s`;
   };
 
-  const completedCount = project.steps.filter((s) => s.status === 'completed').length;
-  const failedCount = project.steps.filter((s) => s.status === 'failed').length;
-  const skippedCount = project.steps.filter((s) => s.status === 'skipped').length;
-  const isAllDone = project.steps.every((s) => s.status === 'completed' || s.status === 'skipped');
+  const completedCount = visibleSteps.filter((s) => s.status === 'completed').length;
+  const failedCount = visibleSteps.filter((s) => s.status === 'failed').length;
+  const skippedCount = visibleSteps.filter((s) => s.status === 'skipped').length;
+  const isAllDone = visibleSteps.every((s) => s.status === 'completed' || s.status === 'skipped');
 
   return (
     <div className="space-y-2.5">
@@ -106,8 +105,8 @@ export default function PipelineTab({ project }: PipelineTabProps) {
         </div>
       )}
 
-      {/* Steps */}
-      {project.steps.map((step) => (
+      {/* Steps — alleen enabled stappen */}
+      {visibleSteps.map((step) => (
         <div
           key={step.id}
           data-step-id={step.id}
@@ -126,7 +125,6 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                     {step.id.toString().padStart(2, '0')}
                   </span>
                   <span className="font-semibold text-sm">{step.name}</span>
-                  <span className="text-[11px] text-zinc-600">{getStepStatusIcon(step.status) === '⬜' ? '' : ''}</span>
                 </div>
                 <p className="text-xs text-zinc-500 mt-0.5">{getStepStatusText(step)}</p>
               </div>

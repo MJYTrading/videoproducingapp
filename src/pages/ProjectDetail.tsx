@@ -21,14 +21,14 @@ const TABS: Array<{ key: TabType; label: string; icon?: string }> = [
   { key: 'config', label: 'Config', icon: '⚙️' },
 ];
 
-const STEP_NAV: Array<{ id: number; label: string }> = [
+const ALL_STEPS: Array<{ id: number; label: string }> = [
   { id: 0,  label: '0. Ideation' },
   { id: 1,  label: '1. Formulier' },
   { id: 2,  label: '2. Research' },
   { id: 3,  label: '3. Transcripts' },
   { id: 4,  label: '4. Clips Research' },
   { id: 5,  label: '5. Style Profile' },
-  { id: 6,  label: '6. Script Orchestrator' },
+  { id: 6,  label: '6. Orchestrator' },
   { id: 7,  label: '7. Script' },
   { id: 8,  label: '8. Voice Over' },
   { id: 9,  label: '9. Avatar' },
@@ -93,6 +93,12 @@ export default function ProjectDetail() {
     );
   }
 
+  // Filter stappen op enabledSteps — toon alleen actieve stappen
+  const enabledSteps = project.enabledSteps || [];
+  const STEP_NAV = enabledSteps.length > 0
+    ? ALL_STEPS.filter(s => enabledSteps.includes(s.id))
+    : ALL_STEPS;
+
   const getStatusBadge = (status: ProjectStatus) => {
     const map: Record<string, string> = {
       completed: 'badge-success',
@@ -106,8 +112,12 @@ export default function ProjectDetail() {
     return map[status] || 'badge-neutral';
   };
 
-  const doneSteps = project.steps.filter((s) => s.status === 'completed' || s.status === 'skipped').length;
-  const totalSteps = project.steps.length;
+  // Alleen enabled stappen tellen voor voortgang
+  const activeSteps = enabledSteps.length > 0
+    ? project.steps.filter(s => enabledSteps.includes(s.id))
+    : project.steps;
+  const doneSteps = activeSteps.filter((s) => s.status === 'completed' || s.status === 'skipped').length;
+  const totalSteps = activeSteps.length;
   const progress = totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
 
   const formatElapsedTime = (seconds: number) => {
@@ -179,53 +189,37 @@ export default function ProjectDetail() {
           <div className="mb-5">
             <div className="flex justify-between text-xs text-zinc-500 mb-2">
               <span>Voortgang</span>
-              <span className="font-mono">{doneSteps}/{totalSteps} stappen &middot; {progress}%</span>
+              <span className="font-mono">{doneSteps}/{totalSteps} stappen</span>
             </div>
-            <div className="w-full bg-surface-300/40 rounded-full h-2 overflow-hidden">
+            <div className="w-full bg-surface-300/50 rounded-full h-2 overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-700 ease-out ${
+                className={`h-full rounded-full bg-gradient-to-r transition-all duration-700 ease-out ${
                   progress >= 100
-                    ? 'bg-gradient-to-r from-emerald-500 to-emerald-400'
-                    : 'progress-bar'
+                    ? 'from-emerald-500 to-emerald-400'
+                    : progress >= 50
+                    ? 'from-brand-500 to-blue-400'
+                    : 'from-brand-600 to-brand-400'
                 }`}
                 style={{ width: `${progress}%` }}
               />
             </div>
           </div>
 
-          {/* Drive link */}
-          {project.driveUrl && (
-            <div className="mb-5 p-3.5 bg-emerald-500/8 border border-emerald-500/15 rounded-xl flex items-center gap-3">
-              <span className="text-lg">📁</span>
-              <div className="flex-1">
-                <span className="text-emerald-400 font-medium text-sm">Google Drive</span>
-                <a
-                  href={project.driveUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-3 text-brand-400 hover:text-brand-300 text-xs inline-flex items-center gap-1"
-                >
-                  Open in Drive <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-            </div>
-          )}
-
-          {/* Action buttons */}
-          <div className="flex gap-2.5">
+          {/* Actions */}
+          <div className="flex flex-wrap gap-2.5">
             {project.status === 'config' && (
               <button onClick={handleStartPipeline} className="btn-primary">
                 <Play className="w-4 h-4" /> Start Pipeline
               </button>
             )}
             {project.status === 'running' && (
-              <button onClick={handlePausePipeline} className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600/90 hover:bg-amber-500 text-white font-semibold rounded-xl shadow-glow-orange transition-all duration-200">
-                <Pause className="w-4 h-4" /> Pause
+              <button onClick={handlePausePipeline} className="btn-secondary">
+                <Pause className="w-4 h-4" /> Pauzeer
               </button>
             )}
             {project.status === 'paused' && (
               <button onClick={handleResumePipeline} className="btn-primary">
-                <Play className="w-4 h-4" /> Resume
+                <Play className="w-4 h-4" /> Hervat
               </button>
             )}
             {project.status === 'failed' && (
@@ -266,7 +260,7 @@ export default function ProjectDetail() {
           </div>
 
           <div className="p-6 flex gap-5">
-            {/* Step navigator sidebar */}
+            {/* Step navigator sidebar — filtered on enabledSteps */}
             {activeTab === 'pipeline' && (
               <div className="w-40 shrink-0 hidden lg:block">
                 <div className="sticky top-4 space-y-0.5 max-h-[75vh] overflow-y-auto pr-1 scrollbar-thin">

@@ -1,35 +1,45 @@
 interface CheckpointsSectionProps {
   checkpoints: number[];
   onChange: (checkpoints: number[]) => void;
+  enabledSteps: number[];
 }
 
+const STEP_NAMES: Record<number, string> = {
+  0: 'Ideation',
+  1: 'Project Formulier',
+  2: 'Research JSON',
+  3: 'Transcripts Ophalen',
+  4: 'Trending Clips Research',
+  5: 'Style Profile',
+  6: 'Script Orchestrator',
+  7: 'Script Schrijven',
+  8: 'Voice Over',
+  9: 'Avatar / Spokesperson',
+  10: 'Timestamps Ophalen',
+  11: 'Scene Prompts',
+  12: 'Assets Zoeken',
+  13: 'Clips Downloaden',
+  14: 'Images Genereren',
+  15: 'Video Scenes Genereren',
+  16: "Director's Cut",
+  17: 'Achtergrondmuziek',
+  18: 'Color Grading',
+  19: 'Subtitles',
+  20: 'Overlay',
+  21: 'Sound Effects',
+  22: 'Video Effects',
+  23: 'Final Export',
+  24: 'Thumbnail',
+  25: 'Drive Upload',
+};
 
-interface CheckpointStep {
-  id: number;
-  name: string;
-  recommended?: boolean;
-  displayLabel?: string;
-}
+// Aanbevolen checkpoints — stappen waar je normaal wilt reviewen
+const RECOMMENDED = [7, 11, 14, 16];
 
-const CHECKPOINT_STEPS: CheckpointStep[] = [
-  { id: 1, name: 'Transcripts ophalen' },
-  { id: 2, name: 'Style profile maken' },
-  { id: 3, name: 'Script schrijven', recommended: true },
-  { id: 4, name: 'Voiceover genereren', recommended: true },
-  { id: 5, name: 'Timestamps genereren' },
-  { id: 6, name: 'Scene prompts genereren', recommended: true },
-  
-  { id: 7, name: 'Assets zoeken' },
-  { id: 8, name: 'YouTube clips ophalen' },
-  { id: 9, name: 'Video scenes genereren', recommended: true },
-  { id: 10, name: 'Video editing' },
-  { id: 11, name: 'Color grading' },
-  { id: 12, name: 'Subtitles' },
-  { id: 13, name: 'Final export' },
-  { id: 14, name: 'Google Drive upload' },
-];
+export default function CheckpointsSection({ checkpoints, onChange, enabledSteps }: CheckpointsSectionProps) {
+  // Alleen enabled stappen tonen als checkpoint optie
+  const availableSteps = enabledSteps.filter(id => STEP_NAMES[id]);
 
-export default function CheckpointsSection({ checkpoints, onChange }: CheckpointsSectionProps) {
   const handleToggle = (stepId: number) => {
     if (checkpoints.includes(stepId)) {
       onChange(checkpoints.filter((id) => id !== stepId));
@@ -39,60 +49,65 @@ export default function CheckpointsSection({ checkpoints, onChange }: Checkpoint
   };
 
   const handleSetRecommended = () => {
-    const recommended = CHECKPOINT_STEPS.filter((s) => s.recommended).map((s) => s.id);
-    onChange(recommended);
+    // Alleen aanbevolen stappen die ook enabled zijn
+    const rec = RECOMMENDED.filter(id => enabledSteps.includes(id));
+    onChange(rec);
   };
 
   return (
-    <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
+    <section className="section-card">
       <div className="flex items-start justify-between mb-3">
         <div>
-          <h3 className="font-semibold flex items-center gap-2">
-            <span>🔍</span>
-            <span>Checkpoints</span>
-          </h3>
-          <p className="text-sm text-zinc-400 mt-1">
-            De pipeline pauzeert bij deze stappen zodat je het resultaat kunt checken. Je krijgt een melding.
+          <h2 className="section-title !mb-1">Checkpoints</h2>
+          <p className="text-xs text-zinc-600">
+            De pipeline pauzeert bij deze stappen zodat je het resultaat kunt reviewen.
           </p>
         </div>
         <button
+          type="button"
           onClick={handleSetRecommended}
-          className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm font-medium transition-colors whitespace-nowrap"
+          className="btn-secondary text-xs"
         >
-          Aanbevolen instellen
+          Aanbevolen
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        {CHECKPOINT_STEPS.map((step) => (
-          <label
-            key={step.id}
-            className="flex items-center gap-3 p-2 rounded hover:bg-zinc-800/50 cursor-pointer transition-colors"
-          >
-            <input
-              type="checkbox"
-              checked={checkpoints.includes(step.id)}
-              onChange={() => handleToggle(step.id)}
-              className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-2 focus:ring-blue-600 focus:ring-offset-0 cursor-pointer"
-            />
-            <span className="flex-1 text-sm">
-              {step.displayLabel || step.id}. {step.name}
-            </span>
-            {step.recommended && (
-              <span className="text-xs text-blue-400">← aanbevolen</span>
-            )}
-          </label>
-        ))}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+        {availableSteps.map((stepId) => {
+          const isChecked = checkpoints.includes(stepId);
+          const isRecommended = RECOMMENDED.includes(stepId);
+          return (
+            <label
+              key={stepId}
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
+                isChecked
+                  ? 'bg-brand-500/8 border-brand-500/20'
+                  : 'bg-surface-200/30 border-white/[0.04] hover:border-white/[0.08]'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={() => handleToggle(stepId)}
+                className="w-4 h-4 rounded border-zinc-600 bg-surface-200 text-brand-600 focus:ring-2 focus:ring-brand-500/40 focus:ring-offset-0 cursor-pointer"
+              />
+              <span className="text-[11px] text-zinc-600 font-mono w-5">{stepId}</span>
+              <span className="flex-1 text-sm">{STEP_NAMES[stepId]}</span>
+              {isRecommended && (
+                <span className="text-[10px] text-brand-400 font-medium">aanbevolen</span>
+              )}
+            </label>
+          );
+        })}
       </div>
 
       {checkpoints.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-zinc-800">
-          <p className="text-xs text-zinc-500">
-            {checkpoints.length} checkpoint{checkpoints.length !== 1 ? 's' : ''} actief:{' '}
-            {checkpoints.map((id) => `#${id}`).join(', ')}
+        <div className="mt-3 pt-3 border-t border-white/[0.04]">
+          <p className="text-[11px] text-zinc-500">
+            {checkpoints.length} checkpoint{checkpoints.length !== 1 ? 's' : ''}: stap {checkpoints.join(', ')}
           </p>
         </div>
       )}
-    </div>
+    </section>
   );
 }

@@ -5,33 +5,36 @@ interface ScriptTabProps {
   project: Project;
 }
 
-const fullMockScript = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
-
-Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.
-
-Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem.
-
-Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam, nisi ut aliquid ex ea commodi consequatur. Quis autem vel eum iure reprehenderit qui in ea voluptate velit esse quam nihil molestiae consequatur, vel illum qui dolorem eum fugiat quo voluptas nulla pariatur.
-
-At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident, similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et dolorum fuga.`;
-
 export default function ScriptTab({ project }: ScriptTabProps) {
-  const scriptStep = project.steps[3];
+  // Script staat in stap 7 (Script Schrijven)
+  const scriptStep = project.steps.find(s => s.id === 7);
   const isScriptReady = scriptStep?.status === 'completed' || scriptStep?.status === 'review';
-  const wordCount = scriptStep?.metadata?.wordCount || fullMockScript.split(/\s+/).length;
-  const estimatedDuration = scriptStep?.metadata?.estimatedDuration || Math.round(wordCount / 150);
+
+  // Haal het echte script uit de step result
+  let scriptText = '';
+  if (scriptStep?.result) {
+    try {
+      const parsed = typeof scriptStep.result === 'string' ? JSON.parse(scriptStep.result) : scriptStep.result;
+      scriptText = parsed?.script || parsed?.text || (typeof parsed === 'string' ? parsed : '');
+    } catch {
+      scriptText = typeof scriptStep.result === 'string' ? scriptStep.result : '';
+    }
+  }
+
+  const wordCount = scriptText ? scriptText.split(/\s+/).filter(Boolean).length : 0;
+  const estimatedDuration = wordCount > 0 ? Math.round(wordCount / 150) : 0;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(fullMockScript);
+    if (scriptText) navigator.clipboard.writeText(scriptText);
   };
 
-  if (!isScriptReady) {
+  if (!isScriptReady || !scriptText) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
           <p className="text-zinc-500 text-lg">Script is nog niet gegenereerd</p>
           <p className="text-zinc-600 text-sm mt-2">
-            Wacht tot stap 3 is voltooid
+            Wacht tot stap 7 (Script Schrijven) is voltooid
           </p>
         </div>
       </div>
@@ -64,7 +67,7 @@ export default function ScriptTab({ project }: ScriptTabProps) {
       <div className="bg-zinc-800 rounded-lg p-6 border border-zinc-700">
         <div className="prose prose-invert max-w-none">
           <div className="text-zinc-300 leading-relaxed whitespace-pre-line">
-            {fullMockScript}
+            {scriptText}
           </div>
         </div>
       </div>

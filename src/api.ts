@@ -290,6 +290,11 @@ export const channels = {
     if (!res.ok) throw new Error('Kon kanalen niet ophalen');
     return res.json();
   },
+  async getOne(id: string) {
+    const res = await apiFetch('/channels/' + id);
+    if (!res.ok) throw new Error('Kon kanaal niet ophalen');
+    return res.json();
+  },
   async create(data: any) {
     const res = await apiFetch('/channels', { method: 'POST', body: JSON.stringify(data) });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Aanmaken mislukt'); }
