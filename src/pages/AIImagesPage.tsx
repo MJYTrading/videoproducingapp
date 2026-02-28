@@ -1,13 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trash2, BrainCircuit, Search, Grid3x3, List, X, ExternalLink } from 'lucide-react';
-
-const API_BASE = '/api/asset-images';
-
-async function apiFetch(path: string, opts?: RequestInit) {
-  const token = localStorage.getItem('token');
-  const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...opts?.headers } });
-  return res;
-}
+import { assetImages } from '../api';
 
 export default function AIImagesPage() {
   const [images, setImages] = useState<any[]>([]);
@@ -20,10 +13,7 @@ export default function AIImagesPage() {
 
   const load = async () => {
     try {
-      const params = new URLSearchParams({ limit: '200', source: 'ai' });
-      if (search) params.set('search', search);
-      const res = await apiFetch(`${API_BASE}?${params}`);
-      setImages(await res.json());
+      setImages(await assetImages.getAll({ source: 'ai', search: search || undefined, limit: 200 }));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -32,7 +22,7 @@ export default function AIImagesPage() {
 
   const deleteImage = async (id: string) => {
     if (!confirm('Weet je het zeker?')) return;
-    await apiFetch(`${API_BASE}/${id}`, { method: 'DELETE' });
+    await assetImages.delete(id);
     load();
   };
 

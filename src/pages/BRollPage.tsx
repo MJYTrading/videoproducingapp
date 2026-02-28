@@ -1,13 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trash2, Video, Search, Plus, X, ExternalLink, Grid3x3, List } from 'lucide-react';
-
-const API_BASE = '/api/asset-images';
-
-async function apiFetch(path: string, opts?: RequestInit) {
-  const token = localStorage.getItem('token');
-  const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...opts?.headers } });
-  return res;
-}
+import { assetImages } from '../api';
 
 export default function BRollPage() {
   const [items, setItems] = useState<any[]>([]);
@@ -25,10 +18,7 @@ export default function BRollPage() {
 
   const load = async () => {
     try {
-      const params = new URLSearchParams({ limit: '200', category: 'b-roll' });
-      if (search) params.set('search', search);
-      const res = await apiFetch(`${API_BASE}?${params}`);
-      setItems(await res.json());
+      setItems(await assetImages.getAll({ category: 'b-roll', search: search || undefined, limit: 200 }));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -37,7 +27,7 @@ export default function BRollPage() {
 
   const deleteItem = async (id: string) => {
     if (!confirm('Weet je het zeker?')) return;
-    await apiFetch(`${API_BASE}/${id}`, { method: 'DELETE' });
+    await assetImages.delete(id);
     load();
   };
 
@@ -45,13 +35,10 @@ export default function BRollPage() {
     if (!addTitle || !addUrl) return;
     setSubmitting(true);
     try {
-      await apiFetch(API_BASE, {
-        method: 'POST',
-        body: JSON.stringify({
-          title: addTitle, sourceUrl: addUrl, category: 'b-roll',
-          description: addDescription, source: 'manual',
-          tags: addTags.split(',').map(t => t.trim()).filter(Boolean),
-        }),
+      await assetImages.create({
+        title: addTitle, sourceUrl: addUrl, category: 'b-roll',
+        description: addDescription, source: 'manual',
+        tags: addTags.split(',').map(t => t.trim()).filter(Boolean),
       });
       setShowAddModal(false);
       setAddTitle(''); setAddUrl(''); setAddDescription(''); setAddTags('');

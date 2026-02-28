@@ -21,6 +21,7 @@ import ImageLibraryPage from './pages/ImageLibraryPage';
 import BRollPage from './pages/BRollPage';
 import AIImagesPage from './pages/AIImagesPage';
 import AIScenesPage from './pages/AIScenesPage';
+import ProjectsOverview from './pages/ProjectsOverview';
 import LoginPage from './pages/LoginPage';
 
 function AppContent() {
@@ -60,6 +61,11 @@ function AppContent() {
           <Route path="overlays" element={<OverlayLibraryPage />} />
           <Route path="special-edits" element={<SpecialEditsPage />} />
           <Route path="clip-library" element={<ClipLibraryPage />} />
+          <Route path="images" element={<ImageLibraryPage />} />
+          <Route path="b-roll" element={<BRollPage />} />
+          <Route path="ai-images" element={<AIImagesPage />} />
+          <Route path="ai-scenes" element={<AIScenesPage />} />
+          <Route path="projects" element={<ProjectsOverview />} />
         </Route>
       </Routes>
     </BrowserRouter>

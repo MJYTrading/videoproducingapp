@@ -1,13 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trash2, Image, Search, Plus, X, ExternalLink, Grid3x3, List } from 'lucide-react';
-
-const API_BASE = '/api/asset-images';
-
-async function apiFetch(path: string, opts?: RequestInit) {
-  const token = localStorage.getItem('token');
-  const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...opts?.headers } });
-  return res;
-}
+import { assetImages } from '../api';
 
 export default function ImageLibraryPage() {
   const [images, setImages] = useState<any[]>([]);
@@ -30,11 +23,11 @@ export default function ImageLibraryPage() {
 
   const loadImages = async () => {
     try {
-      const params = new URLSearchParams({ limit: '200' });
-      if (search) params.set('search', search);
-      if (sourceFilter !== 'all') params.set('source', sourceFilter);
-      const res = await apiFetch(`${API_BASE}?${params}`);
-      setImages(await res.json());
+      setImages(await assetImages.getAll({
+        search: search || undefined,
+        source: sourceFilter !== 'all' ? sourceFilter : undefined,
+        limit: 200,
+      }));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -43,7 +36,7 @@ export default function ImageLibraryPage() {
 
   const deleteImage = async (id: string) => {
     if (!confirm('Weet je het zeker?')) return;
-    await apiFetch(`${API_BASE}/${id}`, { method: 'DELETE' });
+    await assetImages.delete(id);
     loadImages();
   };
 
@@ -51,13 +44,10 @@ export default function ImageLibraryPage() {
     if (!addTitle || !addUrl) return;
     setSubmitting(true);
     try {
-      await apiFetch(API_BASE, {
-        method: 'POST',
-        body: JSON.stringify({
-          title: addTitle, sourceUrl: addUrl, category: addCategory,
-          description: addDescription, source: 'manual',
-          tags: addTags.split(',').map(t => t.trim()).filter(Boolean),
-        }),
+      await assetImages.create({
+        title: addTitle, sourceUrl: addUrl, category: addCategory,
+        description: addDescription, source: 'manual',
+        tags: addTags.split(',').map(t => t.trim()).filter(Boolean),
       });
       setShowAddModal(false);
       setAddTitle(''); setAddUrl(''); setAddCategory('general'); setAddDescription(''); setAddTags('');

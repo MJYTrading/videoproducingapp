@@ -170,7 +170,7 @@ export const imageOptions = {
     return res.json();
   },
   getImageUrl(projectId: string, filename: string): string {
-    const token = localStorage.getItem('token') || '';
+    const token = getToken() || '';
     return `/api/projects/${projectId}/image-file/${filename}?token=${token}`;
   },
 };
@@ -353,13 +353,11 @@ export const voices = {
 // ── Ideation API ──
 
 export const ideation = {
-  // Brainstorm
-async brainstorm(data: { channelId: string; topic?: string; mode?: string; researchContext?: string }): Promise<any> {
+  async brainstorm(data: { channelId: string; topic?: string; mode?: string; researchContext?: string }): Promise<any> {
     const res = await apiFetch('/ideation/brainstorm', { method: 'POST', body: JSON.stringify(data) });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Brainstorm mislukt'); }
     return res.json();
   },
-  // Ideas CRUD
   async getIdeas(channelId?: string): Promise<any[]> {
     const query = channelId ? `?channelId=${channelId}` : '';
     const res = await apiFetch(`/ideation/ideas${query}`);
@@ -385,14 +383,12 @@ async brainstorm(data: { channelId: string; topic?: string; mode?: string; resea
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Conversie mislukt'); }
     return res.json();
   },
-  // NexLev — on-demand with caching (returns {data, cached, fetchedAt})
   async nexlev(endpoint: string, channelId: string, refresh = false): Promise<any> {
     const q = refresh ? '?refresh=true' : '';
     const res = await apiFetch(`/ideation/nexlev/${endpoint}/${channelId}${q}`);
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || `NexLev ${endpoint} mislukt`); }
     return res.json();
   },
-  // Check cache only — returns null if no cache (no credit cost)
   async nexlevCacheOnly(endpoint: string, channelId: string): Promise<any | null> {
     const res = await apiFetch(`/ideation/nexlev/${endpoint}/${channelId}?cacheOnly=true`);
     if (res.status === 204) return null;
@@ -404,13 +400,11 @@ async brainstorm(data: { channelId: string; topic?: string; mode?: string; resea
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || `NexLev ${endpoint} mislukt`); }
     return res.json();
   },
-  // Direct channel call (for competitors by ytChannelId)
   async directChannel(ytChannelId: string, endpoint: string, refresh = false): Promise<any> {
     const res = await apiFetch('/ideation/nexlev/direct-channel', { method: 'POST', body: JSON.stringify({ ytChannelId, endpoint, refresh }) });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Direct channel call mislukt'); }
     return res.json();
   },
-  // Competitors
   async getCompetitors(channelId: string): Promise<any[]> {
     const res = await apiFetch(`/ideation/competitors/${channelId}`);
     if (!res.ok) throw new Error('Competitors ophalen mislukt');
@@ -470,6 +464,46 @@ export const assetClips = {
   },
 };
 
+// ── Asset Images API (NIEUW — centrale API voor alle image library pagina's) ──
+
+export const assetImages = {
+  async getAll(params?: { search?: string; category?: string; source?: string; style?: string; limit?: number }): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (params?.search) query.set('search', params.search);
+    if (params?.category) query.set('category', params.category);
+    if (params?.source) query.set('source', params.source);
+    if (params?.style) query.set('style', params.style);
+    if (params?.limit) query.set('limit', String(params.limit));
+    const res = await apiFetch(`/asset-images?${query}`);
+    if (!res.ok) throw new Error('Kon images niet ophalen');
+    return res.json();
+  },
+  async get(id: string): Promise<any> {
+    const res = await apiFetch(`/asset-images/${id}`);
+    if (!res.ok) throw new Error('Image niet gevonden');
+    return res.json();
+  },
+  async create(data: any): Promise<any> {
+    const res = await apiFetch('/asset-images', { method: 'POST', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Aanmaken mislukt'); }
+    return res.json();
+  },
+  async update(id: string, data: any): Promise<any> {
+    const res = await apiFetch(`/asset-images/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Bijwerken mislukt'); }
+    return res.json();
+  },
+  async delete(id: string): Promise<void> {
+    const res = await apiFetch(`/asset-images/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Verwijderen mislukt');
+  },
+  async markUsed(id: string): Promise<any> {
+    const res = await apiFetch(`/asset-images/${id}/use`, { method: 'POST' });
+    if (!res.ok) throw new Error('Markeren mislukt');
+    return res.json();
+  },
+};
+
 // ── Media Library API ──
 
 export const mediaLibrary = {
@@ -497,7 +531,6 @@ export const mediaLibrary = {
     const res = await apiFetch(`/media/music/${id}/assign`, { method: 'POST', body: JSON.stringify({ channelIds }) });
     if (!res.ok) throw new Error('Toewijzen mislukt');
   },
-
   // SFX
   async getSfx(): Promise<any[]> {
     const res = await apiFetch('/media/sfx');
@@ -522,7 +555,6 @@ export const mediaLibrary = {
     const res = await apiFetch(`/media/sfx/${id}/assign`, { method: 'POST', body: JSON.stringify({ channelIds }) });
     if (!res.ok) throw new Error('Toewijzen mislukt');
   },
-
   // Overlays
   async getOverlays(): Promise<any[]> {
     const res = await apiFetch('/media/overlays');
@@ -543,7 +575,6 @@ export const mediaLibrary = {
     const res = await apiFetch(`/media/overlays/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Verwijderen mislukt');
   },
-
   // Special Edits
   async getSpecialEdits(): Promise<any[]> {
     const res = await apiFetch('/media/special-edits');

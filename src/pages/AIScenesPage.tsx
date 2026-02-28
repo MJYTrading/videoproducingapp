@@ -1,13 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trash2, Clapperboard, Search, Grid3x3, List, X } from 'lucide-react';
-
-const API_BASE = '/api/asset-images';
-
-async function apiFetch(path: string, opts?: RequestInit) {
-  const token = localStorage.getItem('token');
-  const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...opts?.headers } });
-  return res;
-}
+import { assetImages } from '../api';
 
 export default function AIScenesPage() {
   const [scenes, setScenes] = useState<any[]>([]);
@@ -20,10 +13,7 @@ export default function AIScenesPage() {
 
   const load = async () => {
     try {
-      const params = new URLSearchParams({ limit: '200', category: 'ai-scene' });
-      if (search) params.set('search', search);
-      const res = await apiFetch(`${API_BASE}?${params}`);
-      setScenes(await res.json());
+      setScenes(await assetImages.getAll({ category: 'ai-scene', search: search || undefined, limit: 200 }));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -32,7 +22,7 @@ export default function AIScenesPage() {
 
   const deleteScene = async (id: string) => {
     if (!confirm('Weet je het zeker?')) return;
-    await apiFetch(`${API_BASE}/${id}`, { method: 'DELETE' });
+    await assetImages.delete(id);
     load();
   };
 
