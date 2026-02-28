@@ -27,7 +27,7 @@ router.patch('/', async (req: Request, res: Response) => {
       'defaultLanguage', 'defaultScriptLength', 'defaultSubtitles',
       'defaultColorGrading', 'youtubeTranscriptApiKey', 'anthropicApiKey',
       'genaiProApiKey', 'genaiProEnabled', 'genaiProImagesEnabled', 'videoDownloadApiKey',
-      'perplexityApiKey', 'twelveLabsApiKey', 'nexlevApiKey',
+      'perplexityApiKey', 'twelveLabsApiKey', 'nexlevApiKey', 'youtubeRapidApiKey', 'pexelsApiKey',
     ];
     for (const field of allowedFields) {
       if (data[field] !== undefined) updateData[field] = data[field];
