@@ -1,20 +1,24 @@
 /**
- * Final Assembly Service — Stap 23 (was 22)
+ * Final Assembly Service — Stap 23
  * 
  * Assembleert ALLE media tot de uiteindelijke video op basis van directors-cut.json.
  * 
+ * v5 — 28 feb 2026:
+ * - Color Grading en Subtitles geïntegreerd (was apart in stappen 18/19)
+ * - N8N legacy fallback verwijderd
+ * - SRT generatie uit timestamps.json
+ * - Verbeterde ffmpeg filter chain (geen fragiele string replace meer)
+ * - Robustere error handling met zwarte frame fallbacks
+ * 
  * Assembly volgorde:
- * 1. Lees directors-cut.json als blauwdruk
- * 2. Leg voiceover als basis-tijdlijn
- * 3. Plaats per segment het juiste visuele element
- * 4. Pas transities toe
- * 5. Mix achtergrondmuziek (MUTE bij clips)
- * 6. Plaats SFX
- * 7. Voeg speciale edit fragmenten in
- * 8. Pas color grading toe
- * 9. Pas overlays toe
- * 10. Bak subtitles in
- * 11. Final export
+ * 1. Lees directors-cut.json als timeline
+ * 2. Trim + schaal alle scene videos naar juiste formaat
+ * 3. Concat alle segmenten
+ * 4. Genereer SRT uit timestamps.json
+ * 5. Pas color grading toe (uit project config)
+ * 6. Mix voiceover + SFX track + achtergrondmuziek
+ * 7. Bak subtitles in
+ * 8. Final export → output/final.mp4
  * 
  * Output: {projectDir}/output/final.mp4
  */
@@ -31,218 +35,261 @@ interface AssemblyResult {
   duration: number;
   fileSizeMb: number;
   segmentsAssembled: number;
+  colorGrading: string;
+  subtitlesAdded: boolean;
   warnings: string[];
 }
 
 export async function executeFinalAssembly(project: any, settings: any): Promise<AssemblyResult> {
   const projPath = path.join(WORKSPACE_BASE, project.name);
   const outputDir = path.join(projPath, 'output');
+  const editDir = path.join(projPath, 'edit');
   await fs.mkdir(outputDir, { recursive: true });
+  await fs.mkdir(editDir, { recursive: true });
 
   const warnings: string[] = [];
 
-  // 1. Lees Director's Cut
+  // ── 1. Lees Director's Cut ──
   let directorsCut: any;
   try {
-    const dcText = await fs.readFile(path.join(projPath, 'edit', 'directors-cut.json'), 'utf-8');
+    const dcText = await fs.readFile(path.join(editDir, 'directors-cut.json'), 'utf-8');
     directorsCut = JSON.parse(dcText);
   } catch {
-    // Fallback: gebruik oude methode (geen Director's Cut beschikbaar)
-    console.log('[Assembly] Geen directors-cut.json, val terug op legacy assembly...');
-    return legacyAssembly(project, settings);
+    throw new Error("directors-cut.json niet gevonden. Voer eerst stap 16 (Director's Cut) uit.");
   }
 
   const timeline = directorsCut.timeline || [];
   if (timeline.length === 0) {
-    throw new Error("Director's Cut bevat lege timeline");
+    throw new Error("Director's Cut bevat een lege timeline — kan geen video assembleren.");
   }
 
-  console.log(`[Assembly] Starten: ${timeline.length} segments, type: ${directorsCut.video_type}`);
+  console.log(`[Assembly] Start: ${timeline.length} segmenten, type: ${directorsCut.video_type || 'onbekend'}`);
 
-  // 2. Verzamel beschikbare bestanden
-  const voiceoverPath = path.join(projPath, 'audio', 'voiceover.mp3');
-  const musicPath = path.join(projPath, 'audio', 'background-music.mp3');
-  const sfxPath = path.join(projPath, 'audio', 'sfx-track.mp3');
-  const subtitlesPath = path.join(projPath, 'audio', 'subtitles.srt');
+  // ── 2. Bepaal resolutie en fps ──
+  const isShort = project.output === 'youtube_short' || project.output === 'Shorts';
+  const resolution = isShort ? '1080:1920' : '1920:1080';
+  const resolutionXY = isShort ? '1080x1920' : '1920x1080';
+  const fps = 30;
 
-  const hasVoiceover = await fileExists(voiceoverPath);
-  const hasMusic = await fileExists(musicPath);
-  const hasSfx = await fileExists(sfxPath);
-  const hasSubtitles = await fileExists(subtitlesPath);
-
-  if (!hasVoiceover) {
-    warnings.push('Geen voiceover gevonden');
-  }
-
-  // 3. Bereid video segmenten voor — trim/schaal elke asset
-  const trimmedDir = path.join(projPath, 'edit', 'trimmed');
+  // ── 3. Trim + schaal alle segmenten ──
+  const trimmedDir = path.join(editDir, 'trimmed');
   await fs.mkdir(trimmedDir, { recursive: true });
 
-  const resolution = project.output === 'youtube_short' ? '1080:1920' : '1920:1080';
-  const fps = 30;
   let segmentsReady = 0;
 
   for (const segment of timeline) {
     const assetPath = resolveAssetPath(projPath, segment.asset_path);
-    const trimmedPath = path.join(trimmedDir, `seg-${String(segment.id).padStart(4, '0')}.mp4`);
+    const segId = String(segment.id).padStart(4, '0');
+    const trimmedPath = path.join(trimmedDir, `seg-${segId}.mp4`);
     const duration = (segment.end || 0) - (segment.start || 0);
 
     if (duration <= 0) {
-      warnings.push(`Segment ${segment.id}: ongeldige duur (${duration}s)`);
+      warnings.push(`Segment ${segment.id}: ongeldige duur (${duration}s), overgeslagen`);
       continue;
     }
 
     try {
       if (await fileExists(assetPath)) {
-        // Trim + schaal naar juiste formaat
         const isImage = /\.(jpg|jpeg|png|webp)$/i.test(assetPath);
 
         if (isImage) {
-          // Maak video van image (Ken Burns / static)
+          // Image → video met Ken Burns zoom effect
           execSync(
             `ffmpeg -y -loop 1 -i "${assetPath}" -t ${duration} ` +
             `-vf "scale=${resolution}:force_original_aspect_ratio=decrease,pad=${resolution}:(ow-iw)/2:(oh-ih)/2,fps=${fps}" ` +
-            `-c:v libx264 -pix_fmt yuv420p -shortest "${trimmedPath}"`,
+            `-c:v libx264 -preset fast -pix_fmt yuv420p -shortest "${trimmedPath}"`,
             { stdio: 'pipe', timeout: 30_000 }
           );
         } else {
-          // Trim video
+          // Video → trim + schaal
           execSync(
             `ffmpeg -y -i "${assetPath}" -t ${duration} ` +
             `-vf "scale=${resolution}:force_original_aspect_ratio=decrease,pad=${resolution}:(ow-iw)/2:(oh-ih)/2,fps=${fps}" ` +
-            `-c:v libx264 -pix_fmt yuv420p -an "${trimmedPath}"`,
+            `-c:v libx264 -preset fast -pix_fmt yuv420p -an "${trimmedPath}"`,
             { stdio: 'pipe', timeout: 60_000 }
           );
         }
         segmentsReady++;
       } else {
-        // Genereer zwart frame als placeholder
         warnings.push(`Segment ${segment.id}: asset niet gevonden (${segment.asset_path})`);
-        execSync(
-          `ffmpeg -y -f lavfi -i "color=c=black:s=${resolution.replace(':', 'x')}:d=${duration}:r=${fps}" ` +
-          `-c:v libx264 -pix_fmt yuv420p "${trimmedPath}"`,
-          { stdio: 'pipe', timeout: 10_000 }
-        );
+        createBlackFrame(trimmedPath, duration, resolutionXY, fps);
         segmentsReady++;
       }
     } catch (error: any) {
-      warnings.push(`Segment ${segment.id}: trim mislukt (${error.message?.slice(0, 80)})`);
-      // Zwart frame fallback
+      warnings.push(`Segment ${segment.id}: trim mislukt — ${error.message?.slice(0, 100)}`);
       try {
-        execSync(
-          `ffmpeg -y -f lavfi -i "color=c=black:s=${resolution.replace(':', 'x')}:d=${duration}:r=${fps}" ` +
-          `-c:v libx264 -pix_fmt yuv420p "${trimmedPath}"`,
-          { stdio: 'pipe', timeout: 10_000 }
-        );
+        createBlackFrame(trimmedPath, duration, resolutionXY, fps);
         segmentsReady++;
       } catch {}
     }
   }
 
-  console.log(`[Assembly] ${segmentsReady}/${timeline.length} segmenten klaar`);
+  console.log(`[Assembly] ${segmentsReady}/${timeline.length} segmenten getrimd`);
 
-  // 4. Concat alle segmenten
+  if (segmentsReady === 0) {
+    throw new Error('Geen bruikbare video segmenten — kan niet assembleren');
+  }
+
+  // ── 4. Concat alle segmenten ──
   const concatListPath = path.join(trimmedDir, 'concat.txt');
   const concatLines: string[] = [];
 
   for (const segment of timeline) {
-    const trimmedPath = path.join(trimmedDir, `seg-${String(segment.id).padStart(4, '0')}.mp4`);
+    const segId = String(segment.id).padStart(4, '0');
+    const trimmedPath = path.join(trimmedDir, `seg-${segId}.mp4`);
     if (await fileExists(trimmedPath)) {
       concatLines.push(`file '${trimmedPath}'`);
     }
   }
 
   if (concatLines.length === 0) {
-    throw new Error('Geen video segmenten beschikbaar voor assembly');
+    throw new Error('Geen video segmenten beschikbaar na trimming');
   }
 
   await fs.writeFile(concatListPath, concatLines.join('\n'), 'utf-8');
 
-  const rawVideoPath = path.join(outputDir, 'raw-video.mp4');
+  const concatVideoPath = path.join(editDir, 'concat-raw.mp4');
   execSync(
-    `ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -c:v libx264 -pix_fmt yuv420p "${rawVideoPath}"`,
+    `ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -c:v libx264 -preset fast -pix_fmt yuv420p "${concatVideoPath}"`,
     { stdio: 'pipe', timeout: 300_000 }
   );
 
-  // 5. Mix audio layers
+  console.log(`[Assembly] ${concatLines.length} segmenten samengevoegd`);
+
+  // ── 5. Genereer SRT uit timestamps.json (als subtitles gewenst) ──
+  const wantSubtitles = project.subtitles !== false;
+  let srtPath = '';
+
+  if (wantSubtitles) {
+    const timestampsPath = path.join(projPath, 'audio', 'timestamps.json');
+    srtPath = path.join(editDir, 'subtitles.srt');
+
+    if (await fileExists(timestampsPath)) {
+      try {
+        const tsData = JSON.parse(await fs.readFile(timestampsPath, 'utf-8'));
+        const srtContent = generateSRT(tsData, project.subtitleStyle || 'classic');
+        await fs.writeFile(srtPath, srtContent, 'utf-8');
+        console.log(`[Assembly] SRT gegenereerd: ${srtContent.split('\n\n').length} blokken`);
+      } catch (err: any) {
+        warnings.push(`SRT generatie mislukt: ${err.message}`);
+        srtPath = '';
+      }
+    } else {
+      warnings.push('timestamps.json niet gevonden — subtitles overgeslagen');
+      srtPath = '';
+    }
+  }
+
+  // ── 6. Bepaal color grading filter ──
+  const colorGradeId = normalizeColorGradeId(project.colorGrading)
+    || directorsCut.color_grade
+    || 'none';
+  const colorFilter = getColorGradeFilter(colorGradeId);
+  const hasColorGrading = colorFilter !== null && colorGradeId !== 'none' && colorGradeId !== 'geen';
+
+  console.log(`[Assembly] Color grading: ${colorGradeId} (${hasColorGrading ? 'actief' : 'geen'})`);
+
+  // ── 7. Bouw video filter chain ──
+  const videoFilters: string[] = [];
+
+  if (hasColorGrading && colorFilter) {
+    videoFilters.push(colorFilter);
+  }
+
+  if (srtPath && await fileExists(srtPath)) {
+    const escapedSrtPath = srtPath.replace(/'/g, "'\\''").replace(/:/g, '\\:');
+    videoFilters.push(`subtitles='${escapedSrtPath}'`);
+  }
+
+  const videoFilterArg = videoFilters.length > 0
+    ? `-vf "${videoFilters.join(',')}"` : '';
+
+  // ── 8. Verzamel audio bestanden ──
+  const voiceoverPath = path.join(projPath, 'audio', 'voiceover.mp3');
+  const musicPath = path.join(projPath, 'audio', 'background-music.mp3');
+  const sfxPath = path.join(projPath, 'audio', 'sfx-track.mp3');
+
+  const hasVoiceover = await fileExists(voiceoverPath);
+  const hasMusic = await fileExists(musicPath);
+  const hasSfx = await fileExists(sfxPath);
+
+  if (!hasVoiceover) {
+    warnings.push('Geen voiceover gevonden — video wordt zonder narration geëxporteerd');
+  }
+
+  // ── 9. Final export ──
   const finalPath = path.join(outputDir, 'final.mp4');
-  let audioInputs = '';
-  let audioFilter = '';
-  let audioIdx = 1; // 0 = video
 
-  if (hasVoiceover) {
-    audioInputs += ` -i "${voiceoverPath}"`;
-    audioFilter += `[${audioIdx}:a]volume=1.0[vo]; `;
-    audioIdx++;
-  }
+  if (hasVoiceover || hasMusic || hasSfx) {
+    let audioInputs = '';
+    const filterParts: string[] = [];
+    let streamIdx = 1;
 
-  if (hasMusic) {
-    audioInputs += ` -i "${musicPath}"`;
-    audioFilter += `[${audioIdx}:a]volume=0.15[bg]; `;
-    audioIdx++;
-  }
-
-  if (hasSfx) {
-    audioInputs += ` -i "${sfxPath}"`;
-    audioFilter += `[${audioIdx}:a]volume=0.5[sfx]; `;
-    audioIdx++;
-  }
-
-  // Mix alle audio samen
-  const audioStreams: string[] = [];
-  if (hasVoiceover) audioStreams.push('[vo]');
-  if (hasMusic) audioStreams.push('[bg]');
-  if (hasSfx) audioStreams.push('[sfx]');
-
-  if (audioStreams.length > 0) {
-    audioFilter += `${audioStreams.join('')}amix=inputs=${audioStreams.length}:duration=longest[aout]`;
-
-    // Color grading
-    const colorGrade = directorsCut.color_grade || 'none';
-    let videoFilter = '';
-    if (colorGrade && colorGrade !== 'none') {
-      const gradeFilter = getColorGradeFilter(colorGrade);
-      if (gradeFilter) videoFilter = `-vf "${gradeFilter}"`;
+    if (hasVoiceover) {
+      audioInputs += ` -i "${voiceoverPath}"`;
+      filterParts.push(`[${streamIdx}:a]volume=1.0[vo]`);
+      streamIdx++;
+    }
+    if (hasMusic) {
+      audioInputs += ` -i "${musicPath}"`;
+      filterParts.push(`[${streamIdx}:a]volume=0.12[bg]`);
+      streamIdx++;
+    }
+    if (hasSfx) {
+      audioInputs += ` -i "${sfxPath}"`;
+      filterParts.push(`[${streamIdx}:a]volume=0.4[sfx]`);
+      streamIdx++;
     }
 
-    // Subtitles
-    let subtitleFilter = '';
-    if (hasSubtitles) {
-      subtitleFilter = videoFilter
-        ? videoFilter.replace('"', `subtitles='${subtitlesPath}',`) // Prepend
-        : `-vf "subtitles='${subtitlesPath}'"`;
-      if (videoFilter) videoFilter = ''; // Al in subtitleFilter
-    }
+    const mixStreams: string[] = [];
+    if (hasVoiceover) mixStreams.push('[vo]');
+    if (hasMusic) mixStreams.push('[bg]');
+    if (hasSfx) mixStreams.push('[sfx]');
 
-    const filterArg = videoFilter || subtitleFilter || '';
+    filterParts.push(
+      `${mixStreams.join('')}amix=inputs=${mixStreams.length}:duration=longest:dropout_transition=2[aout]`
+    );
+
+    const filterComplex = filterParts.join('; ');
 
     execSync(
-      `ffmpeg -y -i "${rawVideoPath}"${audioInputs} ` +
-      `-filter_complex "${audioFilter}" ` +
-      `-map 0:v -map "[aout]" ${filterArg} ` +
-      `-c:v libx264 -c:a aac -b:a 192k -pix_fmt yuv420p -shortest "${finalPath}"`,
+      `ffmpeg -y -i "${concatVideoPath}"${audioInputs} ` +
+      `-filter_complex "${filterComplex}" ` +
+      `-map 0:v -map "[aout]" ${videoFilterArg} ` +
+      `-c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -pix_fmt yuv420p ` +
+      `-movflags +faststart -shortest "${finalPath}"`,
       { stdio: 'pipe', timeout: 600_000 }
     );
   } else {
-    // Geen audio — kopieer raw video
-    await fs.copyFile(rawVideoPath, finalPath);
+    if (videoFilterArg) {
+      execSync(
+        `ffmpeg -y -i "${concatVideoPath}" ${videoFilterArg} ` +
+        `-c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p -movflags +faststart "${finalPath}"`,
+        { stdio: 'pipe', timeout: 300_000 }
+      );
+    } else {
+      await fs.copyFile(concatVideoPath, finalPath);
+    }
   }
 
-  // 6. Controleer output
+  // ── 10. Controleer output ──
   let duration = 0;
   let fileSizeMb = 0;
 
   try {
-    const probe = execSync(`ffprobe -v quiet -show_entries format=duration,size -of csv=p=0 "${finalPath}"`, { encoding: 'utf-8' });
+    const probe = execSync(
+      `ffprobe -v quiet -show_entries format=duration,size -of csv=p=0 "${finalPath}"`,
+      { encoding: 'utf-8' }
+    );
     const [dur, size] = probe.trim().split(',');
     duration = Math.round(parseFloat(dur) || 0);
     fileSizeMb = Math.round((parseInt(size) || 0) / 1024 / 1024 * 10) / 10;
   } catch {}
 
-  // Cleanup raw video
-  try { await fs.unlink(rawVideoPath); } catch {}
+  // Cleanup
+  try { await fs.unlink(concatVideoPath); } catch {}
 
-  console.log(`[Assembly] Final video: ${duration}s, ${fileSizeMb} MB, ${warnings.length} waarschuwingen`);
+  console.log(`[Assembly] ✅ Final video: ${duration}s, ${fileSizeMb}MB, ${segmentsReady} segmenten, ${warnings.length} waarschuwingen`);
 
   return {
     success: true,
@@ -250,68 +297,64 @@ export async function executeFinalAssembly(project: any, settings: any): Promise
     duration,
     fileSizeMb,
     segmentsAssembled: segmentsReady,
+    colorGrading: hasColorGrading ? colorGradeId : 'none',
+    subtitlesAdded: srtPath !== '' && await fileExists(srtPath),
     warnings,
   };
 }
 
-/**
- * Legacy assembly — gebruikt als er geen Director's Cut beschikbaar is
- * Valt terug op de oude N8N-gebaseerde methode
- */
-async function legacyAssembly(project: any, settings: any): Promise<AssemblyResult> {
-  const projPath = path.join(WORKSPACE_BASE, project.name);
-  const n8nUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/final-export';
-  const statusPath = path.join(projPath, 'output', 'export-status.json');
+// ── SRT Generatie uit timestamps.json ──
 
-  try { await fs.unlink(statusPath); } catch {}
+function generateSRT(timestampData: any, style: string = 'classic'): string {
+  const words = timestampData.words || timestampData.results?.items || [];
+  if (words.length === 0) return '';
 
-  const payload = {
-    project: project.name,
-    project_dir: projPath,
-    output_format: project.output === 'youtube_short' ? 'youtube_short' : 'youtube_1080p',
-  };
+  const blocks: Array<{ start: number; end: number; text: string }> = [];
+  let currentBlock: typeof words = [];
+  const MAX_WORDS = 8;
+  const PAUSE_THRESHOLD_MS = 500;
 
-  console.log(`[Assembly] Legacy export via N8N: ${n8nUrl}`);
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    if (!word.text || word.text.trim() === '') continue;
 
-  const response = await fetch(n8nUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+    currentBlock.push(word);
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error('N8N Final Export mislukt (' + response.status + '): ' + body);
-  }
+    const nextWord = words[i + 1];
+    const isPause = nextWord && (nextWord.start - word.end) > PAUSE_THRESHOLD_MS;
+    const isMaxWords = currentBlock.length >= MAX_WORDS;
+    const isLast = i === words.length - 1;
 
-  // Poll for status
-  const startTime = Date.now();
-  const timeout = 900_000; // 15 min
-
-  while (Date.now() - startTime < timeout) {
-    await new Promise(r => setTimeout(r, 10_000));
-    try {
-      const statusText = await fs.readFile(statusPath, 'utf-8');
-      const status = JSON.parse(statusText);
-      if (status.status === 'completed' || status.status === 'done') {
-        return {
-          success: true,
-          outputFile: status.output_file || 'output/final.mp4',
-          duration: status.duration || 0,
-          fileSizeMb: status.file_size_mb || 0,
-          segmentsAssembled: status.segments || 0,
-          warnings: [],
-        };
+    if (isPause || isMaxWords || isLast) {
+      if (currentBlock.length > 0) {
+        blocks.push({
+          start: currentBlock[0].start,
+          end: currentBlock[currentBlock.length - 1].end,
+          text: currentBlock.map((w: any) => w.text).join(' '),
+        });
+        currentBlock = [];
       }
-      if (status.status === 'error' || status.status === 'failed') {
-        throw new Error(`Legacy export mislukt: ${status.error || 'onbekend'}`);
-      }
-    } catch (e: any) {
-      if (e.message?.includes('Legacy export mislukt')) throw e;
     }
   }
 
-  throw new Error('Legacy export timeout (15 min)');
+  const srtLines: string[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    srtLines.push(`${i + 1}`);
+    srtLines.push(`${msToSrtTime(block.start)} --> ${msToSrtTime(block.end)}`);
+    srtLines.push(block.text);
+    srtLines.push('');
+  }
+
+  return srtLines.join('\n');
+}
+
+function msToSrtTime(ms: number): string {
+  const hours = Math.floor(ms / 3600000);
+  const minutes = Math.floor((ms % 3600000) / 60000);
+  const seconds = Math.floor((ms % 60000) / 1000);
+  const millis = ms % 1000;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(millis).padStart(3, '0')}`;
 }
 
 // ── Helpers ──
@@ -329,6 +372,25 @@ async function fileExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function createBlackFrame(outputPath: string, duration: number, resolution: string, fps: number): void {
+  execSync(
+    `ffmpeg -y -f lavfi -i "color=c=black:s=${resolution}:d=${duration}:r=${fps}" ` +
+    `-c:v libx264 -preset ultrafast -pix_fmt yuv420p "${outputPath}"`,
+    { stdio: 'pipe', timeout: 10_000 }
+  );
+}
+
+/**
+ * Normaliseer color grade naam naar id
+ * "Cinematic Dark" → "cinematic_dark", "Geen" → "none"
+ */
+function normalizeColorGradeId(name: string | null | undefined): string {
+  if (!name) return 'none';
+  const lower = name.toLowerCase().trim();
+  if (lower === 'geen' || lower === 'geen color grading' || lower === 'none') return 'none';
+  return lower.replace(/\s+/g, '_');
 }
 
 function getColorGradeFilter(gradeId: string): string | null {

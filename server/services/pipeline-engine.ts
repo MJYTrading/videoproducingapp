@@ -18,49 +18,50 @@ import {
   executeStepSoundEffects, executeStepVideoEffects, executeStepFinalAssembly,
   executeStep0, executeStep1, executeStep2, executeStep3,
   executeStep4, executeStep5, executeStep6, executeStep6b,
-  executeStep7, executeStep8, executeStep9, executeStep10,
-  executeStep11, executeStep12, executeStep13, executeStep14,
+  executeStep7, executeStep8, executeStep9, executeStep14,
 } from './pipeline.js';
 
 
 // ── VideoType-based stap activatie matrix ──
 // Per videotype: welke stappen actief zijn (true = actief, false = skip)
 // Stappen 0 (Ideation) en 1 (Formulier) zijn ALTIJD actief
+// Stappen 17 (Muziek), 18 (Color Grading), 19 (Subtitles), 20 (Overlay) zijn ALTIJD skip
+//   → Color Grading en Subtitles zitten nu in stap 23 (Final Assembly)
 const VIDEO_TYPE_STEPS: Record<string, Record<number, boolean>> = {
   ai: {
     0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
     8: true, 9: false, 10: true, 11: true, 12: false, 13: false, 14: true,
-    15: true, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    15: true, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   spokesperson_ai: {
     0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
     8: false, 9: true, 10: true, 11: true, 12: false, 13: false, 14: true,
-    15: true, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    15: true, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   trending: {
     0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
     8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
-    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    15: false, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   documentary: {
     0: true, 1: true, 2: true, 3: true, 4: false, 5: true, 6: true, 7: true,
     8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
-    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    15: false, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   compilation: {
     0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
     8: true, 9: false, 10: true, 11: false, 12: true, 13: true, 14: false,
-    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    15: false, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
   spokesperson: {
     0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true,
     8: false, 9: true, 10: true, 11: false, 12: true, 13: true, 14: false,
-    15: false, 16: true, 17: true, 18: true, 19: true, 20: true, 21: true,
+    15: false, 16: true, 17: false, 18: false, 19: false, 20: false, 21: true,
     22: true, 23: true, 24: false, 25: true,
   },
 };
@@ -95,8 +96,8 @@ const STEP_EXECUTOR_MAP: Record<number, string> = {
   15: 'executeStep9',            // Video Scenes
   16: 'executeStepDirectorsCut', // Director's Cut - Claude Opus
   17: 'skip',                    // Achtergrondmuziek - niet ready
-  18: 'executeStep11',           // Color Grading
-  19: 'executeStep12',           // Subtitles
+  18: 'skip',                    // Color Grading — zit nu in Final Assembly (stap 23)
+  19: 'skip',                    // Subtitles — zit nu in Final Assembly (stap 23)
   20: 'skip',                    // Overlay - niet ready
   21: 'executeStepSoundEffects', // Sound Effects - ffmpeg + SFX Library
   22: 'executeStepVideoEffects', // Video Effects - Python moviepy
@@ -114,17 +115,7 @@ interface PipelineState {
   completedSteps: Set<number>;    // Stappen die klaar zijn
   skippedSteps: Set<number>;      // Stappen die overgeslagen zijn
   failedSteps: Map<number, string>; // Stap → foutmelding
-  sceneQueue: SceneTask[];        // 13→14 streaming queue
   abortController?: AbortController;
-}
-
-interface SceneTask {
-  sceneId: number;
-  imageReady: boolean;
-  imageApproved: boolean;  // Voor manual mode
-  videoStarted: boolean;
-  videoCompleted: boolean;
-  imagePath?: string;
 }
 
 type StepExecutor = (project: any, settings: any, llmKeys: any) => Promise<any>;
@@ -164,12 +155,13 @@ const STEP_CONFIG: Record<number, {
   15: { dependsOn: [14],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
   16: { dependsOn: [15],       timeout: 300_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
   17: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  18: { dependsOn: [16],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
-  19: { dependsOn: [16],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  18: { dependsOn: [16],       timeout: 30_000,     maxRetries: 1, retryDelays: [0] },    // Skip — zit in Assembly
+  19: { dependsOn: [16],       timeout: 30_000,     maxRetries: 1, retryDelays: [0] },    // Skip — zit in Assembly
   20: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
   21: { dependsOn: [16],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
-  22: { dependsOn: [15],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [15_000, 30_000] },
-  23: { dependsOn: [15],       timeout: 1_800_000,  maxRetries: 2, retryDelays: [10_000, 30_000] },
+  22: { dependsOn: [16],       timeout: 3_600_000,  maxRetries: 2, retryDelays: [15_000, 30_000] },
+  // FIXED: Final Assembly wacht op Director's Cut (16) + Sound Effects (21) + Video Effects (22)
+  23: { dependsOn: [16, 21, 22], timeout: 1_800_000, maxRetries: 2, retryDelays: [10_000, 30_000] },
   24: { dependsOn: [23],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
   25: { dependsOn: [23],       timeout: 600_000,    maxRetries: 2, retryDelays: [10_000, 30_000] },
 };
@@ -177,9 +169,8 @@ const STEP_CONFIG: Record<number, {
 // Stap volgorde voor display(stepNumber waarden)
 const STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
 
-// Parallel groep: stappen 65, 7, 8 mogen tegelijk starten zodra stap 6 klaar is
 // Parallel groepen: stappen die tegelijk mogen draaien na hun dependencies
-const PARALLEL_GROUPS = [[12, 13, 14], [18, 19, 20, 21], [24, 25]];
+const PARALLEL_GROUPS = [[12, 13, 14], [21, 22], [24, 25]];
 
 // ── Actieve pipelines in memory ──
 
@@ -421,8 +412,8 @@ async function executeStepFunction(
     case 15: return executeStep9(project, settings, log);                               // Video Scenes
     case 16: return executeStepDirectorsCut(project, settings, llmKeys, log);            // Director's Cut
     case 17: throw new Error('Achtergrondmuziek nog niet geïmplementeerd');        // Muziek (TODO)
-    case 18: return executeStep11(project, settings);                              // Color Grading
-    case 19: return executeStep12(project, settings);                              // Subtitles
+    case 18: return { skipped: true, reason: 'Color Grading zit nu in Final Assembly (stap 23)' };
+    case 19: return { skipped: true, reason: 'Subtitles zitten nu in Final Assembly (stap 23)' };
     case 20: throw new Error('Overlay nog niet geïmplementeerd');                  // Overlay (TODO)
     case 21: return executeStepSoundEffects(project, settings);                    // Sound Effects
     case 22: return executeStepVideoEffects(project, settings);                    // Video Effects
@@ -438,14 +429,7 @@ async function executeStepFunction(
 function getReadySteps(state: PipelineState, project: any): number[] {
   const ready: number[] = [];
 
-  // Special: stap 65 en 9 worden door runSceneStreaming afgehandeld
-  // Ze komen NIET in de ready list — de orchestrator start ze apart
-  const STREAMING_STEPS = new Set<number>(); // Streaming disabled — stap 13+14 draaien als normale stappen // 65=images streaming, 14=video scenes
-
   for (const stepNum of STEP_ORDER) {
-    // Scene streaming stappen skippen — worden apart afgehandeld
-    if (STREAMING_STEPS.has(stepNum)) continue;
-
     // Al bezig, klaar, of overgeslagen? → skip
     if (state.activeSteps.has(stepNum)) continue;
     if (state.completedSteps.has(stepNum)) continue;
@@ -465,15 +449,6 @@ function getReadySteps(state: PipelineState, project: any): number[] {
     if (!depsReady) continue;
 
     ready.push(stepNum);
-  }
-
-  // Special: check of scene streaming moet starten
-  // Conditie: stap 6 is klaar, en 65+9 zijn nog niet gestart/klaar
-  if (state.completedSteps.has(6) &&
-      !state.completedSteps.has(65) && !state.completedSteps.has(14) &&
-      !state.skippedSteps.has(65) && !state.skippedSteps.has(14) &&
-      !state.activeSteps.has(65) && !state.activeSteps.has(14)) {
-    // Streaming disabled — 13+14 worden normaal afgehandeld
   }
 
   return ready;
@@ -525,7 +500,7 @@ async function runPipeline(projectId: string) {
           where: { id: projectId },
           data: { completedAt: new Date() },
         });
-        await addLog(projectId, 'info', 13, 'App', '🎉 Pipeline voltooid! Video is klaar.');
+        await addLog(projectId, 'info', 23, 'App', '🎉 Pipeline voltooid! Video is klaar.');
         const totalDuration = project.startedAt ? Math.round((Date.now() - new Date(project.startedAt).getTime()) / 60000) : 0;
         await notifyDiscord(`🎉 **Pipeline voltooid!** Project: **${project.name}** — totale duur: ${totalDuration} minuten`);
         activePipelines.delete(projectId);
@@ -656,7 +631,6 @@ export async function startPipeline(projectId: string, fromQueue: boolean = fals
     completedSteps,
     skippedSteps,
     failedSteps: new Map(),
-    sceneQueue: [],
   };
 
   activePipelines.set(projectId, state);
@@ -832,7 +806,7 @@ export async function approveScene(
 ): Promise<{ success: boolean }> {
   // Wordt aangeroepen vanuit de ImageReviewPanel wanneer gebruiker 1 scene goedkeurt
   // In manual mode: deze scene mag nu naar stap 9
-  await addLog(projectId, 'info', 65, 'App',
+  await addLog(projectId, 'info', 14, 'App',
     `Scene ${sceneId} goedgekeurd (image: ${imagePath}, clip: ${clipOption})`);
 
   // De image-selections.json wordt al geüpdatet door de frontend saveSelections call
@@ -922,551 +896,6 @@ export function stopPipeline(projectId: string) {
     state.status = 'paused';
     activePipelines.delete(projectId);
   }
-}
-
-// ══════════════════════════════════════════════════════════════
-// SCENE STREAMING: 13 → 14 per scene
-// ══════════════════════════════════════════════════════════════
-
-import fs from 'fs/promises';
-import path from 'path';
-
-const WORKSPACE_BASE = '/root/.openclaw/workspace/projects';
-
-/**
- * Draait stap 65 + 9 als een streaming pipeline:
- * - Auto mode: per scene → genereer 1 image → start video meteen
- * - Manual mode: genereer alle images (3 per scene) → wacht op goedkeuring per scene → start video
- * 
- * Dit vervangt de losse executeStep6b (stap 13) + executeStep9 (stap 14) voor de pipeline engine.
- * De originele functies blijven bestaan voor handmatig gebruik.
- */
-export async function runSceneStreaming(projectId: string, state: PipelineState): Promise<{
-  imagesCompleted: number;
-  imagesFailed: number;
-  videosCompleted: number;
-  videosFailed: number;
-  totalScenes: number;
-}> {
-  const project = await getProjectData(projectId);
-  const settings = await getSettings();
-  const projPath = path.join(WORKSPACE_BASE, project.name);
-
-  // Lees scene prompts
-  const scenePromptsPath = path.join(projPath, 'assets', 'scene-prompts.json');
-  let scenePrompts: any;
-  try {
-    const raw = await fs.readFile(scenePromptsPath, 'utf-8');
-    scenePrompts = JSON.parse(raw);
-  } catch {
-    throw new Error('scene-prompts.json niet gevonden. Voer eerst stap 6 uit.');
-  }
-
-  const aiScenes = (scenePrompts.scenes || []).filter(
-    (s: any) => (s.asset_type === 'ai_video' || s.type === 'ai_video') &&
-      s.visual_prompt_variants && s.visual_prompt_variants.length >= 1
-  );
-
-  if (aiScenes.length === 0) {
-    await addLog(projectId, 'info', 65, 'App', 'Geen AI video scenes gevonden — stap 65+9 overgeslagen');
-    return { imagesCompleted: 0, imagesFailed: 0, videosCompleted: 0, videosFailed: 0, totalScenes: 0 };
-  }
-
-  const isAutoMode = project.imageSelectionMode !== 'manual';
-  const aspectRatio = project.aspectRatio || (project.output === 'youtube_short' ? 'portrait' : 'landscape');
-  const n8nImageUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/image-options-generator';
-  const n8nVideoUrl = (settings.n8nBaseUrl || 'https://n8n.srv1275252.hstgr.cloud') + '/webhook/video-scene-generator';
-  const imageOptionsDir = path.join(projPath, 'assets', 'image-options') + '/';
-  const scenesOutputDir = path.join(projPath, 'assets', 'scenes') + '/';
-
-  await fs.mkdir(path.join(projPath, 'assets', 'image-options'), { recursive: true });
-  await fs.mkdir(path.join(projPath, 'assets', 'scenes'), { recursive: true });
-
-  let imagesCompleted = 0;
-  let imagesFailed = 0;
-  let videosCompleted = 0;
-  let videosFailed = 0;
-  const totalScenes = aiScenes.length;
-
-  // Markeer stap 65 als running
-  await updateStepInDb(projectId, 65, { status: 'running', startedAt: new Date(), error: null });
-  await addLog(projectId, 'info', 65, 'N8N',
-    `Scene streaming gestart: ${totalScenes} scenes, mode: ${isAutoMode ? 'auto' : 'manual'}`);
-
-  // Track parallelle taken
-  const activeVideoPromises: Map<number, Promise<void>> = new Map();
-  const activeImagePromises: Map<number, Promise<void>> = new Map();
-  const MAX_CONCURRENT_VIDEOS = 50;
-  const MAX_CONCURRENT_IMAGES = 50;
-
-  // Selecties voor manual mode
-  const allSelections: any[] = [];
-
-  // ── Helper: wacht tot er plek is ──
-  async function waitForVideoSlot() {
-    while (activeVideoPromises.size >= MAX_CONCURRENT_VIDEOS) {
-      await Promise.race([...activeVideoPromises.values()]);
-    }
-  }
-  async function waitForImageSlot() {
-    while (activeImagePromises.size >= MAX_CONCURRENT_IMAGES) {
-      await Promise.race([...activeImagePromises.values()]);
-    }
-  }
-
-  // ── Helper: genereer video voor 1 scene ──
-  async function generateVideo(sceneId: number, imagePath: string, visualPrompt: string, duration: number) {
-    const statusPath = path.join(projPath, 'assets', 'scenes', `scene${sceneId}-status.json`);
-    try { await fs.unlink(statusPath); } catch {}
-
-    const payload = {
-      project: project.name,
-      scene_id: sceneId,
-      visual_prompt: visualPrompt,
-      duration: duration || 5,
-      aspect_ratio: aspectRatio,
-      output_dir: scenesOutputDir,
-      elevate_api_key: settings.elevateApiKey,
-      source_image_path: imagePath,
-      // GenAIPro fallback velden
-      genai_pro_api_key: settings.genaiProApiKey || '',
-      genai_pro_enabled: settings.genaiProEnabled || false,
-    };
-
-    const response = await fetch(n8nVideoUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Video webhook mislukt (${response.status}): ${body}`);
-    }
-
-    // Poll voor status (max 10 minuten per scene)
-    const start = Date.now();
-    const timeoutMs = 600_000;
-    const intervalMs = 10_000;
-
-    while (Date.now() - start < timeoutMs) {
-      if (state.status !== 'running') throw new Error('Pipeline gestopt');
-      try {
-        const raw = await fs.readFile(statusPath, 'utf-8');
-        const status = JSON.parse(raw);
-        if (status.status === 'completed') {
-          videosCompleted++;
-          await addLog(projectId, 'info', 9, 'N8N',
-            `Scene ${sceneId} video klaar (${videosCompleted}/${totalScenes})`);
-
-          // Update stap 9 metadata
-          await updateStepInDb(projectId, 9, {
-            status: 'running',
-            metadata: JSON.stringify({
-              scenesCompleted: videosCompleted,
-              scenesFailed: videosFailed,
-              totalScenes,
-              progress: `${videosCompleted}/${totalScenes}`,
-            }),
-          });
-          return;
-        }
-        if (status.status === 'failed') {
-          throw new Error(status.error || 'Video generatie mislukt');
-        }
-      } catch (e: any) {
-        if (!e.message?.includes('ENOENT') && !e.message?.includes('Unexpected')) throw e;
-      }
-      await new Promise(r => setTimeout(r, intervalMs));
-    }
-    throw new Error(`Timeout: video scene ${sceneId} niet klaar binnen ${timeoutMs / 1000}s`);
-  }
-
-  // ══ AUTO MODE: image → video PARALLEL per scene ══
-  if (isAutoMode) {
-    // Markeer stap 9 ook als running
-    await updateStepInDb(projectId, 9, { status: 'running', startedAt: new Date(), error: null });
-    await addLog(projectId, 'info', 9, 'N8N',
-      `Video generatie gestart (parallel, max ${MAX_CONCURRENT_IMAGES} images + ${MAX_CONCURRENT_VIDEOS} videos tegelijk)`);
-
-    // ── Helper: verwerk 1 scene (image → video) ──
-    async function processScene(scene: any) {
-      if (state.status !== 'running') return;
-
-      const sceneId = scene.id;
-      const statusPath = path.join(projPath, 'assets', 'image-options', `scene${sceneId}-status.json`);
-
-      // 1. Genereer image
-      const prompts = [scene.visual_prompt_variants[0] || scene.visual_prompt];
-      const imagePayload = {
-        project: project.name,
-        scene_id: sceneId,
-        visual_prompts: prompts,
-        aspect_ratio: aspectRatio,
-        output_dir: imageOptionsDir,
-        elevate_api_key: settings.elevateApiKey,
-        genai_pro_api_key: settings.genaiProApiKey || "",
-        genai_pro_images_enabled: settings.genaiProImagesEnabled || false,
-        status_path: statusPath,
-      };
-
-      try { await fs.unlink(statusPath); } catch {}
-
-      try {
-        const imgResponse = await fetch(n8nImageUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(imagePayload),
-        });
-
-        if (!imgResponse.ok) throw new Error(`Image webhook mislukt: ${imgResponse.status}`);
-
-        // Poll voor image (max 3 min)
-        const imgStart = Date.now();
-        let imageStatus: any = null;
-        while (Date.now() - imgStart < 180_000) {
-          if (state.status !== 'running') break;
-          try {
-            const raw = await fs.readFile(statusPath, 'utf-8');
-            imageStatus = JSON.parse(raw);
-            if (imageStatus.status === 'completed') break;
-            if (imageStatus.status === 'failed') throw new Error(imageStatus.error || 'Image mislukt');
-          } catch (e: any) {
-            if (!e.message?.includes('ENOENT') && !e.message?.includes('Unexpected')) throw e;
-          }
-          await new Promise(r => setTimeout(r, 5000));
-        }
-
-        if (!imageStatus || imageStatus.status !== 'completed') {
-          throw new Error(`Image timeout voor scene ${sceneId}`);
-        }
-
-        imagesCompleted++;
-        const imagePath = imageStatus.options?.[0]?.path || '';
-
-        await addLog(projectId, 'info', 65, 'N8N',
-          `Scene ${sceneId} image klaar (${imagesCompleted}/${totalScenes})`);
-
-        // Update stap 65 metadata
-        await updateStepInDb(projectId, 65, {
-          metadata: JSON.stringify({
-            scenesCompleted: imagesCompleted,
-            scenesFailed: imagesFailed,
-            totalScenes,
-            progress: `${imagesCompleted}/${totalScenes}`,
-          }),
-        });
-
-        // Auto-select
-        allSelections.push({
-          scene_id: sceneId,
-          chosen_option: 1,
-          chosen_path: imagePath,
-        });
-
-        // 2. Start video METEEN (wacht op slot)
-        if (imagePath) {
-          await waitForVideoSlot();
-          const videoPromise = generateVideo(
-            sceneId, imagePath, scene.visual_prompt, scene.duration
-          ).catch(err => {
-            videosFailed++;
-            addLog(projectId, 'warn', 9, 'N8N', `Scene ${sceneId} video mislukt: ${err.message}`);
-          }).finally(() => {
-            activeVideoPromises.delete(sceneId);
-          });
-          activeVideoPromises.set(sceneId, videoPromise);
-        }
-
-      } catch (err: any) {
-        imagesFailed++;
-        await addLog(projectId, 'warn', 65, 'N8N',
-          `Scene ${sceneId} image mislukt: ${err.message}`);
-      }
-    }
-
-    // ── Start alle scenes parallel (met image concurrency limiet) ──
-    const scenePromises: Promise<void>[] = [];
-    for (const scene of aiScenes) {
-      if (state.status !== 'running') break;
-      await waitForImageSlot();
-      const sceneId = scene.id;
-      const p = processScene(scene).finally(() => {
-        activeImagePromises.delete(sceneId);
-      });
-      activeImagePromises.set(sceneId, p);
-      scenePromises.push(p);
-    }
-
-    // Wacht tot alle images + video's klaar zijn
-    await Promise.all(scenePromises);
-    if (activeVideoPromises.size > 0) {
-      await addLog(projectId, 'info', 9, 'N8N',
-        `Wachten op laatste ${activeVideoPromises.size} video(s)...`);
-      await Promise.all([...activeVideoPromises.values()]);
-    }
-
-    // ── Retry gefaalde scenes (max 2 retries) ──
-    const MAX_SCENE_RETRIES = 2;
-    for (let retry = 1; retry <= MAX_SCENE_RETRIES; retry++) {
-      if (state.status !== 'running') break;
-
-      // Check welke scenes nog geen completed video hebben
-      const failedScenes: { scene: any; existingImagePath: string | null }[] = [];
-      for (const scene of aiScenes) {
-        const sceneId = scene.id;
-        const videoStatusPath = path.join(projPath, 'assets', 'scenes', `scene${sceneId}-status.json`);
-        try {
-          const raw = await fs.readFile(videoStatusPath, 'utf-8');
-          const st = JSON.parse(raw);
-          if (st.status === 'completed') continue;
-        } catch {}
-
-        // Check of er al een geslaagde image is voor deze scene
-        let existingImagePath: string | null = null;
-        const sel = allSelections.find((s: any) => s.scene_id === sceneId);
-        if (sel?.chosen_path) {
-          try {
-            await fs.access(sel.chosen_path);
-            existingImagePath = sel.chosen_path;
-          } catch {}
-        }
-
-        failedScenes.push({ scene, existingImagePath });
-      }
-
-      if (failedScenes.length === 0) break;
-
-      const needsImage = failedScenes.filter(f => !f.existingImagePath).length;
-      const videoOnly = failedScenes.filter(f => f.existingImagePath).length;
-      await addLog(projectId, 'info', 9, 'N8N',
-        `Retry ${retry}/${MAX_SCENE_RETRIES}: ${failedScenes.length} scene(s) opnieuw (${videoOnly} video-only, ${needsImage} image+video)...`);
-
-      // Retry gefaalde scenes parallel
-      const retryPromises: Promise<void>[] = [];
-      for (const { scene, existingImagePath } of failedScenes) {
-        if (state.status !== 'running') break;
-        const sceneId = scene.id;
-
-        if (existingImagePath) {
-          // Image bestaat al → alleen video opnieuw starten
-          await waitForVideoSlot();
-          const videoPromise = generateVideo(
-            sceneId, existingImagePath, scene.visual_prompt, scene.duration
-          ).catch(err => {
-            videosFailed++;
-            addLog(projectId, 'warn', 9, 'N8N', `Scene ${sceneId} video retry mislukt: ${err.message}`);
-          }).finally(() => {
-            activeVideoPromises.delete(sceneId);
-          });
-          activeVideoPromises.set(sceneId, videoPromise);
-          retryPromises.push(videoPromise);
-        } else {
-          // Geen image → hele scene opnieuw (image + video)
-          await waitForImageSlot();
-          const p = processScene(scene).finally(() => {
-            activeImagePromises.delete(sceneId);
-          });
-          activeImagePromises.set(sceneId, p);
-          retryPromises.push(p);
-        }
-      }
-
-      await Promise.all(retryPromises);
-      if (activeVideoPromises.size > 0) {
-        await addLog(projectId, 'info', 9, 'N8N',
-          `Retry ${retry}: wachten op laatste ${activeVideoPromises.size} video(s)...`);
-        await Promise.all([...activeVideoPromises.values()]);
-      }
-    }
-
-    // ── Finale telling: check alle scene status files ──
-    let finalCompleted = 0;
-    let finalFailed = 0;
-    for (const scene of aiScenes) {
-      const sceneId = scene.id;
-      const videoStatusPath = path.join(projPath, 'assets', 'scenes', `scene${sceneId}-status.json`);
-      try {
-        const raw = await fs.readFile(videoStatusPath, 'utf-8');
-        const st = JSON.parse(raw);
-        if (st.status === 'completed') { finalCompleted++; continue; }
-      } catch {}
-      finalFailed++;
-    }
-
-    // Schrijf image-selections.json
-    const selectionsPath = path.join(projPath, 'assets', 'image-selections.json');
-    await fs.writeFile(selectionsPath, JSON.stringify({
-      project: project.name,
-      saved_at: new Date().toISOString(),
-      auto_selected: true,
-      total_selections: allSelections.length,
-      selections: allSelections,
-    }, null, 2), 'utf-8');
-
-    // Markeer stap 65 als klaar
-    const img65Duration = Math.round((Date.now() - (await prisma.step.findUnique({
-      where: { projectId_stepNumber: { projectId, stepNumber: 13 } }
-    }))!.startedAt!.getTime()) / 1000);
-
-    await updateStepInDb(projectId, 65, {
-      status: 'completed',
-      duration: img65Duration,
-      result: JSON.stringify({ imagesCompleted, imagesFailed: totalScenes - imagesCompleted, totalScenes, autoSelected: true }),
-    });
-
-    // Markeer stap 9: ALLEEN completed als ALLE scenes klaar zijn
-    await updateStepInDb(projectId, 9, {
-      status: finalFailed === 0 ? 'completed' : 'failed',
-      duration: img65Duration,
-      result: JSON.stringify({ videosCompleted: finalCompleted, videosFailed: finalFailed, totalScenes }),
-      error: finalFailed > 0 ? `${finalFailed} van ${totalScenes} scene(s) mislukt na ${MAX_SCENE_RETRIES} retries` : null,
-    });
-
-    // Update totalen voor return value
-    videosCompleted = finalCompleted;
-    videosFailed = finalFailed;
-
-    await addLog(projectId, 'info', 9, 'N8N',
-      `Scene streaming klaar! Images: ${allSelections.length}/${totalScenes}, Videos: ${finalCompleted}/${totalScenes}${finalFailed > 0 ? ` (${finalFailed} mislukt na retries)` : ''}`);
-
-  // ══ MANUAL MODE: alle images eerst, dan wacht op goedkeuring per scene ══
-  } else {
-    // Genereer alle 3 images per scene (stap 65)
-    for (let i = 0; i < aiScenes.length; i++) {
-      if (state.status !== 'running') break;
-
-      const scene = aiScenes[i];
-      const sceneId = scene.id;
-      const prompts = scene.visual_prompt_variants.slice(0, 3);
-
-      // Fire 3 parallel webhook calls (1 per prompt/option)
-      const optionStatusPaths: string[] = [];
-      const webhookPromises: Promise<void>[] = [];
-
-      for (let opt = 0; opt < prompts.length; opt++) {
-        const optNum = opt + 1;
-        const optStatusPath = path.join(projPath, 'assets', 'image-options', `scene${sceneId}_option${optNum}-status.json`);
-        optionStatusPaths.push(optStatusPath);
-
-        try { await fs.unlink(optStatusPath); } catch {}
-
-        const optPayload = {
-          project: project.name,
-          scene_id: sceneId,
-          visual_prompts: [prompts[opt]],
-          aspect_ratio: aspectRatio,
-          output_dir: imageOptionsDir,
-          elevate_api_key: settings.elevateApiKey,
-          genai_pro_api_key: settings.genaiProApiKey || "",
-          genai_pro_images_enabled: settings.genaiProImagesEnabled || false,
-          status_path: optStatusPath,
-        };
-
-        webhookPromises.push(
-          fetch(n8nImageUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(optPayload),
-          }).then(res => {
-            if (!res.ok) throw new Error(`Image webhook option ${optNum} mislukt: ${res.status}`);
-          })
-        );
-      }
-
-      // Send all webhook calls in parallel
-      try {
-        await Promise.all(webhookPromises);
-        await addLog(projectId, 'info', 65, 'N8N',
-          `Scene ${sceneId}: ${prompts.length} image opties parallel gestart`);
-      } catch (err: any) {
-        imagesFailed++;
-        await addLog(projectId, 'warn', 65, 'N8N', `Scene ${sceneId} webhooks mislukt: ${err.message}`);
-        continue; // Skip polling, ga naar volgende scene
-      }
-
-      // Poll all status files in parallel (max 4 min)
-      try {
-        const pollStart = Date.now();
-        const completed = new Set<number>();
-        const failed = new Set<number>();
-
-        while (Date.now() - pollStart < 240_000) {
-          if (state.status !== 'running') break;
-
-          for (let opt = 0; opt < optionStatusPaths.length; opt++) {
-            if (completed.has(opt) || failed.has(opt)) continue;
-            try {
-              const raw = await fs.readFile(optionStatusPaths[opt], 'utf-8');
-              const st = JSON.parse(raw);
-              if (st.status === 'completed') completed.add(opt);
-              if (st.status === 'failed') failed.add(opt);
-            } catch {}
-          }
-
-          if (completed.size + failed.size >= prompts.length) break;
-          await new Promise(r => setTimeout(r, 3000));
-        }
-
-        if (completed.size > 0) {
-          imagesCompleted++;
-          // Write combined status for this scene
-          const combinedStatusPath = path.join(projPath, 'assets', 'image-options', `scene${sceneId}-status.json`);
-          const options = prompts.map((_, idx) => ({
-            option: idx + 1,
-            path: `${imageOptionsDir}scene${sceneId}_option${idx + 1}.jpg`,
-            name: `Optie ${idx + 1}`,
-            status: completed.has(idx) ? 'completed' : 'failed',
-          }));
-          await fs.writeFile(combinedStatusPath, JSON.stringify({
-            status: 'completed',
-            scene_id: sceneId,
-            options,
-          }));
-          await addLog(projectId, 'info', 65, 'N8N',
-            `Scene ${sceneId} images klaar: ${completed.size}/${prompts.length} gelukt (${imagesCompleted}/${totalScenes})`);
-        } else {
-          throw new Error(`Alle ${prompts.length} image opties mislukt voor scene ${sceneId}`);
-        }
-
-      } catch (err: any) {
-        imagesFailed++;
-        await addLog(projectId, 'warn', 65, 'N8N', `Scene ${sceneId} images mislukt: ${err.message}`);
-      }
-
-      // Update stap 65 metadata
-      await updateStepInDb(projectId, 65, {
-        metadata: JSON.stringify({
-          scenesCompleted: imagesCompleted,
-          scenesFailed: imagesFailed,
-          totalScenes,
-          progress: `${imagesCompleted}/${totalScenes}`,
-        }),
-      });
-    }
-
-    // Schrijf image-options.json (voor de frontend)
-    const imageOptionsPath = path.join(projPath, 'assets', 'image-options.json');
-    // Dit wordt al geschreven door de N8N workflow per scene, maar we updaten de totalen
-    await addLog(projectId, 'info', 65, 'N8N',
-      `Alle images klaar! ${imagesCompleted}/${totalScenes} geslaagd`);
-
-    // Stap 65 gaat naar review — wacht op gebruiker
-    await updateStepInDb(projectId, 65, {
-      status: 'review',
-      result: JSON.stringify({ imagesCompleted, imagesFailed, totalScenes, autoSelected: false }),
-    });
-
-    // Pipeline pauzeert hier — gebruiker moet images goedkeuren
-    // Na goedkeuring via approveStep(65) gaat de pipeline verder
-    // Stap 9 wordt dan normaal gedraaid door de orchestrator (via executeStep9)
-    state.status = 'review';
-    await updateProjectStatus(projectId, 'review');
-    await addLog(projectId, 'info', 65, 'App',
-      'Images klaar — selecteer per scene een image in de app');
-  }
-
-  return { imagesCompleted, imagesFailed, videosCompleted, videosFailed, totalScenes };
 }
 
 // ── Wachtrij: start volgende queued project na completion/failure ──

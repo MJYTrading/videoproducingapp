@@ -2023,19 +2023,18 @@ export async function executeStepScriptOrchestrator(project: any, settings: any,
 
   // Style Profile (stap 5)
   try {
-    const style = await readText(path.join(projPath, 'style_profile.txt'));
-    dataParts.push(`=== STYLE PROFILE ===\n${style}`);
+    const styleJson = await readJson(path.join(projPath, 'script', 'style-profile.json'));
+    dataParts.push(`=== STYLE PROFILE ===\n${JSON.stringify(styleJson, null, 2)}`);
   } catch { dataParts.push('=== STYLE PROFILE ===\nNiet beschikbaar'); }
 
   // Transcripts (stap 3)
   try {
-    const transcriptsDir = path.join(projPath, 'transcripts');
-    const files = await fs.readdir(transcriptsDir).catch(() => []);
-    for (const file of files.slice(0, 5)) {
-      if (file.endsWith('.txt')) {
-        const content = await readText(path.join(transcriptsDir, file));
-        dataParts.push(`=== REFERENTIE TRANSCRIPT: ${file} ===\n${content.substring(0, 3000)}`);
-      }
+    const scriptDir = path.join(projPath, 'script');
+    const files = await fs.readdir(scriptDir).catch(() => []);
+    const transcriptFiles = files.filter(f => f.startsWith('ref-transcript-') && f.endsWith('.txt'));
+    for (const file of transcriptFiles.slice(0, 5)) {
+      const content = await readText(path.join(scriptDir, file));
+      dataParts.push(`=== REFERENTIE TRANSCRIPT: ${file} ===\n${content.substring(0, 3000)}`);
     }
   } catch {}
 
@@ -2168,7 +2167,7 @@ Maak een gedetailleerde outline/blueprint voor deze video. Gebruik ALLE beschikb
 
 import { executeDirectorsCut } from './directors-cut.js';
 
-export async function executeStepDirectorsCut(project: any, settings: any, llmKeys: any): Promise<any> {
+export async function executeStepDirectorsCut(project: any, settings: any, llmKeys: any, log?: any): Promise<any> {
   return executeDirectorsCut({ project, settings, llmKeys });
 }
 

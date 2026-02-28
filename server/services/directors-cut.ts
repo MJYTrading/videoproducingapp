@@ -74,7 +74,7 @@ export async function executeDirectorsCut({ project, settings, llmKeys }: Direct
 
   // Style Profile
   try {
-    const style = await fs.readFile(path.join(projPath, 'style_profile.txt'), 'utf-8');
+    const style = await fs.readFile(path.join(projPath, 'script', 'style-profile.json'), 'utf-8');
     dataParts.push(`=== STYLE PROFILE ===\n${style}`);
   } catch {}
 

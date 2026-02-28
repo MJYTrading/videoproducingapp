@@ -122,22 +122,89 @@ export async function executeVideoEffects(project: any, settings: any): Promise<
 }
 
 /**
- * Genereer een fallback effect met ffmpeg (als Python script niet beschikbaar is)
- * Simpele text overlay als placeholder
+ * Genereer een effect met ffmpeg (geen Python nodig)
+ * Ondersteunde effecten: zoom, flash, shake, glitch, title_card
  */
 async function generateFallbackEffect(params: any, outputPath: string, editName: string): Promise<void> {
   const resolution = params.resolution || '1920x1080';
   const [width, height] = resolution.split('x').map(Number);
   const duration = params.duration || 3;
-  const text = params.text || params.items?.[0] || editName;
+  const fps = params.fps || 30;
 
-  // Maak een simpel title card met ffmpeg
-  const safeText = text.replace(/['"\\]/g, '');
-  const cmd = `ffmpeg -y -f lavfi -i color=c=black:s=${width}x${height}:d=${duration}:r=30 ` +
-    `-vf "drawtext=text='${safeText}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2" ` +
-    `-c:v libx264 -pix_fmt yuv420p "${outputPath}"`;
+  // Bepaal effect type op basis van naam
+  const effectType = detectEffectType(editName);
 
-  execSync(cmd, { stdio: 'pipe', timeout: 30_000 });
+  switch (effectType) {
+    case 'zoom_in': {
+      // Ken Burns zoom-in effect op een bron video/image
+      const sourceFile = params.source_file || params.asset_path;
+      if (sourceFile) {
+        execSync(
+          `ffmpeg -y -i "${sourceFile}" -t ${duration} ` +
+          `-vf "scale=2*${width}:2*${height},zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${duration * fps}:s=${width}x${height}:fps=${fps}" ` +
+          `-c:v libx264 -pix_fmt yuv420p "${outputPath}"`,
+          { stdio: 'pipe', timeout: 60_000 }
+        );
+      } else {
+        createTitleCard(outputPath, editName, width, height, duration, fps);
+      }
+      break;
+    }
+    case 'flash': {
+      // Wit flash overlay (voor transities)
+      execSync(
+        `ffmpeg -y -f lavfi -i "color=c=white:s=${width}x${height}:d=0.3:r=${fps}" ` +
+        `-vf "fade=t=in:st=0:d=0.1,fade=t=out:st=0.1:d=0.2" ` +
+        `-c:v libx264 -pix_fmt yuv420p "${outputPath}"`,
+        { stdio: 'pipe', timeout: 10_000 }
+      );
+      break;
+    }
+    case 'shake': {
+      // Camera shake effect op bron
+      const sourceFile = params.source_file || params.asset_path;
+      if (sourceFile) {
+        execSync(
+          `ffmpeg -y -i "${sourceFile}" -t ${duration} ` +
+          `-vf "crop=iw-20:ih-20:10+10*sin(n*0.5):10+10*cos(n*0.7),scale=${width}:${height}" ` +
+          `-c:v libx264 -pix_fmt yuv420p "${outputPath}"`,
+          { stdio: 'pipe', timeout: 60_000 }
+        );
+      } else {
+        createTitleCard(outputPath, editName, width, height, duration, fps);
+      }
+      break;
+    }
+    default: {
+      // Title card als fallback voor onbekende effecten
+      createTitleCard(outputPath, editName, width, height, duration, fps);
+    }
+  }
+}
+
+/**
+ * Maak een simpel title card met ffmpeg
+ */
+function createTitleCard(outputPath: string, text: string, width: number, height: number, duration: number, fps: number): void {
+  const safeText = text.replace(/['"\\:]/g, '');
+  execSync(
+    `ffmpeg -y -f lavfi -i "color=c=black:s=${width}x${height}:d=${duration}:r=${fps}" ` +
+    `-vf "drawtext=text='${safeText}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,fade=t=in:st=0:d=0.5,fade=t=out:st=${duration - 0.5}:d=0.5" ` +
+    `-c:v libx264 -pix_fmt yuv420p "${outputPath}"`,
+    { stdio: 'pipe', timeout: 30_000 }
+  );
+}
+
+/**
+ * Detecteer effect type op basis van naam
+ */
+function detectEffectType(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.includes('zoom')) return 'zoom_in';
+  if (lower.includes('flash') || lower.includes('flits')) return 'flash';
+  if (lower.includes('shake') || lower.includes('schud')) return 'shake';
+  if (lower.includes('glitch')) return 'glitch';
+  return 'title_card';
 }
 
 /**
