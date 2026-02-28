@@ -5,17 +5,16 @@ import { useStore } from '../store';
 import { ProjectStatus } from '../types';
 import PipelineTab from '../components/PipelineTab';
 import PreviewTab from '../components/PreviewTab';
-import ScriptTab from '../components/ScriptTab';
+// ScriptTab removed
 import LogsTab from '../components/LogsTab';
 import StatsTab from '../components/StatsTab';
 import ConfigTab from '../components/ConfigTab';
 
-type TabType = 'pipeline' | 'preview' | 'script' | 'logs' | 'stats' | 'config';
+type TabType = 'pipeline' | 'preview' | 'logs' | 'stats' | 'config';
 
 const TABS: Array<{ key: TabType; label: string; icon?: string }> = [
   { key: 'pipeline', label: 'Pipeline' },
   { key: 'preview', label: 'Preview' },
-  { key: 'script', label: 'Script' },
   { key: 'logs', label: 'Logs' },
   { key: 'stats', label: 'Stats', icon: '📊' },
   { key: 'config', label: 'Config', icon: '⚙️' },
@@ -284,7 +283,6 @@ export default function ProjectDetail() {
             <div className="flex-1 min-w-0">
               {activeTab === 'pipeline' && <PipelineTab project={project} />}
               {activeTab === 'preview' && <PreviewTab project={project} />}
-              {activeTab === 'script' && <ScriptTab project={project} />}
               {activeTab === 'logs' && <LogsTab project={project} />}
               {activeTab === 'stats' && <StatsTab project={project} />}
               {activeTab === 'config' && <ConfigTab project={project} />}
