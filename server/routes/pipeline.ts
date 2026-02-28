@@ -7,6 +7,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
 import { executeStep0, executeStep1, executeStep2, executeStep3, executeStep4, executeStep5, executeStep6, executeStep6b, executeStep7, executeStep8, executeStep9, executeStep10, executeStep11, executeStep12, executeStep13, executeStep14 } from '../services/pipeline.js';
+import { checkScript } from '../utils/script-checker.js';
 
 const router = Router();
 
@@ -104,7 +105,25 @@ router.post('/:id/execute-step/:stepNumber', async (req: Request, res: Response)
         case 6: { // Script Schrijven (was 3)
           const scriptResult = await executeStep3(projectData, { elevateApiKey: settings.elevateApiKey, anthropicApiKey: settings.anthropicApiKey });
           result = { wordCount: scriptResult.wordCount, sections: scriptResult.sections, filePath: scriptResult.filePath };
-          metadata = { wordCount: scriptResult.wordCount };
+          metadata = { wordCount: scriptResult.wordCount } as any;
+
+          // AI Script Checker
+          if (settings.elevateApiKey && scriptResult.scriptVoiceover) {
+            try {
+              const checkResult = await checkScript(scriptResult.scriptVoiceover, settings.elevateApiKey, projectData.language || 'EN');
+              await prisma.logEntry.create({ data: {
+                projectId: projectData.id, level: 'info', step: 6, source: 'Elevate AI',
+                message: `Script Check: ${checkResult.overall_score}/10 — ${checkResult.top_strengths?.[0] || 'OK'}`,
+                detail: JSON.stringify(checkResult),
+              }});
+              (metadata as any).scriptCheck = checkResult.overall_score;
+            } catch (checkErr: any) {
+              await prisma.logEntry.create({ data: {
+                projectId: projectData.id, level: 'warn', step: 6, source: 'Elevate AI',
+                message: `Script Check overgeslagen: ${checkErr.message}`,
+              }});
+            }
+          }
           break;
         }
         case 7: { // Voice Over (was 4)
@@ -405,6 +424,44 @@ router.get('/:id/file/:filepath(*)', async (req: Request, res: Response) => {
   } catch (error: any) {
     if (error.code === 'ENOENT') return res.status(404).json({ error: 'Bestand niet gevonden' });
     res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/pipeline/:id/check-script — Handmatige script check
+router.post('/:id/check-script', async (req: Request, res: Response) => {
+  try {
+    const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!project) return res.status(404).json({ error: 'Project niet gevonden' });
+
+    const settings = await prisma.settings.findUnique({ where: { id: 'singleton' } });
+    if (!settings?.elevateApiKey) return res.status(400).json({ error: 'Elevate API key niet ingesteld' });
+
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const projPath = path.join('/root/.openclaw/workspace/video-producer/projects', project.name);
+    const scriptPath = path.join(projPath, 'script', 'script-voiceover.txt');
+
+    let scriptText: string;
+    try {
+      scriptText = await fs.readFile(scriptPath, 'utf-8');
+    } catch {
+      return res.status(400).json({ error: 'Script niet gevonden. Voer eerst stap 6 (Script Schrijven) uit.' });
+    }
+
+    if (!scriptText.trim()) return res.status(400).json({ error: 'Script is leeg' });
+
+    const result = await checkScript(scriptText, settings.elevateApiKey, project.language || 'EN');
+
+    // Log opslaan
+    await prisma.logEntry.create({ data: {
+      projectId: project.id, level: 'info', step: 6, source: 'Elevate AI',
+      message: `Handmatige Script Check: ${result.overall_score}/10`,
+      detail: JSON.stringify(result),
+    }});
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 

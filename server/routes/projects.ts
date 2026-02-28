@@ -31,7 +31,7 @@ function formatProject(p: any) {
       metadata: s.metadata ? JSON.parse(s.metadata) : undefined,
     })),
     logs: (p.logs || []).map((l: any) => ({
-      id: l.id, timestamp: l.timestamp, level: l.level,
+      id: l.id, timestamp: l.timestamp, level: l.level, detail: l.detail || null, durationMs: l.durationMs || null,
       step: l.step, source: l.source, message: l.message,
     })),
   };

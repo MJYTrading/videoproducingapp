@@ -177,6 +177,14 @@ export const imageOptions = {
 
 // ── Pipeline Engine API ──
 
+export const scriptChecker = {
+  async check(projectId: string) {
+    const res = await apiFetch(`/pipeline/${projectId}/check-script`, { method: 'POST' });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Script check mislukt'); }
+    return res.json();
+  },
+};
+
 export const pipelineEngine = {
   async start(projectId: string): Promise<any> {
     const res = await apiFetch(`/pipeline/${projectId}/start`, { method: 'POST' });
