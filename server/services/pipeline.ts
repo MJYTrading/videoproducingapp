@@ -1019,6 +1019,7 @@ async function elevateTTS(params: {
       type: 'tts',
       prompt: params.text,
       voice_id: params.voiceId,
+      model_id: 'eleven_turbo_v2_5',
       stability: params.stability ?? 0.5,
       similarity_boost: params.similarityBoost ?? 0.75,
       speed: params.speed ?? 1.0,
@@ -1031,8 +1032,9 @@ async function elevateTTS(params: {
   }
 
   const createData = await createResponse.json();
+  console.log(`[TTS] API response:`, JSON.stringify(createData).slice(0, 500));
   if (!createData.success || !createData.data?.id) {
-    throw new Error('Elevate TTS: geen task ID ontvangen');
+    throw new Error(`Elevate TTS: geen task ID ontvangen. Response: ${JSON.stringify(createData).slice(0, 300)}`);
   }
 
   const taskId = createData.data.id;
@@ -1257,17 +1259,22 @@ export async function executeStep5(project: any, settings: any, log: StepLogger 
   let clipCount = 0;
   try {
     const script = await readText(scriptPath);
-    const clipRegex = /\[CLIP:\s*(https?:\/\/\S+)\s+(\d{2}:\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}:\d{2})\s*\]/g;
+    // Ondersteun zowel MM:SS als HH:MM:SS formaten
+    const clipRegex = /\[CLIP:\s*(https?:\/\/\S+)\s+([\d:]+)\s*-\s*([\d:]+)\s*\]/g;
     const clips: any[] = [];
     let match;
     let clipId = 1;
 
     while ((match = clipRegex.exec(script)) !== null) {
       const url = match[1];
-      const startParts = match[2].split(':').map(Number);
-      const endParts = match[3].split(':').map(Number);
-      const startSec = startParts[0] * 3600 + startParts[1] * 60 + startParts[2];
-      const endSec = endParts[0] * 3600 + endParts[1] * 60 + endParts[2];
+      const parseTime = (t: string): number => {
+        const parts = t.split(':').map(Number);
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        return parts[0];
+      };
+      const startSec = parseTime(match[2]);
+      const endSec = parseTime(match[3]);
       const clipDuration = endSec - startSec;
 
       // Zoek timestamp waar clip moet beginnen
