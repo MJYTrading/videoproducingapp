@@ -45,11 +45,20 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   if (!req.path.startsWith('/api/')) {
     return next();
   }
+  // Check Authorization header OF token query parameter (voor audio/video/image serving)
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const queryToken = req.query.token as string | undefined;
+  let token: string | undefined;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7);
+  } else if (queryToken) {
+    token = queryToken;
+  }
+  
+  if (!token) {
     return res.status(401).json({ error: 'Niet ingelogd' });
   }
-  const token = authHeader.slice(7);
   const userId = await validateSession(token);
   if (!userId) {
     return res.status(401).json({ error: 'Sessie verlopen, log opnieuw in' });

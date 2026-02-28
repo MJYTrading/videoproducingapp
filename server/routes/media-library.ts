@@ -3,6 +3,13 @@ import prisma from '../db.js';
 
 const router = Router();
 
+// Veilige JSON parse — voorkomt crashes bij plain strings zoals "dark" ipv '["dark"]'
+function safeJsonParse(val: any, fallback: any = []): any {
+  if (!val) return fallback;
+  try { return JSON.parse(val); }
+  catch { return typeof val === 'string' ? [val] : fallback; }
+}
+
 // ══════════════════════════════════════════════════
 //  MUZIEK LIBRARY
 // ══════════════════════════════════════════════════
@@ -15,8 +22,8 @@ router.get('/music', async (_req: Request, res: Response) => {
     });
     res.json(tracks.map(t => ({
       ...t,
-      mood: JSON.parse(t.mood || '[]'),
-      tags: JSON.parse(t.tags || '[]'),
+      mood: safeJsonParse(t.mood, []),
+      tags: safeJsonParse(t.tags, []),
       assignedChannels: t.channelSelections.map(s => s.channelId),
     })));
   } catch (error: any) {
@@ -88,7 +95,6 @@ router.post('/music/:id/assign', async (req: Request, res: Response) => {
     const { channelIds } = req.body;
     if (!Array.isArray(channelIds)) return res.status(400).json({ error: 'channelIds array verplicht' });
 
-    // Remove existing, add new
     await prisma.channelMusicSelection.deleteMany({ where: { musicTrackId: req.params.id } });
     for (const channelId of channelIds) {
       await prisma.channelMusicSelection.create({
@@ -113,7 +119,7 @@ router.get('/sfx', async (_req: Request, res: Response) => {
     });
     res.json(effects.map(e => ({
       ...e,
-      tags: JSON.parse(e.tags || '[]'),
+      tags: safeJsonParse(e.tags, []),
       assignedChannels: e.channelSelections.map(s => s.channelId),
     })));
   } catch (error: any) {
@@ -123,7 +129,7 @@ router.get('/sfx', async (_req: Request, res: Response) => {
 
 router.post('/sfx', async (req: Request, res: Response) => {
   try {
-    const { name, filePath, duration, category, usageRules, tags } = req.body;
+    const { name, filePath, duration, category, intensity, usageGuide, tags } = req.body;
     if (!name || !filePath) return res.status(400).json({ error: 'name en filePath zijn verplicht' });
 
     const effect = await prisma.soundEffect.create({
@@ -131,7 +137,8 @@ router.post('/sfx', async (req: Request, res: Response) => {
         name, filePath,
         duration: duration || 0,
         category: category || 'other',
-        usageRules: usageRules || '',
+        intensity: intensity || 'medium',
+        usageGuide: usageGuide || null,
         tags: JSON.stringify(tags || []),
       },
     });
@@ -143,14 +150,15 @@ router.post('/sfx', async (req: Request, res: Response) => {
 
 router.put('/sfx/:id', async (req: Request, res: Response) => {
   try {
-    const { name, duration, category, usageRules, tags } = req.body;
+    const { name, duration, category, intensity, usageGuide, tags } = req.body;
     const effect = await prisma.soundEffect.update({
       where: { id: req.params.id },
       data: {
         ...(name !== undefined && { name }),
         ...(duration !== undefined && { duration }),
         ...(category !== undefined && { category }),
-        ...(usageRules !== undefined && { usageRules }),
+        ...(intensity !== undefined && { intensity }),
+        ...(usageGuide !== undefined && { usageGuide }),
         ...(tags !== undefined && { tags: JSON.stringify(tags) }),
       },
     });
@@ -194,7 +202,7 @@ router.post('/sfx/:id/assign', async (req: Request, res: Response) => {
 router.get('/overlays', async (_req: Request, res: Response) => {
   try {
     const presets = await prisma.overlayPreset.findMany({ orderBy: { createdAt: 'desc' } });
-    res.json(presets.map(p => ({ ...p, layers: JSON.parse(p.layers || '[]') })));
+    res.json(presets.map(p => ({ ...p, layers: safeJsonParse(p.layers, []) })));
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -208,7 +216,7 @@ router.post('/overlays', async (req: Request, res: Response) => {
     const preset = await prisma.overlayPreset.create({
       data: { name, layers: JSON.stringify(layers || []) },
     });
-    res.status(201).json({ ...preset, layers: JSON.parse(preset.layers) });
+    res.status(201).json({ ...preset, layers: safeJsonParse(preset.layers, []) });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -224,7 +232,7 @@ router.put('/overlays/:id', async (req: Request, res: Response) => {
         ...(layers !== undefined && { layers: JSON.stringify(layers) }),
       },
     });
-    res.json({ ...preset, layers: JSON.parse(preset.layers) });
+    res.json({ ...preset, layers: safeJsonParse(preset.layers, []) });
   } catch (error: any) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Preset niet gevonden' });
     res.status(500).json({ error: error.message });
@@ -262,16 +270,17 @@ router.get('/special-edits', async (_req: Request, res: Response) => {
 
 router.post('/special-edits', async (req: Request, res: Response) => {
   try {
-    const { name, description, category, ffmpegTemplate, parameters } = req.body;
+    const { name, description, scriptPath, parameters, applicableFor, usageGuide } = req.body;
     if (!name) return res.status(400).json({ error: 'name is verplicht' });
 
     const edit = await prisma.specialEdit.create({
       data: {
         name,
         description: description || '',
-        category: category || 'other',
-        ffmpegTemplate: ffmpegTemplate || '',
+        scriptPath: scriptPath || '',
         parameters: parameters || '{}',
+        applicableFor: JSON.stringify(applicableFor || []),
+        usageGuide: usageGuide || null,
       },
     });
     res.status(201).json(edit);
@@ -282,15 +291,16 @@ router.post('/special-edits', async (req: Request, res: Response) => {
 
 router.put('/special-edits/:id', async (req: Request, res: Response) => {
   try {
-    const { name, description, category, ffmpegTemplate, parameters } = req.body;
+    const { name, description, scriptPath, parameters, applicableFor, usageGuide } = req.body;
     const edit = await prisma.specialEdit.update({
       where: { id: req.params.id },
       data: {
         ...(name !== undefined && { name }),
         ...(description !== undefined && { description }),
-        ...(category !== undefined && { category }),
-        ...(ffmpegTemplate !== undefined && { ffmpegTemplate }),
+        ...(scriptPath !== undefined && { scriptPath }),
         ...(parameters !== undefined && { parameters }),
+        ...(applicableFor !== undefined && { applicableFor: JSON.stringify(applicableFor) }),
+        ...(usageGuide !== undefined && { usageGuide }),
       },
     });
     res.json(edit);
