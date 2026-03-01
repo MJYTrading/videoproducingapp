@@ -22,6 +22,7 @@ import BRollPage from './pages/BRollPage';
 import AIImagesPage from './pages/AIImagesPage';
 import AIScenesPage from './pages/AIScenesPage';
 import ProjectsOverview from './pages/ProjectsOverview';
+import PipelineAdminPage from './pages/PipelineAdminPage';
 import LoginPage from './pages/LoginPage';
 
 function AppContent() {
@@ -66,6 +67,7 @@ function AppContent() {
           <Route path="ai-images" element={<AIImagesPage />} />
           <Route path="ai-scenes" element={<AIScenesPage />} />
           <Route path="projects" element={<ProjectsOverview />} />
+          <Route path="admin/pipeline" element={<PipelineAdminPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

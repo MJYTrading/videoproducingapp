@@ -88,6 +88,10 @@ model Channel {
   sfxEnabled            Boolean @default(true)
   specialEditsEnabled   Boolean @default(true)
 
+  // Pipeline v2 presets
+  sfxLevel              String  @default("medium")       // "low" | "medium" | "high"
+  motionGraphicsLevel   String  @default("medium")       // "low" | "medium" | "high"
+
   // Standaard project instellingen
   defaultScriptLengthMinutes Float    @default(8)
   defaultVoiceId             String   @default("")
@@ -487,4 +491,128 @@ model AssetImage {
   lastUsedAt    DateTime?
   projectId     String?
   createdAt     DateTime  @default(now())
+}
+
+// ═══════════════════════════════════════════════════════════
+// PIPELINE ADMIN — Nieuwe modellen
+// ═══════════════════════════════════════════════════════════
+
+// ─── LLM Modellen ───────────────────────────────────────
+
+model LlmModel {
+  id              Int       @id @default(autoincrement())
+  name            String
+  provider        String
+  modelString     String
+  modelType       String    @default("chat")
+  baseUrl         String    @default("")
+  supportsStream  Boolean   @default(true)
+  maxTokens       Int?
+  costPerMToken   Float?
+  rateLimit       String?
+  isActive        Boolean   @default(true)
+  notes           String    @default("")
+  createdAt       DateTime  @default(now())
+
+  pipelineSteps   PipelineStep[]
+}
+
+// ─── Pipeline Stappen ───────────────────────────────────
+
+model PipelineStep {
+  id              Int       @id @default(autoincrement())
+  stepNumber      Int       @unique
+  name            String
+  description     String    @default("")
+
+  executorLabel   String    @default("App")
+  executorFn      String    @default("")
+
+  toolPrimary     String    @default("")
+  toolFallback    String?
+
+  llmModelId      Int?
+  llmModel        LlmModel? @relation(fields: [llmModelId], references: [id])
+  systemPrompt    String    @default("")
+  userPromptTpl   String    @default("")
+  outputFormat    String    @default("")
+  temperature     Float     @default(0.7)
+  maxTokens       Int?
+
+  dependsOn       String    @default("[]")
+  parallelGroup   String?
+  isCheckpoint    Boolean   @default(false)
+  checkpointCond  String?
+
+  timeout         Int       @default(300000)
+  maxRetries      Int       @default(3)
+  retryDelays     String    @default("[5000,15000,30000]")
+
+  readyToUse      Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  sortOrder       Int       @default(0)
+
+  notes           String    @default("")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  videoTypeConfigs PipelineVideoTypeConfig[]
+}
+
+// ─── Video Type → Step Config ───────────────────────────
+
+model PipelineVideoTypeConfig {
+  id           Int           @id @default(autoincrement())
+  videoType    String
+  stepId       Int
+  step         PipelineStep  @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  enabled      Boolean       @default(true)
+
+  @@unique([videoType, stepId])
+}
+
+// ─── API Tools ──────────────────────────────────────────
+
+model ApiTool {
+  id             Int       @id @default(autoincrement())
+  name           String
+  category       String    @default("api")
+  baseUrl        String    @default("")
+  authType       String    @default("bearer")
+  authKeyRef     String    @default("")
+  healthEndpoint String?
+  isActive       Boolean   @default(true)
+  lastHealthCheck DateTime?
+  lastHealthOk   Boolean?
+  lastHealthMs   Int?
+  notes          String    @default("")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// ─── API Test Logs ──────────────────────────────────────
+
+model ApiTestLog {
+  id           Int       @id @default(autoincrement())
+  toolId       Int?
+  method       String    @default("GET")
+  url          String
+  headers      String    @default("{}")
+  body         String?
+  statusCode   Int?
+  response     String?
+  durationMs   Int?
+  error        String?
+  createdAt    DateTime  @default(now())
+}
+
+// ─── AI Assistent Gesprekken ────────────────────────────
+
+model AssistantConversation {
+  id           String    @id @default(cuid())
+  title        String    @default("Nieuw gesprek")
+  messages     String    @default("[]")
+  context      String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }

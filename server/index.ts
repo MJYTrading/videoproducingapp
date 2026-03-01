@@ -20,6 +20,7 @@ import analyticsRoutes, { startViewsCron } from './routes/analytics.js';
 import assetReviewRoutes from './routes/asset-review.js';
 import clipSearchRoutes from './routes/clip-search.js';
 import scriptRewriteRoutes from './routes/script-rewrite.js';
+import adminRoutes from './routes/admin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,6 +55,7 @@ app.use('/api/projects', scriptRewriteRoutes);
 app.use('/api/media', mediaLibraryRoutes);
 app.use('/api/files', fileServeRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/admin', adminRoutes);
 
 const frontendPath = path.join(__dirname, '..', 'dist-frontend');
 app.use(express.static(frontendPath));
