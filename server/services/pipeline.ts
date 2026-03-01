@@ -2222,8 +2222,8 @@ export async function executeStepResearch(project: any, settings: any): Promise<
   const researchDir = path.join(projPath, 'research');
   await ensureDir(researchDir);
 
-  if (!settings.perplexityApiKey) {
-    throw new Error('Perplexity API key niet geconfigureerd in Settings');
+  if (!settings.elevateApiKey) {
+    throw new Error('Elevate API key niet geconfigureerd in Settings');
   }
 
   // 1. Haal research template op (project override → kanaal baseline → default)
@@ -2272,7 +2272,7 @@ export async function executeStepResearch(project: any, settings: any): Promise<
   }
 
   // 3. Perplexity research uitvoeren
-  const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
+  const perplexity = new PerplexityService({ apiKey: settings.elevateApiKey });
 
   const result = await perplexity.executeResearch({
     title: project.title,
@@ -2298,8 +2298,8 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
   const researchDir = path.join(projPath, 'research');
   await ensureDir(researchDir);
 
-  if (!settings.perplexityApiKey) {
-    throw new Error('Perplexity API key niet geconfigureerd in Settings');
+  if (!settings.elevateApiKey) {
+    throw new Error('Elevate API key niet geconfigureerd in Settings');
   }
 
   // 1. Bepaal max clip duur
@@ -2347,7 +2347,7 @@ export async function executeStepTrendingClips(project: any, settings: any): Pro
   }
 
   // 5. Perplexity clips research
-  const perplexity = new PerplexityService({ apiKey: settings.perplexityApiKey });
+  const perplexity = new PerplexityService({ apiKey: settings.elevateApiKey });
 
   const result = await perplexity.executeTrendingClipsResearch({
     title: project.title,

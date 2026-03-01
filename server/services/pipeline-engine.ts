@@ -1371,7 +1371,7 @@ async function executeNodeWithRetry(
     try {
       // Voer stap uit met timeout
       const result = await Promise.race([
-        executor(project, settings, llmKeys, log, node.configOverrides),
+        executor(project, settings, llmKeys, log, { ...node.configOverrides, _systemPrompt: node.systemPromptOverride, _userPrompt: node.userPromptOverride }),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error(`Timeout: ${node.stepName} duurde langer dan ${node.timeout / 1000}s`)),
             node.timeout)
