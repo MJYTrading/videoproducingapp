@@ -1,13 +1,12 @@
 /**
- * NodeDetailPanel v3.1 — Dynamische config velden per stap type
+ * NodeDetailPanel v3.3 — Met upstream data browser
  * 
- * - LLM stappen: system prompt + user prompt + LLM config
- * - API stappen: API-specifieke velden (voice_id, aspect_ratio, etc.)
- * - App stappen: app-specifieke velden (thresholds, toggles, etc.)
+ * Toont alle beschikbare data uit de hele upstream keten,
+ * niet alleen directe inputs. Klikbaar om in prompts te plakken.
  */
 
-import { useState, useEffect, useMemo } from 'react';
-import { Save, X, Trash2, ArrowLeft, ArrowRight, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Save, X, Trash2, ArrowLeft, ArrowRight, AlertCircle, Database } from 'lucide-react';
 import { apiJson, CATEGORY_COLORS, type PipelineNodeData, type StepInput, type StepOutput } from './types';
 
 interface ConfigField {
@@ -30,6 +29,17 @@ interface ConfigSchema {
   fields: ConfigField[];
 }
 
+interface UpstreamData {
+  nodeId: number;
+  nodeName: string;
+  category: string;
+  outputKey: string;
+  outputLabel: string;
+  outputType: string;
+  filePath: string;
+  depth: number; // how many hops upstream
+}
+
 interface Props {
   node: PipelineNodeData;
   allNodes: PipelineNodeData[];
@@ -49,8 +59,9 @@ export default function NodeDetailPanel({ node, allNodes, pipelineId, onClose, o
   const outputs: StepOutput[] = def.outputSchema || [];
   const cat = CATEGORY_COLORS[def.category] || CATEGORY_COLORS.general;
   const [saving, setSaving] = useState(false);
+  const systemPromptRef = useRef<HTMLTextAreaElement>(null);
+  const userPromptRef = useRef<HTMLTextAreaElement>(null);
 
-  // Parse configSchema
   const configSchema: ConfigSchema = useMemo(() => {
     try {
       const raw = def.configSchema;
@@ -98,19 +109,84 @@ export default function NodeDetailPanel({ node, allNodes, pipelineId, onClose, o
   const connectedInputKeys = incomingNodes.map(c => c.targetInputKey);
   const missingInputs = inputs.filter(i => i.required && i.source !== 'project' && !connectedInputKeys.includes(i.key));
 
-  const getConfigValue = (key: string, defaultVal: any) => {
-    return f.configOverrides[key] ?? defaultVal;
+  // ═══ UPSTREAM DATA BROWSER ═══
+  // Walk the entire upstream chain to find all available data
+  const upstreamData: UpstreamData[] = useMemo(() => {
+    const result: UpstreamData[] = [];
+    const visited = new Set<number>();
+    const seenKeys = new Set<string>();
+
+    function walkUpstream(nodeId: number, depth: number) {
+      if (visited.has(nodeId) || depth > 20) return;
+      visited.add(nodeId);
+
+      const n = allNodes.find(x => x.id === nodeId);
+      if (!n) return;
+
+      // Add all outputs of this upstream node
+      const nodeOutputs: StepOutput[] = n.stepDefinition.outputSchema || [];
+      for (const out of nodeOutputs) {
+        if (!seenKeys.has(out.key)) {
+          seenKeys.add(out.key);
+          result.push({
+            nodeId: n.id,
+            nodeName: n.stepDefinition.name,
+            category: n.stepDefinition.category,
+            outputKey: out.key,
+            outputLabel: out.label,
+            outputType: out.type,
+            filePath: out.filePath || '',
+            depth,
+          });
+        }
+      }
+
+      // Walk further upstream
+      const incoming = n.incomingConnections || [];
+      for (const conn of incoming) {
+        walkUpstream(conn.sourceNodeId, depth + 1);
+      }
+    }
+
+    // Start from all direct upstream nodes
+    for (const conn of (node.incomingConnections || [])) {
+      walkUpstream(conn.sourceNodeId, 1);
+    }
+
+    // Sort: closest first, then alphabetically
+    result.sort((a, b) => a.depth - b.depth || a.outputKey.localeCompare(b.outputKey));
+    return result;
+  }, [node, allNodes]);
+
+  // Insert variable tag into active prompt textarea
+  const insertVariable = (key: string) => {
+    const tag = '{upstream:' + key + '}';
+    const ref = userPromptRef.current;
+    if (ref) {
+      const start = ref.selectionStart;
+      const end = ref.selectionEnd;
+      const val = f.userPromptOverride;
+      const newVal = val.slice(0, start) + tag + val.slice(end);
+      setF(prev => ({ ...prev, userPromptOverride: newVal }));
+      setTimeout(() => {
+        ref.selectionStart = ref.selectionEnd = start + tag.length;
+        ref.focus();
+      }, 10);
+    } else {
+      setF(prev => ({ ...prev, userPromptOverride: prev.userPromptOverride + ' ' + tag }));
+    }
   };
+
+  const getConfigValue = (key: string, defaultVal: any) => f.configOverrides[key] ?? defaultVal;
   const setConfigValue = (key: string, value: any) => {
     setF(prev => ({ ...prev, configOverrides: { ...prev.configOverrides, [key]: value } }));
   };
 
-  // Resolve dynamic source options
   const getSourceOptions = (source: string): { value: string; label: string }[] => {
     switch (source) {
-      case 'voices': return voices.map((v: any) => ({ value: v.voiceId || v.voice_id, label: v.name + ' — ' + v.description }));
+      case 'voices': return voices.map((v: any) => ({ value: v.voiceId || v.voice_id, label: v.name + ' \u2014 ' + v.description }));
       case 'styles': return styles.map((s: any) => ({ value: s.id, label: s.name }));
-      case 'colorGrades': return colorGrades.map((c: any) => ({ value: c.id, label: c.name + ' — ' + c.description }));
+      case 'colorGrades': return colorGrades.map((c: any) => ({ value: c.id, label: c.name + ' \u2014 ' + c.description }));
       default: return [];
     }
   };
@@ -121,10 +197,7 @@ export default function NodeDetailPanel({ node, allNodes, pipelineId, onClose, o
       await apiJson('/pipelines/' + pipelineId + '/nodes/' + node.id, {
         method: 'PATCH',
         body: JSON.stringify({
-          isActive: f.isActive,
-          isCheckpoint: f.isCheckpoint,
-          timeout: f.timeout,
-          maxRetries: f.maxRetries,
+          isActive: f.isActive, isCheckpoint: f.isCheckpoint, timeout: f.timeout, maxRetries: f.maxRetries,
           llmModelOverrideId: f.llmModelOverrideId || null,
           systemPromptOverride: f.systemPromptOverride || null,
           userPromptOverride: f.userPromptOverride || null,
@@ -140,12 +213,10 @@ export default function NodeDetailPanel({ node, allNodes, pipelineId, onClose, o
     if (!confirm('Node "' + def.name + '" verwijderen?')) return;
     try {
       await apiJson('/pipelines/' + pipelineId + '/nodes/' + node.id, { method: 'DELETE' });
-      onSave();
-      onClose();
+      onSave(); onClose();
     } catch (err: any) { alert(err.message); }
   };
 
-  // Group fields
   const groupedFields = useMemo(() => {
     const groups: Record<string, ConfigField[]> = {};
     for (const field of configSchema.fields) {
@@ -179,7 +250,6 @@ export default function NodeDetailPanel({ node, allNodes, pipelineId, onClose, o
       {/* Content */}
       <div className="flex-1 overflow-auto p-4 space-y-4">
 
-        {/* Validation errors */}
         {missingInputs.length > 0 && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
             <div className="flex items-center gap-1.5 text-red-300 text-[11px] font-semibold mb-1">
@@ -191,43 +261,32 @@ export default function NodeDetailPanel({ node, allNodes, pipelineId, onClose, o
           </div>
         )}
 
-        {/* Data Flow: Inputs */}
-        <Section title={'Inputs (' + inputs.length + ')'} icon={<ArrowLeft className="w-3 h-3" />}>
-          {inputs.filter(i => i.source !== 'project').map(input => {
-            const conn = incomingNodes.find(c => c.targetInputKey === input.key);
-            return (
-              <div key={input.key} className="flex items-center gap-2 py-1">
-                <div className={'w-2 h-2 rounded-full shrink-0 ' + (conn ? 'bg-emerald-400' : input.required ? 'bg-red-400' : 'bg-zinc-600')} />
-                <span className="text-[11px] text-zinc-300 flex-1 truncate">{input.label}</span>
-                <span className="text-[9px] text-zinc-500 shrink-0">
-                  {conn ? '\u2190 ' + (conn.sourceNode?.stepDefinition?.name || '?') : input.required ? 'NIET verbonden' : 'optioneel'}
-                </span>
-              </div>
-            );
-          })}
-        </Section>
-
-        {/* Data Flow: Outputs */}
-        <Section title={'Outputs (' + outputs.length + ')'} icon={<ArrowRight className="w-3 h-3" />}>
-          {outputs.map(output => {
-            const usedBy = outgoingNodes.filter(c => c.sourceOutputKey === output.key);
-            return (
-              <div key={output.key} className="py-1">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                  <span className="text-[11px] text-zinc-300 flex-1">{output.label}</span>
-                  <span className="text-[9px] text-zinc-600">{output.filePath}</span>
+        {/* Direct connections */}
+        <Section title={'Verbindingen (' + (incomingNodes.length + outgoingNodes.length) + ')'}>
+          {incomingNodes.length > 0 && (
+            <div className="mb-2">
+              <p className="text-[9px] text-zinc-500 mb-1">Inkomend:</p>
+              {incomingNodes.map(c => (
+                <div key={c.id} className="flex items-center gap-1.5 py-0.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                  <span className="text-[10px] text-zinc-300">{c.sourceNode?.stepDefinition?.name}</span>
+                  <span className="text-[8px] text-zinc-600 font-mono">[{c.sourceOutputKey}]</span>
                 </div>
-                {usedBy.length > 0 && (
-                  <div className="ml-4 mt-0.5 flex flex-wrap gap-1">
-                    {usedBy.map(c => (
-                      <span key={c.id} className="text-[9px] text-zinc-500">{'\u2192 ' + (c.targetNode?.stepDefinition?.name || '?')}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+              ))}
+            </div>
+          )}
+          {outgoingNodes.length > 0 && (
+            <div>
+              <p className="text-[9px] text-zinc-500 mb-1">Uitgaand:</p>
+              {outgoingNodes.map(c => (
+                <div key={c.id} className="flex items-center gap-1.5 py-0.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span className="text-[10px] text-zinc-300">{c.targetNode?.stepDefinition?.name}</span>
+                  <span className="text-[8px] text-zinc-600 font-mono">[{c.targetInputKey}]</span>
+                </div>
+              ))}
+            </div>
+          )}
         </Section>
 
         {/* Execution config */}
@@ -242,7 +301,7 @@ export default function NodeDetailPanel({ node, allNodes, pipelineId, onClose, o
           </div>
         </Section>
 
-        {/* LLM stappen: Model + Prompts */}
+        {/* LLM: Model + Prompts */}
         {isLLM && (
           <>
             <Section title="LLM Model">
@@ -256,6 +315,7 @@ export default function NodeDetailPanel({ node, allNodes, pipelineId, onClose, o
 
             <Section title="System Prompt">
               <textarea
+                ref={systemPromptRef}
                 className="input-base font-mono text-[10px] min-h-[100px]"
                 placeholder="System prompt voor deze stap..."
                 value={f.systemPromptOverride}
@@ -263,33 +323,80 @@ export default function NodeDetailPanel({ node, allNodes, pipelineId, onClose, o
               />
               {def.systemPrompt && !f.systemPromptOverride && (
                 <div className="mt-1 bg-surface-200/50 rounded p-2">
-                  <p className="text-[9px] text-zinc-500">Default: {def.systemPrompt.length > 200 ? def.systemPrompt.slice(0, 200) + '...' : def.systemPrompt}</p>
+                  <p className="text-[9px] text-zinc-400 font-mono whitespace-pre-wrap max-h-[50px] overflow-auto">
+                    {def.systemPrompt.length > 200 ? def.systemPrompt.slice(0, 200) + '...' : def.systemPrompt}
+                  </p>
                 </div>
               )}
             </Section>
 
             <Section title="User Prompt Template">
               <textarea
+                ref={userPromptRef}
                 className="input-base font-mono text-[10px] min-h-[100px]"
-                placeholder={'Prompt template...\nGebruik {input:key} voor data.'}
+                placeholder={'Prompt template...\nKlik op variabelen hieronder om in te voegen.'}
                 value={f.userPromptOverride}
                 onChange={e => setF({ ...f, userPromptOverride: e.target.value })}
               />
-              <div className="mt-1 bg-surface-200/30 rounded p-2">
-                <p className="text-[9px] text-zinc-500 mb-1">Input variabelen:</p>
-                <div className="flex flex-wrap gap-1">
-                  {inputs.map(i => (
-                    <code key={i.key} className="text-[8px] px-1 py-0.5 rounded bg-surface-300 text-brand-300 font-mono">
-                      {'{input:' + i.key + '}'}
-                    </code>
-                  ))}
+            </Section>
+
+            {/* ═══ UPSTREAM DATA BROWSER ═══ */}
+            <Section title={'Beschikbare Data (' + upstreamData.length + ')'} icon={<Database className="w-3 h-3" />}>
+              <p className="text-[9px] text-zinc-500 mb-2">
+                Klik om in te voegen in de user prompt. Alle data van upstream nodes is beschikbaar.
+              </p>
+              {upstreamData.length === 0 && (
+                <p className="text-[9px] text-zinc-600">Geen upstream data gevonden. Verbind eerst nodes.</p>
+              )}
+              {/* Group by source node */}
+              {(() => {
+                const byNode: Record<number, UpstreamData[]> = {};
+                for (const d of upstreamData) {
+                  if (!byNode[d.nodeId]) byNode[d.nodeId] = [];
+                  byNode[d.nodeId].push(d);
+                }
+                return Object.entries(byNode).map(([nodeId, items]) => {
+                  const catColor = CATEGORY_COLORS[items[0].category] || CATEGORY_COLORS.general;
+                  return (
+                    <div key={nodeId} className="mb-2">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <div className={'w-1.5 h-1.5 rounded-full ' + catColor.dot} />
+                        <span className={'text-[9px] font-semibold ' + catColor.text}>{items[0].nodeName}</span>
+                        <span className="text-[8px] text-zinc-600">({items[0].depth} stap{'pen'.slice(0, items[0].depth > 1 ? 3 : 0)} terug)</span>
+                      </div>
+                      <div className="ml-3 flex flex-wrap gap-1">
+                        {items.map(d => (
+                          <button key={d.outputKey} onClick={() => insertVariable(d.outputKey)}
+                            className="text-[8px] px-1.5 py-0.5 rounded bg-surface-300 text-brand-300 font-mono hover:bg-brand-600/20 hover:text-brand-200 transition cursor-pointer"
+                            title={d.outputLabel + ' (' + d.outputType + ') \u2014 ' + d.filePath}>
+                            {'{upstream:' + d.outputKey + '}'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+
+              {/* Also show direct input variables */}
+              {inputs.filter(i => i.source !== 'project').length > 0 && (
+                <div className="mt-3 pt-2 border-t border-white/[0.04]">
+                  <p className="text-[9px] text-zinc-500 mb-1">Directe inputs (verbonden):</p>
+                  <div className="flex flex-wrap gap-1">
+                    {inputs.filter(i => i.source !== 'project').map(i => (
+                      <button key={i.key} onClick={() => insertVariable(i.key)}
+                        className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-mono hover:bg-emerald-500/20 transition cursor-pointer">
+                        {'{input:' + i.key + '}'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </Section>
           </>
         )}
 
-        {/* Dynamic config fields per group */}
+        {/* Dynamic config fields */}
         {Object.entries(groupedFields).map(([groupName, fields]) => (
           <Section key={groupName} title={groupName}>
             <div className="space-y-2.5">
@@ -333,110 +440,34 @@ function DynamicField({ field, value, onChange, sourceOptions }: {
   field: ConfigField; value: any; onChange: (v: any) => void; sourceOptions?: { value: string; label: string }[];
 }) {
   const options = sourceOptions || field.options || [];
-
   switch (field.type) {
     case 'text':
-      return (
-        <div>
-          <label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label>
-          <input className="input-base text-xs" value={value || ''} onChange={e => onChange(e.target.value)} placeholder={field.description} />
-        </div>
-      );
-
+      return <div><label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label><input className="input-base text-xs" value={value || ''} onChange={e => onChange(e.target.value)} placeholder={field.description} /></div>;
     case 'number':
-      return (
-        <div>
-          <label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label>
-          <input className="input-base text-xs" type="number" value={value ?? field.default ?? ''} onChange={e => onChange(parseFloat(e.target.value))}
-            min={field.min} max={field.max} step={field.step} />
-          {field.description && <p className="text-[9px] text-zinc-600 mt-0.5">{field.description}</p>}
-        </div>
-      );
-
+      return <div><label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label><input className="input-base text-xs" type="number" value={value ?? field.default ?? ''} onChange={e => onChange(parseFloat(e.target.value))} min={field.min} max={field.max} step={field.step} />{field.description && <p className="text-[9px] text-zinc-600 mt-0.5">{field.description}</p>}</div>;
     case 'range':
-      return (
-        <div>
-          <div className="flex items-center justify-between mb-0.5">
-            <label className="text-[10px] text-zinc-500">{field.label}</label>
-            <span className="text-[10px] text-brand-300 font-mono">{value ?? field.default}</span>
-          </div>
-          <input type="range" className="w-full accent-brand-500 h-1.5"
-            value={value ?? field.default ?? 0} onChange={e => onChange(parseFloat(e.target.value))}
-            min={field.min ?? 0} max={field.max ?? 1} step={field.step ?? 0.1} />
-          {field.description && <p className="text-[9px] text-zinc-600 mt-0.5">{field.description}</p>}
-        </div>
-      );
-
+      return <div><div className="flex items-center justify-between mb-0.5"><label className="text-[10px] text-zinc-500">{field.label}</label><span className="text-[10px] text-brand-300 font-mono">{value ?? field.default}</span></div><input type="range" className="w-full accent-brand-500 h-1.5" value={value ?? field.default ?? 0} onChange={e => onChange(parseFloat(e.target.value))} min={field.min ?? 0} max={field.max ?? 1} step={field.step ?? 0.1} /></div>;
     case 'select':
-      return (
-        <div>
-          <label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label>
-          <select className="input-base text-xs" value={value ?? field.default ?? ''} onChange={e => onChange(e.target.value)}>
-            <option value="">-- Selecteer --</option>
-            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          {field.description && <p className="text-[9px] text-zinc-600 mt-0.5">{field.description}</p>}
-        </div>
-      );
-
+      return <div><label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label><select className="input-base text-xs" value={value ?? field.default ?? ''} onChange={e => onChange(e.target.value)}><option value="">-- Selecteer --</option>{options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>;
     case 'toggle':
-      return (
-        <div className="flex items-center justify-between py-0.5">
-          <div>
-            <span className="text-[11px] text-zinc-300">{field.label}</span>
-            {field.description && <p className="text-[9px] text-zinc-600">{field.description}</p>}
-          </div>
-          <button onClick={() => onChange(!(value ?? field.default))}
-            className={'w-8 h-4.5 rounded-full transition-colors relative ' + ((value ?? field.default) ? 'bg-brand-500' : 'bg-zinc-700')}>
-            <div className={'w-3.5 h-3.5 rounded-full bg-white absolute top-0.5 transition-transform ' + ((value ?? field.default) ? 'translate-x-4' : 'translate-x-0.5')} />
-          </button>
-        </div>
-      );
-
+      return <div className="flex items-center justify-between py-0.5"><div><span className="text-[11px] text-zinc-300">{field.label}</span>{field.description && <p className="text-[9px] text-zinc-600">{field.description}</p>}</div><button onClick={() => onChange(!(value ?? field.default))} className={'w-8 h-4.5 rounded-full transition-colors relative ' + ((value ?? field.default) ? 'bg-brand-500' : 'bg-zinc-700')}><div className={'w-3.5 h-3.5 rounded-full bg-white absolute top-0.5 transition-transform ' + ((value ?? field.default) ? 'translate-x-4' : 'translate-x-0.5')} /></button></div>;
     case 'textarea':
-      return (
-        <div>
-          <label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label>
-          <textarea className="input-base font-mono text-[10px] min-h-[60px]" value={value || ''} onChange={e => onChange(e.target.value)} placeholder={field.description} />
-        </div>
-      );
-
+      return <div><label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label><textarea className="input-base font-mono text-[10px] min-h-[60px]" value={value || ''} onChange={e => onChange(e.target.value)} placeholder={field.description} /></div>;
     case 'json':
-      return (
-        <div>
-          <label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label>
-          <textarea className="input-base font-mono text-[10px] min-h-[50px]"
-            value={typeof value === 'string' ? value : JSON.stringify(value || field.default, null, 2)}
-            onChange={e => onChange(e.target.value)} placeholder={field.description} />
-        </div>
-      );
-
-    default:
-      return null;
+      return <div><label className="text-[10px] text-zinc-500 mb-0.5 block">{field.label}</label><textarea className="input-base font-mono text-[10px] min-h-[50px]" value={typeof value === 'string' ? value : JSON.stringify(value || field.default, null, 2)} onChange={e => onChange(e.target.value)} /></div>;
+    default: return null;
   }
 }
 
 // ── Utility Components ──
 
 function Badge({ color, text }: { color: string; text: string }) {
-  const c: Record<string, string> = {
-    green: 'bg-emerald-500/15 text-emerald-300', amber: 'bg-amber-500/15 text-amber-300',
-    purple: 'bg-purple-500/15 text-purple-300', blue: 'bg-blue-500/15 text-blue-300',
-    zinc: 'bg-surface-300 text-zinc-400',
-  };
+  const c: Record<string, string> = { green: 'bg-emerald-500/15 text-emerald-300', amber: 'bg-amber-500/15 text-amber-300', purple: 'bg-purple-500/15 text-purple-300', blue: 'bg-blue-500/15 text-blue-300', zinc: 'bg-surface-300 text-zinc-400' };
   return <span className={'text-[8px] px-1.5 py-0.5 rounded-full font-medium ' + (c[color] || c.zinc)}>{text}</span>;
 }
 
 function Section({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="flex items-center gap-1.5 mb-2">
-        {icon && <span className="text-zinc-500">{icon}</span>}
-        <h4 className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{title}</h4>
-      </div>
-      {children}
-    </div>
-  );
+  return <div><div className="flex items-center gap-1.5 mb-2">{icon && <span className="text-zinc-500">{icon}</span>}<h4 className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{title}</h4></div>{children}</div>;
 }
 
 function Inp({ label, value, set }: { label: string; value: string; set: (v: string) => void }) {
