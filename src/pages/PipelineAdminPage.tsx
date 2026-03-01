@@ -4,7 +4,7 @@ import {
   RefreshCw, Plus, GripVertical, Send, Trash2, TestTube, Heart, Save,
   ChevronDown, ChevronRight, ArrowRight, Copy,
 } from 'lucide-react';
-import PipelineCanvas from '../components/pipeline-builder/PipelineCanvas';
+import PipelineListView from '../components/pipeline-builder/PipelineListView';
 import { apiJson } from '../components/pipeline-builder/types';
 
 // Re-export for backward compat
@@ -52,7 +52,7 @@ export default function PipelineAdminPage() {
           })}
         </nav>
       </div>
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-auto">
         {activeTab === 'builder' && <BuilderTab />}
         {activeTab === 'definitions' && <div className="overflow-auto h-full p-6"><DefinitionsTab /></div>}
         {activeTab === 'models' && <div className="overflow-auto h-full p-6"><ModelsTab /></div>}
@@ -129,9 +129,9 @@ function BuilderTab() {
       )}
 
       {/* Canvas */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-auto">
         {selectedPipelineId ? (
-          <PipelineCanvas key={selectedPipelineId} pipelineId={selectedPipelineId} />
+          <PipelineListView key={selectedPipelineId} pipelineId={selectedPipelineId} />
         ) : (
           <div className="flex items-center justify-center h-full text-zinc-500">Selecteer een pipeline</div>
         )}
