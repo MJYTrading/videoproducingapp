@@ -1003,35 +1003,120 @@ async function fetchImageUrlsViaSonar(
 async function downloadVideoFile(
   youtubeUrl: string,
   outputPath: string,
-  settings: any
+  settings: any,
+  startTimeSec?: number,
+  endTimeSec?: number
 ): Promise<boolean> {
   const apiKey = settings.videoDownloadApiKey;
   if (!apiKey) return false;
 
   try {
     const encodedUrl = encodeURIComponent(youtubeUrl);
-    const apiUrl = VIDEO_DOWNLOAD_API_BASE + "/ajax/download.php?format=1080&url=" + encodedUrl + "&apikey=" + apiKey;
+    let apiUrl = VIDEO_DOWNLOAD_API_BASE + "/ajax/download.php?format=1080&url=" + encodedUrl + "&apikey=" + apiKey;
 
+    // Voeg start/end time toe als ze meegegeven zijn
+    if (startTimeSec && startTimeSec > 0) apiUrl += "&start_time=" + Math.floor(startTimeSec);
+    if (endTimeSec && endTimeSec > startTimeSec!) apiUrl += "&end_time=" + Math.floor(endTimeSec);
+
+    // Stap 1: Start download taak
     const response = await fetch(apiUrl, { signal: AbortSignal.timeout(60_000) });
-    if (!response.ok) return false;
+    if (!response.ok) {
+      console.log("[Download] API start fout: " + response.status);
+      return false;
+    }
 
     const data = await response.json();
-    if (!data.success || !data.content) return false;
+    if (!data.success) {
+      console.log("[Download] API niet succesvol: " + JSON.stringify(data).slice(0, 200));
+      return false;
+    }
 
-    const decoded = Buffer.from(data.content, 'base64').toString('utf-8');
-    const urlMatch = decoded.match(/href="([^"]+)"/i) || decoded.match(/(https?:\/\/[^\s"'<>]+)/i);
-    if (!urlMatch?.[1]) return false;
+    // Nieuwe API: async poll-model (content is leeg, progress_url beschikbaar)
+    if (!data.content && data.progress_url) {
+      const downloadUrl = await pollVideoProgress(data.progress_url, 300_000); // 5 min max
+      if (!downloadUrl) return false;
 
-    const videoResponse = await fetch(urlMatch[1], { signal: AbortSignal.timeout(300_000) });
-    if (!videoResponse.ok) return false;
+      const videoResponse = await fetch(downloadUrl, { signal: AbortSignal.timeout(300_000) });
+      if (!videoResponse.ok) return false;
 
-    const arrayBuffer = await videoResponse.arrayBuffer();
-    const videoBuffer = Buffer.from(arrayBuffer);
-    if (videoBuffer.length < 10_000) return false;
+      const arrayBuffer = await videoResponse.arrayBuffer();
+      const videoBuffer = Buffer.from(arrayBuffer);
+      if (videoBuffer.length < 10_000) return false;
 
-    await fs.writeFile(outputPath, videoBuffer);
-    return true;
-  } catch { return false; }
+      await fs.writeFile(outputPath, videoBuffer);
+      return true;
+    }
+
+    // Fallback: oude API (base64 content met directe download link)
+    if (data.content) {
+      const decoded = Buffer.from(data.content, 'base64').toString('utf-8');
+      const urlMatch = decoded.match(/href="([^"]+)"/i) || decoded.match(/(https?:\/\/[^\s"'<>]+)/i);
+      if (!urlMatch?.[1]) return false;
+
+      const videoResponse = await fetch(urlMatch[1], { signal: AbortSignal.timeout(300_000) });
+      if (!videoResponse.ok) return false;
+
+      const arrayBuffer = await videoResponse.arrayBuffer();
+      const videoBuffer = Buffer.from(arrayBuffer);
+      if (videoBuffer.length < 10_000) return false;
+
+      await fs.writeFile(outputPath, videoBuffer);
+      return true;
+    }
+
+    return false;
+  } catch (error: any) {
+    console.log("[Download] Fout: " + error.message);
+    return false;
+  }
+}
+
+/**
+ * Poll de video-download-api progress URL tot de download klaar is.
+ * Returns de download URL als succesvol, null als timeout of fout.
+ */
+async function pollVideoProgress(
+  progressUrl: string,
+  timeoutMs: number = 300_000,
+  pollIntervalMs: number = 5_000
+): Promise<string | null> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const response = await fetch(progressUrl, { signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) {
+        console.log("[Download] Poll fout: " + response.status);
+        await sleep(pollIntervalMs);
+        continue;
+      }
+
+      const data = await response.json();
+
+      if (data.success === 1 && data.download_url) {
+        return data.download_url;
+      }
+
+      // Check op definitieve fout (success = -1 of error veld)
+      if (data.success === -1 || data.error) {
+        console.log("[Download] Poll definitief mislukt: " + (data.text || data.error || 'onbekend'));
+        return null;
+      }
+
+      // Nog bezig — wacht en probeer opnieuw
+      await sleep(pollIntervalMs);
+    } catch (error: any) {
+      console.log("[Download] Poll exception: " + error.message);
+      await sleep(pollIntervalMs);
+    }
+  }
+
+  console.log("[Download] Poll timeout na " + (timeoutMs / 1000) + "s");
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function downloadYouTubeVideo(

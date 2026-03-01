@@ -31,7 +31,7 @@ export default function PipelineAdminPage() {
   const [activeTab, setActiveTab] = useState<TabId>('builder');
 
   return (
-    <div className="flex h-[calc(100vh-56px)] overflow-hidden -m-6 -mt-4">
+    <div className="flex h-[calc(100vh-64px)] overflow-hidden">
       <div className="w-52 shrink-0 bg-surface-50/60 backdrop-blur-xl border-r border-white/[0.06] flex flex-col">
         <div className="p-4 pb-3">
           <h1 className="text-base font-bold text-white">Pipeline Admin</h1>

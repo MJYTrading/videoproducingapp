@@ -520,6 +520,7 @@ model LlmModel {
   rateLimit       String?
   isActive        Boolean   @default(true)
   notes           String    @default("")
+  configSchema    String    @default("{}")
   createdAt       DateTime  @default(now())
 
   // Relations (v2 legacy + v3)
@@ -603,6 +604,7 @@ model PipelineStep {
   isActive        Boolean   @default(true)
   sortOrder       Int       @default(0)
   notes           String    @default("")
+  configSchema    String    @default("{}")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   videoTypeConfigs PipelineVideoTypeConfig[]
@@ -652,6 +654,7 @@ model StepDefinition {
   isReady         Boolean   @default(false)             // Is de executor gebouwd?
   isActive        Boolean   @default(true)
   notes           String    @default("")
+  configSchema    String    @default("{}")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

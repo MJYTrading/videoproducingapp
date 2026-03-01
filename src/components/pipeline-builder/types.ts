@@ -32,6 +32,7 @@ export interface StepDefinitionData {
   inputSchema: StepInput[];
   outputSchema: StepOutput[];
   defaultConfig: Record<string, any>;
+  configSchema: string; // JSON string: { stepType, fields[] }
   systemPrompt: string;
   userPromptTpl: string;
   outputFormat: string;
@@ -102,7 +103,6 @@ export async function apiJson(path: string, options: RequestInit = {}) {
   return res.json();
 }
 
-// Category kleuren
 export const CATEGORY_COLORS: Record<string, { bg: string; border: string; text: string; dot: string }> = {
   setup:    { bg: 'bg-zinc-800',     border: 'border-zinc-600',    text: 'text-zinc-300',    dot: 'bg-zinc-400' },
   research: { bg: 'bg-blue-900/40',  border: 'border-blue-500/40', text: 'text-blue-300',    dot: 'bg-blue-400' },

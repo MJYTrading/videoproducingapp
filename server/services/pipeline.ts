@@ -1539,8 +1539,9 @@ export async function executeStep8(project: any, settings: any) {
 
         console.log(`[Step 13] Clip ${clipId}: downloading ${clip.url} (${clip.source_start} - ${clip.source_end})...`);
 
+        // Stap 1: Start download taak
         const response = await fetch(apiUrl, {
-          signal: AbortSignal.timeout(120_000), // 2 min timeout per clip
+          signal: AbortSignal.timeout(60_000),
         });
 
         if (!response.ok) {
@@ -1548,23 +1549,36 @@ export async function executeStep8(project: any, settings: any) {
         }
 
         const data = await response.json();
-        if (!data.success || !data.content) {
-          throw new Error('API response niet succesvol');
+        if (!data.success) {
+          throw new Error('API response niet succesvol: ' + JSON.stringify(data).slice(0, 200));
         }
 
-        // Decodeer base64 content om download URL te vinden
-        const decoded = Buffer.from(data.content, 'base64').toString('utf-8');
-        const urlMatch = decoded.match(/href="([^"]+)"/i) || decoded.match(/(https?:\/\/[^\s"'<>]+)/i);
+        let finalDownloadUrl: string | null = null;
 
-        if (!urlMatch?.[1]) {
-          throw new Error('Geen download URL gevonden in API response');
+        // Nieuwe API: async poll-model (content is leeg, progress_url beschikbaar)
+        if (!data.content && data.progress_url) {
+          console.log(`[Step 13] Clip ${clipId}: wachten op verwerking...`);
+          finalDownloadUrl = await pollClipProgress(data.progress_url, 300_000);
+          if (!finalDownloadUrl) {
+            throw new Error('Download timeout of mislukt tijdens verwerking');
+          }
+        }
+        // Fallback: oude API (base64 content met directe download link)
+        else if (data.content) {
+          const decoded = Buffer.from(data.content, 'base64').toString('utf-8');
+          const urlMatch = decoded.match(/href="([^"]+)"/i) || decoded.match(/(https?:\/\/[^\s"'<>]+)/i);
+          if (!urlMatch?.[1]) {
+            throw new Error('Geen download URL gevonden in API response');
+          }
+          finalDownloadUrl = urlMatch[1];
+        } else {
+          throw new Error('API response bevat geen content en geen progress_url');
         }
 
-        const downloadUrl = urlMatch[1];
         const outputPath = path.join(clipsDir, `clip-${String(clipId).padStart(3, '0')}.mp4`);
 
         // Download het videobestand
-        const videoResponse = await fetch(downloadUrl, {
+        const videoResponse = await fetch(finalDownloadUrl, {
           signal: AbortSignal.timeout(300_000), // 5 min timeout voor grote clips
         });
 
@@ -1631,6 +1645,55 @@ function parseTimeToSeconds(timeStr: string | number): number {
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   if (parts.length === 2) return parts[0] * 60 + parts[1];
   return Number(timeStr) || 0;
+}
+
+/**
+ * Poll de video-download-api progress URL tot de download klaar is.
+ * Returns de download URL als succesvol, null als timeout of fout.
+ */
+async function pollClipProgress(
+  progressUrl: string,
+  timeoutMs: number = 300_000,
+  pollIntervalMs: number = 5_000
+): Promise<string | null> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const response = await fetch(progressUrl, { signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) {
+        console.log(`[Step 13] Poll fout: ${response.status}`);
+        await new Promise(r => setTimeout(r, pollIntervalMs));
+        continue;
+      }
+
+      const data = await response.json();
+
+      if (data.success === 1 && data.download_url) {
+        return data.download_url;
+      }
+
+      // Definitieve fout
+      if (data.success === -1 || data.error) {
+        console.log(`[Step 13] Poll definitief mislukt: ${data.text || data.error || 'onbekend'}`);
+        return null;
+      }
+
+      // Nog bezig — log progress en wacht
+      if (data.progress != null) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+        console.log(`[Step 13] Poll progress: ${data.progress} (${elapsed}s)`);
+      }
+
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    } catch (error: any) {
+      console.log(`[Step 13] Poll exception: ${error.message}`);
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
+  }
+
+  console.log(`[Step 13] Poll timeout na ${(timeoutMs / 1000).toFixed(0)}s`);
+  return null;
 }
 
 
