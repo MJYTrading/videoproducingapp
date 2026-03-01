@@ -1,0 +1,345 @@
+{
+  "version": "1.0",
+  "presets": [
+    {
+      "id": "stat_bars",
+      "name": "Stat Bars",
+      "category": "data",
+      "script": "data/stat_bars.py",
+      "description": "Verticale bars met grote nummers, proportionele hoogte",
+      "when_to_use": "Meerdere datapunten vergelijken (merken, steden, bedrijven)",
+      "when_not": "Eén getal (→ Counter), trend over tijd (→ Line Graph)",
+      "max_items": 10,
+      "params": {
+        "title": {"type": "string", "required": false},
+        "bars": {"type": "array", "required": true, "item_fields": {
+          "label": {"type": "string", "required": true},
+          "value": {"type": "string", "required": true},
+          "subtitle": {"type": "string", "required": false},
+          "color": {"type": "hex_color", "required": false}
+        }},
+        "duration": {"type": "float", "default": 5.0},
+        "stagger_delay": {"type": "float", "default": 0.5},
+        "source": {"type": "string", "required": false}
+      }
+    },
+    {
+      "id": "stat_stack",
+      "name": "Stat Stack",
+      "category": "data",
+      "script": "data/stat_stack.py",
+      "description": "Gestapelde stats, één voor één van boven naar beneden",
+      "when_to_use": "Sequentiële feiten, strafmaat, tijdlijn met getallen",
+      "when_not": "Vergelijkingen tussen concurrenten (→ Stat Bars), rankings (→ Stat Bars)",
+      "max_items": 10,
+      "params": {
+        "title": {"type": "string", "required": false},
+        "stats": {"type": "array", "required": true, "item_fields": {
+          "value": {"type": "string", "required": true},
+          "label": {"type": "string", "required": true},
+          "subtitle": {"type": "string", "required": false},
+          "color": {"type": "hex_color", "required": false},
+          "logo_path": {"type": "string", "required": false}
+        }},
+        "duration": {"type": "float", "default": 5.0},
+        "stagger_delay": {"type": "float", "default": 0.4},
+        "source": {"type": "string", "required": false}
+      }
+    },
+    {
+      "id": "counter",
+      "name": "Counter",
+      "category": "data",
+      "script": "data/counter.py",
+      "description": "Eén groot getal dat optelt van 0 naar doel",
+      "when_to_use": "Eén indrukwekkend getal benadrukken (schade, percentage, tijdsduur)",
+      "when_not": "Meerdere getallen (→ Stat Bars), sequentieel (→ Stat Stack)",
+      "max_items": 1,
+      "params": {
+        "value": {"type": "string", "required": true},
+        "label": {"type": "string", "required": false},
+        "subtitle": {"type": "string", "required": false},
+        "color": {"type": "hex_color", "default": "#ff4444"},
+        "logo_path": {"type": "string", "required": false},
+        "duration": {"type": "float", "default": 4.0},
+        "count_duration": {"type": "float", "default": 2.0},
+        "source": {"type": "string", "required": false}
+      }
+    },
+    {
+      "id": "line_graph",
+      "name": "Line Graph",
+      "category": "data",
+      "script": "data/line_graph.py",
+      "description": "Lijn die van links naar rechts tekent met glow effect",
+      "when_to_use": "Trend over tijd (koers, groei, daling over jaren/maanden)",
+      "when_not": "Categorieën vergelijken (→ Stat Bars), verhoudingen (→ Pie Chart)",
+      "max_items": 20,
+      "params": {
+        "title": {"type": "string", "required": false},
+        "x_labels": {"type": "array", "required": true},
+        "y_values": {"type": "array", "required": true},
+        "y_prefix": {"type": "string", "required": false},
+        "y_suffix": {"type": "string", "required": false},
+        "color": {"type": "hex_color", "required": false},
+        "duration": {"type": "float", "default": 5.0},
+        "draw_duration": {"type": "float", "default": 2.5},
+        "source": {"type": "string", "required": false}
+      }
+    },
+    {
+      "id": "pie_chart",
+      "name": "Pie Chart",
+      "category": "data",
+      "script": "data/pie_chart.py",
+      "description": "Donut chart met segmenten die één voor één vullen",
+      "when_to_use": "Verhoudingen/percentages (zetelverdeling, marktaandeel, budget)",
+      "when_not": "Trend over tijd (→ Line Graph), meer dan 8 segmenten (→ Stat Bars)",
+      "max_items": 10,
+      "params": {
+        "title": {"type": "string", "required": false},
+        "segments": {"type": "array", "required": true, "item_fields": {
+          "label": {"type": "string", "required": true},
+          "value": {"type": "number", "required": true},
+          "color": {"type": "hex_color", "required": false}
+        }},
+        "duration": {"type": "float", "default": 5.0},
+        "stagger_delay": {"type": "float", "default": 0.3},
+        "source": {"type": "string", "required": false}
+      }
+    },
+    {
+      "id": "comparison_split",
+      "name": "Comparison Split",
+      "category": "comparison",
+      "script": "comparison/comparison_split.py",
+      "description": "Twee kanten naast elkaar met VS-badge divider",
+      "when_to_use": "Twee opties/standpunten tegenover elkaar (voor/tegen, A vs B)",
+      "when_not": "Meer dan 2 opties (→ Listicle Grid), puur numeriek (→ Stat Bars)",
+      "max_items": 2,
+      "params": {
+        "title": {"type": "string", "required": false},
+        "left": {"type": "object", "required": true, "fields": {
+          "heading": {"type": "string", "required": true},
+          "color": {"type": "hex_color", "required": true},
+          "points": {"type": "array", "required": true},
+          "logo_path": {"type": "string", "required": false}
+        }},
+        "right": {"type": "object", "required": true, "fields": {
+          "heading": {"type": "string", "required": true},
+          "color": {"type": "hex_color", "required": true},
+          "points": {"type": "array", "required": true},
+          "logo_path": {"type": "string", "required": false}
+        }},
+        "conclusion": {"type": "string", "required": false},
+        "duration": {"type": "float", "default": 5.0},
+        "stagger_delay": {"type": "float", "default": 0.25},
+        "source": {"type": "string", "required": false}
+      }
+    },
+    {
+      "id": "listicle_scroll",
+      "name": "Listicle Scroll",
+      "category": "comparison",
+      "script": "comparison/listicle_scroll.py",
+      "description": "Horizontale strip met zoom flow tussen items",
+      "when_to_use": "Top-N lijsten met visuele items, rankings met thumbnails",
+      "when_not": "Data vergelijking (→ Stat Bars), voor/tegen (→ Comparison Split)",
+      "params": {
+        "items": {"type": "array", "required": true, "item_fields": {
+          "label": {"type": "string", "required": true},
+          "color": {"type": "hex_color", "required": false},
+          "thumbnail_path": {"type": "string", "required": false},
+          "start_time": {"type": "float", "required": false},
+          "end_time": {"type": "float", "required": false}
+        }},
+        "zoom_duration": {"type": "float", "default": 0.5},
+        "scroll_duration": {"type": "float", "default": 0.4},
+        "duration": {"type": "float", "default": 10.0}
+      }
+    },
+    {
+      "id": "listicle_goodbad",
+      "name": "Listicle Goed/Fout",
+      "category": "comparison",
+      "script": "comparison/listicle_goodbad.py",
+      "description": "Twee rijen (groen/rood) met zoom flow",
+      "when_to_use": "Goed vs fout lijsten, do's en don'ts",
+      "when_not": "Twee standpunten (→ Comparison Split), rankings (→ Listicle Scroll)",
+      "params": {
+        "good": {"type": "array", "required": true},
+        "bad": {"type": "array", "required": true},
+        "good_label": {"type": "string", "default": "GOED"},
+        "bad_label": {"type": "string", "default": "FOUT"},
+        "duration": {"type": "float", "default": 10.0}
+      }
+    },
+    {
+      "id": "listicle_grid",
+      "name": "Listicle Grid",
+      "category": "comparison",
+      "script": "comparison/listicle_grid_highlight.py",
+      "description": "Grid overzicht met zoom flow per item",
+      "when_to_use": "Overzichtslijsten, meerdere gelijkwaardige items",
+      "when_not": "Twee kanten (→ Comparison Split), data (→ Stat Bars)",
+      "params": {
+        "items": {"type": "array", "required": true},
+        "title": {"type": "string", "required": false},
+        "duration": {"type": "float", "default": 10.0}
+      }
+    },
+    {
+      "id": "map_zoom",
+      "name": "Map Zoom",
+      "category": "location",
+      "script": "location/map_zoom.py",
+      "description": "Locatie pin met naam op grid achtergrond",
+      "when_to_use": "Locatie vermelden (stad, land, gebouw, plaats van incident)",
+      "when_not": "Geen geografische context nodig",
+      "params": {
+        "location": {"type": "string", "required": true},
+        "subtitle": {"type": "string", "required": false},
+        "accent_color": {"type": "hex_color", "default": "#ff4444"},
+        "duration": {"type": "float", "default": 4.0}
+      }
+    },
+    {
+      "id": "title_card",
+      "name": "Title Card",
+      "category": "text",
+      "script": "text/title_card.py",
+      "description": "Grote titel met accent onderlijn, optionele subtitle",
+      "when_to_use": "Chapter intros, topic changes, segment headers",
+      "when_not": "Data tonen (→ data presets), citaat (→ Quote Card)",
+      "params": {
+        "title": {"type": "string", "required": true},
+        "subtitle": {"type": "string", "required": false},
+        "accent_color": {"type": "hex_color", "default": "#ff4444"},
+        "duration": {"type": "float", "default": 3.0}
+      }
+    },
+    {
+      "id": "quote_card",
+      "name": "Quote Card",
+      "category": "text",
+      "script": "text/quote_card.py",
+      "description": "Citaat met decoratieve aanhalingstekens en attributie",
+      "when_to_use": "Specifiek citaat van een persoon of bron",
+      "when_not": "Geen citaat (→ Title Card), persoon met foto (→ Person Quote)",
+      "params": {
+        "quote": {"type": "string", "required": true},
+        "attribution": {"type": "string", "required": false},
+        "accent_color": {"type": "hex_color", "default": "#ff4444"},
+        "duration": {"type": "float", "default": 4.0},
+        "source": {"type": "string", "required": false}
+      }
+    },
+    {
+      "id": "news_banner",
+      "name": "News Banner",
+      "category": "text",
+      "script": "text/news_banner.py",
+      "description": "Lower-third breaking news banner (overlay)",
+      "when_to_use": "Breaking news, nieuwsflash, urgent context",
+      "when_not": "Standaard titel (→ Title Card), citaat (→ Quote Card)",
+      "params": {
+        "headline": {"type": "string", "required": true},
+        "text": {"type": "string", "required": false},
+        "accent_color": {"type": "hex_color", "default": "#ff4444"},
+        "overlay": {"type": "boolean", "default": true},
+        "duration": {"type": "float", "default": 4.0}
+      }
+    },
+    {
+      "id": "typewriter",
+      "name": "Typewriter",
+      "category": "text",
+      "script": "text/typewriter.py",
+      "description": "Letter voor letter met blinkende cursor",
+      "when_to_use": "Korte impactvolle tekst, onthulling, dramatisch effect",
+      "when_not": "Lange tekst (→ Quote Card), data (→ data presets)",
+      "params": {
+        "text": {"type": "string", "required": true},
+        "typing_speed": {"type": "float", "default": 0.04},
+        "accent_color": {"type": "hex_color", "default": "#ff4444"},
+        "duration": {"type": "float", "default": 4.0}
+      }
+    },
+    {
+      "id": "person_pip",
+      "name": "Person PiP",
+      "category": "person",
+      "script": "person/person_pip.py",
+      "description": "Circulair portret met naam-banner (overlay mogelijk)",
+      "when_to_use": "Persoon introduceren als overlay over B-roll",
+      "when_not": "Uitgebreide persooninfo (→ Person Split), citaat (→ Person Quote)",
+      "params": {
+        "name": {"type": "string", "required": true},
+        "title": {"type": "string", "required": false},
+        "portrait_path": {"type": "string", "required": false},
+        "position": {"type": "enum", "options": ["center","left","right"], "default": "center"},
+        "overlay": {"type": "boolean", "default": false},
+        "duration": {"type": "float", "default": 4.0}
+      }
+    },
+    {
+      "id": "person_splitscreen",
+      "name": "Person Splitscreen",
+      "category": "person",
+      "script": "person/person_splitscreen.py",
+      "description": "Portret halve scherm met naam + titel + organisatie",
+      "when_to_use": "Persoon met rol/organisatie uitgebreid introduceren",
+      "when_not": "Korte introductie (→ Person PiP), met citaat (→ Person Quote)",
+      "params": {
+        "name": {"type": "string", "required": true},
+        "title": {"type": "string", "required": false},
+        "organization": {"type": "string", "required": false},
+        "portrait_path": {"type": "string", "required": false},
+        "portrait_side": {"type": "enum", "options": ["left","right"], "default": "left"},
+        "accent_color": {"type": "hex_color", "default": "#ff4444"},
+        "duration": {"type": "float", "default": 4.0}
+      }
+    },
+    {
+      "id": "person_quote",
+      "name": "Person Quote",
+      "category": "person",
+      "script": "person/person_quote.py",
+      "description": "Portret + typewriter citaat naast elkaar",
+      "when_to_use": "Persoon met hun eigen citaat tonen",
+      "when_not": "Citaat zonder foto (→ Quote Card), persoon zonder citaat (→ Person PiP)",
+      "params": {
+        "name": {"type": "string", "required": true},
+        "quote": {"type": "string", "required": true},
+        "portrait_path": {"type": "string", "required": false},
+        "typing_speed": {"type": "float", "default": 0.04},
+        "accent_color": {"type": "hex_color", "default": "#ff4444"},
+        "duration": {"type": "float", "default": 5.0}
+      }
+    }
+  ],
+  "shared_params": {
+    "duration": "Duur in seconden",
+    "source": "Bronvermelding rechtsonder",
+    "accent_color": "Accent kleur als hex (#ff4444)",
+    "theme": "dark (default) of light"
+  },
+  "color_guide": {
+    "positive": "#44cc88",
+    "negative": "#ff4444",
+    "neutral": "#4488ff",
+    "warning": "#ffaa00",
+    "brands": {
+      "Facebook": "#1877F2", "Instagram": "#E4405F", "YouTube": "#FF0000",
+      "TikTok": "#EE1D52", "X/Twitter": "#1DA1F2", "Snapchat": "#FFFC00",
+      "Spotify": "#1DB954", "Netflix": "#E50914", "Amazon": "#FF9900",
+      "Google": "#4285F4", "Apple": "#A2AAAD", "Microsoft": "#00A4EF",
+      "LinkedIn": "#0A66C2", "WhatsApp": "#25D366", "Reddit": "#FF4500"
+    },
+    "politics_nl": {
+      "VVD": "#FF6600", "PVV": "#003DA5", "GL-PvdA": "#8B0000",
+      "D66": "#00AA55", "CDA": "#007B5F", "SP": "#EE0000",
+      "BBB": "#8DC63F", "NSC": "#512D6D"
+    }
+  }
+}
