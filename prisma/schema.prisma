@@ -307,6 +307,8 @@ model Competitor {
   ytChannelId     String
   name            String   @default("")
   notes           String   @default("")
+  description    String    @default("")
+  capabilities   String    @default("[]")
   cachedAbout     String?
   createdAt       DateTime @default(now())
 
@@ -520,6 +522,8 @@ model LlmModel {
   rateLimit       String?
   isActive        Boolean   @default(true)
   notes           String    @default("")
+  description    String    @default("")
+  capabilities   String    @default("[]")
   configSchema    String    @default("{}")
   createdAt       DateTime  @default(now())
 
@@ -544,6 +548,8 @@ model ApiTool {
   lastHealthOk   Boolean?
   lastHealthMs   Int?
   notes          String    @default("")
+  description    String    @default("")
+  capabilities   String    @default("[]")
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 }
@@ -604,6 +610,7 @@ model PipelineStep {
   isActive        Boolean   @default(true)
   sortOrder       Int       @default(0)
   notes           String    @default("")
+  capabilities   String    @default("[]")
   configSchema    String    @default("{}")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -654,6 +661,7 @@ model StepDefinition {
   isReady         Boolean   @default(false)             // Is de executor gebouwd?
   isActive        Boolean   @default(true)
   notes           String    @default("")
+  capabilities   String    @default("[]")
   configSchema    String    @default("{}")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt

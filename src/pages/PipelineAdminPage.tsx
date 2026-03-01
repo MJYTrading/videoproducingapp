@@ -2,16 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Settings2, GitBranch, Brain, Wrench, Bot, Check, X, Play,
   RefreshCw, Plus, GripVertical, Send, Trash2, TestTube, Heart, Save,
-  ChevronDown, ChevronRight, ArrowRight, Copy,
+  ChevronDown, ChevronRight, ArrowRight, Copy, Info, Edit3, Zap,
 } from 'lucide-react';
 import PipelineListView from '../components/pipeline-builder/PipelineListView';
 import { apiJson } from '../components/pipeline-builder/types';
 
-// Re-export for backward compat
-const API = '/api/admin';
-async function legacyApiJson(path: string, options: RequestInit = {}) {
-  return apiJson(path, options);
-}
+const legacyApiJson = apiJson;
 
 // ═══════════════════════════════════════════════
 // HOOFD PAGINA
@@ -31,11 +27,11 @@ export default function PipelineAdminPage() {
   const [activeTab, setActiveTab] = useState<TabId>('builder');
 
   return (
-    <div className="flex h-[calc(100vh-64px)] overflow-hidden">
+    <div className="flex h-[calc(100vh-56px)] overflow-hidden -m-6 -mt-4">
       <div className="w-52 shrink-0 bg-surface-50/60 backdrop-blur-xl border-r border-white/[0.06] flex flex-col">
         <div className="p-4 pb-3">
           <h1 className="text-base font-bold text-white">Pipeline Admin</h1>
-          <p className="text-[10px] text-zinc-500 mt-0.5">v3.0 — Visual Builder</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">v4.1 &mdash; Step List Builder</p>
         </div>
         <div className="h-px bg-white/[0.06] mx-3" />
         <nav className="flex-1 p-2 space-y-0.5">
@@ -52,7 +48,7 @@ export default function PipelineAdminPage() {
           })}
         </nav>
       </div>
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-hidden">
         {activeTab === 'builder' && <BuilderTab />}
         {activeTab === 'definitions' && <div className="overflow-auto h-full p-6"><DefinitionsTab /></div>}
         {activeTab === 'models' && <div className="overflow-auto h-full p-6"><ModelsTab /></div>}
@@ -64,7 +60,7 @@ export default function PipelineAdminPage() {
 }
 
 // ═══════════════════════════════════════════════
-// TAB 1: PIPELINE BUILDER (NIEUW)
+// TAB 1: PIPELINE BUILDER (v4 List)
 // ═══════════════════════════════════════════════
 
 function BuilderTab() {
@@ -100,10 +96,9 @@ function BuilderTab() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Pipeline selector bar */}
       <div className="shrink-0 px-4 py-2 border-b border-white/[0.06] flex items-center gap-2 bg-surface-50/40">
         <span className="text-[11px] text-zinc-500 font-medium">Pipeline:</span>
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           {pipelines.map(p => (
             <button key={p.id} onClick={() => setSelectedPipelineId(p.id)}
               className={`px-3 py-1 rounded-lg text-[11px] font-medium transition ${selectedPipelineId === p.id ? 'bg-brand-600/20 text-brand-300' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'}`}>
@@ -118,7 +113,6 @@ function BuilderTab() {
         </button>
       </div>
 
-      {/* Duplicate form */}
       {showDuplicate && (
         <div className="shrink-0 px-4 py-2 border-b border-white/[0.06] flex items-center gap-2 bg-surface-100/40">
           <input className="input-base text-xs !w-40" placeholder="Naam..." value={dupName} onChange={e => setDupName(e.target.value)} />
@@ -128,7 +122,6 @@ function BuilderTab() {
         </div>
       )}
 
-      {/* Canvas */}
       <div className="flex-1 overflow-auto">
         {selectedPipelineId ? (
           <PipelineListView key={selectedPipelineId} pipelineId={selectedPipelineId} />
@@ -141,34 +134,149 @@ function BuilderTab() {
 }
 
 // ═══════════════════════════════════════════════
-// TAB 2: STEP DEFINITIES (was Pipeline Stappen)
+// TAB 2: STEP DEFINITIES — BEWERKBAAR
 // ═══════════════════════════════════════════════
 
 function DefinitionsTab() {
   const [defs, setDefs] = useState<any[]>([]);
   const [selected, setSelected] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editInputs, setEditInputs] = useState<any[]>([]);
+  const [editOutputs, setEditOutputs] = useState<any[]>([]);
+  // New step form
+  const [newStep, setNewStep] = useState({ name: '', slug: '', category: 'setup', description: '', executorFn: 'placeholder', executorLabel: 'Placeholder', outputFormat: '' });
 
-  useEffect(() => { legacyApiJson('/step-definitions').then(setDefs).catch(() => {}).finally(() => setLoading(false)); }, []);
+  const CATEGORIES = ['setup', 'research', 'script', 'audio', 'visual', 'post', 'output'];
+
+  const loadDefs = () => { legacyApiJson('/step-definitions').then(d => { setDefs(d); setLoading(false); }).catch(() => setLoading(false)); };
+  useEffect(loadDefs, []);
+
+  const startEdit = () => {
+    if (!selected) return;
+    setEditInputs(JSON.parse(JSON.stringify(selected.inputSchema || [])));
+    setEditOutputs(JSON.parse(JSON.stringify(selected.outputSchema || [])));
+    setEditing(true);
+  };
+
+  const saveSchema = async () => {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      await legacyApiJson(`/step-definitions/${selected.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ inputSchema: editInputs, outputSchema: editOutputs }),
+      });
+      loadDefs();
+      setEditing(false);
+      // Refresh selected
+      const updated = await legacyApiJson(`/step-definitions/${selected.id}`);
+      setSelected(updated);
+    } catch (err: any) { alert(err.message); }
+    setSaving(false);
+  };
+
+  const addInput = () => {
+    setEditInputs([...editInputs, { key: 'new_input', label: 'Nieuwe Input', type: 'json', required: false, source: 'pipeline' }]);
+  };
+
+  const addOutput = () => {
+    setEditOutputs([...editOutputs, { key: 'new_output', label: 'Nieuwe Output', type: 'json', filePath: '' }]);
+  };
+
+  const removeInput = (idx: number) => setEditInputs(editInputs.filter((_: any, i: number) => i !== idx));
+  const removeOutput = (idx: number) => setEditOutputs(editOutputs.filter((_: any, i: number) => i !== idx));
+
+  const updateInput = (idx: number, field: string, value: any) => {
+    const copy = [...editInputs];
+    copy[idx] = { ...copy[idx], [field]: value };
+    setEditInputs(copy);
+  };
+  const updateOutput = (idx: number, field: string, value: any) => {
+    const copy = [...editOutputs];
+    copy[idx] = { ...copy[idx], [field]: value };
+    setEditOutputs(copy);
+  };
+
+  const createStep = async () => {
+    if (!newStep.name || !newStep.slug) return;
+    try {
+      await legacyApiJson('/step-definitions', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...newStep,
+          inputSchema: [{ key: 'config_json', label: 'Config JSON', type: 'json', required: true, source: 'pipeline' }],
+          outputSchema: [],
+          isReady: false,
+        }),
+      });
+      loadDefs();
+      setShowAdd(false);
+      setNewStep({ name: '', slug: '', category: 'setup', description: '', executorFn: 'placeholder', executorLabel: 'Placeholder', outputFormat: '' });
+    } catch (err: any) { alert(err.message); }
+  };
+
+  // Test / run single step
+  const [testingStep, setTestingStep] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
+  const runSingleStep = async () => {
+    if (!selected) return;
+    setTestingStep(true); setTestResult(null);
+    try {
+      // We proberen de stap via de pipeline engine test endpoint
+      const res = await legacyApiJson(`/step-definitions/${selected.id}/test`, { method: 'POST', body: JSON.stringify({}) });
+      setTestResult(res);
+    } catch (err: any) {
+      setTestResult({ error: err.message });
+    }
+    setTestingStep(false);
+  };
 
   if (loading) return <Spinner />;
 
   return (
     <div className="flex gap-6 h-full">
       <div className="w-[380px] shrink-0 flex flex-col">
-        <h2 className="text-lg font-bold text-white mb-3">Step Definities ({defs.length})</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold text-white">Step Definities ({defs.length})</h2>
+          <button onClick={() => setShowAdd(!showAdd)} className="btn-primary text-xs !px-2.5 !py-1">
+            <Plus className="w-3 h-3" /> Nieuw
+          </button>
+        </div>
+
+        {/* Add Step Form */}
+        {showAdd && (
+          <div className="glass rounded-xl p-3 mb-3 space-y-2">
+            <h4 className="text-[11px] font-semibold text-white">Nieuwe Stap Definitie</h4>
+            <input className="input-base text-xs" placeholder="Naam..." value={newStep.name} onChange={e => setNewStep({ ...newStep, name: e.target.value })} />
+            <input className="input-base text-xs" placeholder="slug (bijv. my-new-step)..." value={newStep.slug} onChange={e => setNewStep({ ...newStep, slug: e.target.value })} />
+            <select className="input-base text-xs" value={newStep.category} onChange={e => setNewStep({ ...newStep, category: e.target.value })}>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input className="input-base text-xs" placeholder="Beschrijving..." value={newStep.description} onChange={e => setNewStep({ ...newStep, description: e.target.value })} />
+            <div className="grid grid-cols-2 gap-2">
+              <input className="input-base text-xs" placeholder="executorFn" value={newStep.executorFn} onChange={e => setNewStep({ ...newStep, executorFn: e.target.value })} />
+              <input className="input-base text-xs" placeholder="executorLabel" value={newStep.executorLabel} onChange={e => setNewStep({ ...newStep, executorLabel: e.target.value })} />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={createStep} className="btn-primary text-xs !px-3 !py-1.5">Aanmaken</button>
+              <button onClick={() => setShowAdd(false)} className="btn-secondary text-xs !px-3 !py-1.5">Annuleren</button>
+            </div>
+          </div>
+        )}
+
         <div className="flex-1 overflow-auto space-y-0.5 pr-1">
           {defs.map(def => (
-            <button key={def.id} onClick={() => setSelected(def)}
+            <button key={def.id} onClick={() => { setSelected(def); setEditing(false); setTestResult(null); }}
               className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-all ${selected?.id === def.id ? 'bg-brand-600/15 border border-brand-500/30' : 'hover:bg-white/[0.04] border border-transparent'}`}>
               <div className={`w-2 h-2 rounded-full shrink-0 ${def.isReady ? 'bg-emerald-400' : 'bg-amber-400'}`} />
               <div className="flex-1 min-w-0">
                 <div className="text-[12px] font-medium text-white truncate">{def.name}</div>
-                <div className="text-[10px] text-zinc-500">{def.category} · {def.executorLabel}</div>
+                <div className="text-[10px] text-zinc-500">{def.category} &middot; {def.executorLabel}</div>
               </div>
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] text-zinc-600">{def.inputSchema.length}→{def.outputSchema.length}</span>
-              </div>
+              <span className="text-[9px] text-zinc-600">{(def.inputSchema || []).length}&rarr;{(def.outputSchema || []).length}</span>
             </button>
           ))}
         </div>
@@ -176,31 +284,112 @@ function DefinitionsTab() {
 
       {selected ? (
         <div className="flex-1 glass rounded-2xl p-5 overflow-auto">
-          <h3 className="text-base font-bold text-white mb-1">{selected.name}</h3>
-          <p className="text-xs text-zinc-500 mb-4">{selected.description}</p>
-          
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div className="bg-surface-200/50 rounded-lg p-3">
-              <h4 className="text-[10px] text-zinc-500 font-semibold uppercase mb-2">Inputs</h4>
-              {selected.inputSchema.map((i: any) => (
-                <div key={i.key} className="text-[11px] py-0.5">
-                  <span className={i.required ? 'text-zinc-200' : 'text-zinc-500'}>{i.label}</span>
-                  <span className="text-zinc-600 ml-1 font-mono text-[9px]">{i.key}</span>
-                  {i.required && <span className="text-red-400 ml-1 text-[9px]">*</span>}
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-base font-bold text-white">{selected.name}</h3>
+            <div className="flex items-center gap-2">
+              <button onClick={runSingleStep} disabled={testingStep} className="btn-secondary text-xs !px-2.5 !py-1">
+                {testingStep ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />} Test
+              </button>
+              {!editing ? (
+                <button onClick={startEdit} className="btn-secondary text-xs !px-2.5 !py-1"><Edit3 className="w-3 h-3" /> Bewerk I/O</button>
+              ) : (
+                <div className="flex gap-1">
+                  <button onClick={saveSchema} disabled={saving} className="btn-primary text-xs !px-2.5 !py-1"><Save className="w-3 h-3" /> {saving ? '...' : 'Opslaan'}</button>
+                  <button onClick={() => setEditing(false)} className="btn-secondary text-xs !px-2.5 !py-1">Annuleren</button>
                 </div>
-              ))}
+              )}
             </div>
+          </div>
+          <p className="text-xs text-zinc-500 mb-4">{selected.description}</p>
+
+          {/* Test result */}
+          {testResult && (
+            <div className={`mb-4 p-3 rounded-lg text-xs ${testResult.error ? 'bg-red-500/10 text-red-300 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'}`}>
+              {testResult.error ? 'Fout: ' + testResult.error : 'Succes: ' + JSON.stringify(testResult).slice(0, 500)}
+            </div>
+          )}
+          
+          {/* I/O Schema — editable or read-only */}
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            {/* INPUTS */}
             <div className="bg-surface-200/50 rounded-lg p-3">
-              <h4 className="text-[10px] text-zinc-500 font-semibold uppercase mb-2">Outputs</h4>
-              {selected.outputSchema.map((o: any) => (
-                <div key={o.key} className="text-[11px] py-0.5">
-                  <span className="text-zinc-200">{o.label}</span>
-                  <span className="text-zinc-600 ml-1 font-mono text-[9px]">{o.filePath}</span>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-[10px] text-zinc-500 font-semibold uppercase">Inputs ({editing ? editInputs.length : (selected.inputSchema || []).length})</h4>
+                {editing && <button onClick={addInput} className="text-brand-400 hover:text-brand-300"><Plus className="w-3 h-3" /></button>}
+              </div>
+              {editing ? (
+                <div className="space-y-2">
+                  {editInputs.map((inp: any, idx: number) => (
+                    <div key={idx} className="bg-surface-300/50 rounded-lg p-2 space-y-1">
+                      <div className="flex gap-1">
+                        <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="key" value={inp.key} onChange={e => updateInput(idx, 'key', e.target.value)} />
+                        <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="label" value={inp.label} onChange={e => updateInput(idx, 'label', e.target.value)} />
+                        <button onClick={() => removeInput(idx)} className="text-zinc-600 hover:text-red-400 p-0.5"><Trash2 className="w-3 h-3" /></button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select className="input-base text-[9px] !py-0 w-20" value={inp.type} onChange={e => updateInput(idx, 'type', e.target.value)}>
+                          {['json', 'text', 'file', 'audio', 'image', 'video'].map(t => <option key={t}>{t}</option>)}
+                        </select>
+                        <select className="input-base text-[9px] !py-0 w-20" value={inp.source || 'pipeline'} onChange={e => updateInput(idx, 'source', e.target.value)}>
+                          <option value="pipeline">pipeline</option>
+                          <option value="project">project</option>
+                        </select>
+                        <label className="flex items-center gap-1 text-[9px] text-zinc-400">
+                          <input type="checkbox" checked={inp.required} onChange={e => updateInput(idx, 'required', e.target.checked)} className="rounded w-3 h-3" />
+                          Verplicht
+                        </label>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              ) : (
+                (selected.inputSchema || []).map((i: any) => (
+                  <div key={i.key} className="text-[11px] py-0.5 flex items-center gap-1">
+                    <span className={i.required ? 'text-zinc-200' : 'text-zinc-500'}>{i.label}</span>
+                    <span className="text-zinc-600 font-mono text-[9px]">{i.key}</span>
+                    {i.required && <span className="text-red-400 text-[9px]">*</span>}
+                    {i.source === 'project' && <span className="text-blue-400 text-[8px] ml-auto">project</span>}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* OUTPUTS */}
+            <div className="bg-surface-200/50 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-[10px] text-zinc-500 font-semibold uppercase">Outputs ({editing ? editOutputs.length : (selected.outputSchema || []).length})</h4>
+                {editing && <button onClick={addOutput} className="text-brand-400 hover:text-brand-300"><Plus className="w-3 h-3" /></button>}
+              </div>
+              {editing ? (
+                <div className="space-y-2">
+                  {editOutputs.map((out: any, idx: number) => (
+                    <div key={idx} className="bg-surface-300/50 rounded-lg p-2 space-y-1">
+                      <div className="flex gap-1">
+                        <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="key" value={out.key} onChange={e => updateOutput(idx, 'key', e.target.value)} />
+                        <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="label" value={out.label} onChange={e => updateOutput(idx, 'label', e.target.value)} />
+                        <button onClick={() => removeOutput(idx)} className="text-zinc-600 hover:text-red-400 p-0.5"><Trash2 className="w-3 h-3" /></button>
+                      </div>
+                      <div className="flex gap-1">
+                        <select className="input-base text-[9px] !py-0 w-20" value={out.type} onChange={e => updateOutput(idx, 'type', e.target.value)}>
+                          {['json', 'text', 'file', 'audio', 'image', 'video'].map(t => <option key={t}>{t}</option>)}
+                        </select>
+                        <input className="input-base text-[9px] !py-0 flex-1" placeholder="filePath (bijv. {projectDir}/output.json)" value={out.filePath || ''} onChange={e => updateOutput(idx, 'filePath', e.target.value)} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                (selected.outputSchema || []).map((o: any) => (
+                  <div key={o.key} className="text-[11px] py-0.5">
+                    <span className="text-zinc-200">{o.label}</span>
+                    <span className="text-zinc-600 ml-1 font-mono text-[9px]">{o.filePath}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
+          {/* Info rows */}
           <div className="space-y-2 text-[11px]">
             <InfoRow label="Slug" value={selected.slug} />
             <InfoRow label="Category" value={selected.category} />
@@ -208,7 +397,7 @@ function DefinitionsTab() {
             <InfoRow label="Executor Label" value={selected.executorLabel} />
             <InfoRow label="Output Format" value={selected.outputFormat || 'n.v.t.'} />
             <InfoRow label="LLM Model" value={selected.llmModel?.name || 'geen'} />
-            <InfoRow label="Status" value={selected.isReady ? '✅ Ready' : '⚠️ Skeleton'} />
+            <InfoRow label="Status" value={selected.isReady ? 'Ready' : 'Skeleton'} />
             {selected.notes && <InfoRow label="Notities" value={selected.notes} />}
           </div>
 
@@ -270,7 +459,7 @@ function ModelsTab() {
             </div>
             {testResult?.id === m.id && (
               <div className={`mt-3 p-3 rounded-lg text-xs ${testResult.error ? 'bg-red-500/10 text-red-300' : 'bg-emerald-500/10 text-emerald-300'}`}>
-                {testResult.error ? `❌ ${testResult.error}` : `✅ ${testResult.content} (${testResult.durationMs}ms)`}
+                {testResult.error ? `Fout: ${testResult.error}` : `OK: ${testResult.content} (${testResult.durationMs}ms)`}
               </div>
             )}
           </div>
@@ -281,13 +470,14 @@ function ModelsTab() {
 }
 
 // ═══════════════════════════════════════════════
-// TAB 4: TOOLS & APIS
+// TAB 4: TOOLS & APIS — MET BESCHRIJVING & CAPABILITIES
 // ═══════════════════════════════════════════════
 
 function ToolsTab() {
   const [tools, setTools] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [tp, setTp] = useState({ method: 'GET', url: '', headers: '{}', body: '' });
   const [tr, setTr] = useState<any>(null);
 
@@ -305,6 +495,10 @@ function ToolsTab() {
     catch (err: any) { setTr({ error: err.message }); }
   };
 
+  const parseCapabilities = (tool: any): string[] => {
+    try { return JSON.parse(tool.capabilities || '[]'); } catch { return []; }
+  };
+
   if (loading) return <Spinner />;
 
   return (
@@ -316,19 +510,80 @@ function ToolsTab() {
         </button>
       </div>
       <div className="space-y-2">
-        {tools.map(t => (
-          <div key={t.id} className="glass rounded-xl p-3 flex items-center gap-3">
-            <div className={`w-2.5 h-2.5 rounded-full ${t.lastHealthOk === true ? 'bg-emerald-400' : t.lastHealthOk === false ? 'bg-red-400' : 'bg-zinc-600'}`} />
-            <div className="flex-1">
-              <span className="text-sm font-medium text-white">{t.name}</span>
-              <span className="text-[10px] text-zinc-500 ml-2">{t.baseUrl || '(geen URL)'}</span>
-              {t.lastHealthMs && <span className="text-[10px] text-emerald-400 ml-2">{t.lastHealthMs}ms</span>}
+        {tools.map(t => {
+          const caps = parseCapabilities(t);
+          const isOpen = expandedId === t.id;
+          return (
+            <div key={t.id} className="glass rounded-xl overflow-hidden">
+              {/* Header row — always visible */}
+              <div className="p-3 flex items-center gap-3 cursor-pointer" onClick={() => setExpandedId(isOpen ? null : t.id)}>
+                <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${t.lastHealthOk === true ? 'bg-emerald-400' : t.lastHealthOk === false ? 'bg-red-400' : 'bg-zinc-600'}`} />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-white">{t.name}</span>
+                    <Badge color="zinc" text={t.authType} />
+                    {t.lastHealthMs && <span className="text-[10px] text-emerald-400">{t.lastHealthMs}ms</span>}
+                  </div>
+                  {t.description ? (
+                    <p className="text-[10px] text-zinc-500 mt-0.5">{t.description}</p>
+                  ) : (
+                    <span className="text-[10px] text-zinc-600">{t.baseUrl || '(geen URL)'}</span>
+                  )}
+                </div>
+                {caps.length > 0 && (
+                  <div className="flex items-center gap-1 text-zinc-500">
+                    <Zap className="w-3 h-3" />
+                    <span className="text-[9px]">{caps.length} functies</span>
+                  </div>
+                )}
+                {isOpen ? <ChevronDown className="w-4 h-4 text-zinc-500" /> : <ChevronRight className="w-4 h-4 text-zinc-500" />}
+              </div>
+
+              {/* Expanded details */}
+              {isOpen && (
+                <div className="px-4 pb-4 border-t border-white/[0.04] space-y-3">
+                  {/* Base URL */}
+                  <div className="pt-3">
+                    <span className="text-[10px] text-zinc-500 block">Base URL</span>
+                    <code className="text-[11px] text-brand-300 font-mono">{t.baseUrl || 'n.v.t.'}</code>
+                  </div>
+
+                  {/* Capabilities */}
+                  {caps.length > 0 && (
+                    <div>
+                      <span className="text-[10px] text-zinc-500 font-semibold uppercase block mb-1.5">Functies & Mogelijkheden</span>
+                      <div className="space-y-1">
+                        {caps.map((cap, i) => (
+                          <div key={i} className="flex items-start gap-2 text-[11px]">
+                            <Zap className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
+                            <span className="text-zinc-300">{cap}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Technical info */}
+                  <div className="grid grid-cols-3 gap-3 text-[10px]">
+                    <div><span className="text-zinc-500 block">Auth Type</span><span className="text-zinc-300">{t.authType}</span></div>
+                    <div><span className="text-zinc-500 block">Auth Key Ref</span><span className="text-zinc-300 font-mono">{t.authKeyRef || 'n.v.t.'}</span></div>
+                    <div><span className="text-zinc-500 block">Health Endpoint</span><span className="text-zinc-300 font-mono">{t.healthEndpoint || 'n.v.t.'}</span></div>
+                  </div>
+
+                  {t.notes && (
+                    <div>
+                      <span className="text-[10px] text-zinc-500 block">Notities</span>
+                      <p className="text-[11px] text-zinc-400">{t.notes}</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            <Badge color="zinc" text={t.authType} />
-          </div>
-        ))}
+          );
+        })}
       </div>
 
+      {/* API Test Panel */}
       <div className="glass rounded-2xl p-5">
         <h3 className="text-sm font-bold text-white mb-3">API Test Panel</h3>
         <div className="grid grid-cols-[100px_1fr] gap-3 mb-3">
