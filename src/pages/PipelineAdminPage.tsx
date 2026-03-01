@@ -3,6 +3,7 @@ import {
   Settings2, GitBranch, Brain, Wrench, Bot, Check, X, Play,
   RefreshCw, Plus, Send, Trash2, TestTube, Heart, Save,
   ChevronDown, ChevronRight, Copy, Edit3, Zap, Film,
+  ToggleLeft, ToggleRight, AlertCircle,
 } from 'lucide-react';
 import PipelineListView from '../components/pipeline-builder/PipelineListView';
 import { apiJson } from '../components/pipeline-builder/types';
@@ -32,7 +33,7 @@ export default function PipelineAdminPage() {
       <div className="w-52 shrink-0 bg-surface-50/60 backdrop-blur-xl border-r border-white/[0.06] flex flex-col">
         <div className="p-4 pb-3">
           <h1 className="text-base font-bold text-white">Pipeline Admin</h1>
-          <p className="text-[10px] text-zinc-500 mt-0.5">v4.2 &mdash; Step List Builder</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">v4.4 &mdash; Full Editor</p>
         </div>
         <div className="h-px bg-white/[0.06] mx-3" />
         <nav className="flex-1 p-2 space-y-0.5">
@@ -134,11 +135,17 @@ function BuilderTab() {
 }
 
 // ═══════════════════════════════════════════════
-// TAB 2: STEP DEFINITIES — BEWERKBAAR + SMART INPUT
+// TAB 2: STEP DEFINITIES — ALLES BEWERKBAAR (FIX 10)
 // ═══════════════════════════════════════════════
+
+const CATEGORIES = ['setup', 'research', 'script', 'audio', 'visual', 'post', 'output', 'general'];
+const OUTPUT_FORMATS = ['json', 'text', 'file', 'multi-file', 'audio', 'video', 'image', ''];
+const IO_TYPES = ['json', 'text', 'file', 'audio', 'image', 'video'];
 
 function DefinitionsTab() {
   const [defs, setDefs] = useState<any[]>([]);
+  const [models, setModels] = useState<any[]>([]);
+  const [tools, setTools] = useState<any[]>([]);
   const [selected, setSelected] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -146,28 +153,60 @@ function DefinitionsTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [editInputs, setEditInputs] = useState<any[]>([]);
   const [editOutputs, setEditOutputs] = useState<any[]>([]);
+  // FIX 10: editable fields for ALL StepDefinition properties
+  const [editFields, setEditFields] = useState<any>({});
   const [newStep, setNewStep] = useState({ name: '', slug: '', category: 'setup', description: '', executorFn: 'placeholder', executorLabel: 'Placeholder', outputFormat: '' });
   const [showAddInput, setShowAddInput] = useState(false);
 
-  const CATEGORIES = ['setup', 'research', 'script', 'audio', 'visual', 'post', 'output'];
-
-  const loadDefs = () => { legacyApiJson('/step-definitions').then(d => { setDefs(d); setLoading(false); }).catch(() => setLoading(false)); };
+  const loadDefs = () => {
+    Promise.all([
+      legacyApiJson('/step-definitions'),
+      legacyApiJson('/llm-models'),
+      legacyApiJson('/api-tools'),
+    ]).then(([d, m, t]) => { setDefs(d); setModels(m); setTools(t); setLoading(false); }).catch(() => setLoading(false));
+  };
   useEffect(loadDefs, []);
 
   const startEdit = () => {
     if (!selected) return;
     setEditInputs(JSON.parse(JSON.stringify(selected.inputSchema || [])));
     setEditOutputs(JSON.parse(JSON.stringify(selected.outputSchema || [])));
+    setEditFields({
+      name: selected.name,
+      slug: selected.slug,
+      category: selected.category,
+      description: selected.description || '',
+      executorFn: selected.executorFn || '',
+      executorLabel: selected.executorLabel || '',
+      outputFormat: selected.outputFormat || '',
+      isReady: selected.isReady,
+      isActive: selected.isActive,
+      llmModelId: selected.llmModelId || null,
+      toolPrimaryId: selected.toolPrimaryId || null,
+      toolFallbackId: selected.toolFallbackId || null,
+      systemPrompt: selected.systemPrompt || '',
+      userPromptTpl: selected.userPromptTpl || '',
+      defaultConfig: selected.defaultConfig || '{}',
+      configSchema: selected.configSchema || '{}',
+      notes: selected.notes || '',
+    });
     setEditing(true);
   };
 
-  const saveSchema = async () => {
+  const saveAll = async () => {
     if (!selected) return;
     setSaving(true);
     try {
       await legacyApiJson(`/step-definitions/${selected.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ inputSchema: editInputs, outputSchema: editOutputs }),
+        body: JSON.stringify({
+          ...editFields,
+          llmModelId: editFields.llmModelId || null,
+          toolPrimaryId: editFields.toolPrimaryId || null,
+          toolFallbackId: editFields.toolFallbackId || null,
+          inputSchema: editInputs,
+          outputSchema: editOutputs,
+        }),
       });
       loadDefs();
       setEditing(false);
@@ -177,46 +216,28 @@ function DefinitionsTab() {
     setSaving(false);
   };
 
-  // Smart: get all available outputs from other steps
   const availableOutputs = defs.filter(d => d.id !== selected?.id).flatMap(d =>
     (d.outputSchema || []).map((o: any) => ({ ...o, fromStep: d.name, fromSlug: d.slug, fromCategory: d.category }))
   );
 
   const addInputFromOutput = (output: any) => {
     const newInput = { key: output.key, label: output.label + ' (van ' + output.fromStep + ')', type: output.type, required: false, source: 'pipeline' };
-    if (!editInputs.find((i: any) => i.key === output.key)) {
-      setEditInputs([...editInputs, newInput]);
-    }
+    if (!editInputs.find((i: any) => i.key === output.key)) setEditInputs([...editInputs, newInput]);
     setShowAddInput(false);
   };
 
-  const addCustomInput = () => {
-    setEditInputs([...editInputs, { key: 'new_input', label: 'Nieuwe Input', type: 'json', required: false, source: 'pipeline' }]);
-  };
-
-  const addOutput = () => {
-    setEditOutputs([...editOutputs, { key: 'new_output', label: 'Nieuwe Output', type: 'json', filePath: '' }]);
-  };
-
+  const addCustomInput = () => setEditInputs([...editInputs, { key: 'new_input', label: 'Nieuwe Input', type: 'json', required: false, source: 'pipeline' }]);
+  const addOutput = () => setEditOutputs([...editOutputs, { key: 'new_output', label: 'Nieuwe Output', type: 'json', filePath: '' }]);
   const removeInput = (idx: number) => setEditInputs(editInputs.filter((_: any, i: number) => i !== idx));
   const removeOutput = (idx: number) => setEditOutputs(editOutputs.filter((_: any, i: number) => i !== idx));
-
-  const updateInput = (idx: number, field: string, value: any) => {
-    const copy = [...editInputs]; copy[idx] = { ...copy[idx], [field]: value }; setEditInputs(copy);
-  };
-  const updateOutput = (idx: number, field: string, value: any) => {
-    const copy = [...editOutputs]; copy[idx] = { ...copy[idx], [field]: value }; setEditOutputs(copy);
-  };
+  const updateInput = (idx: number, field: string, value: any) => { const copy = [...editInputs]; copy[idx] = { ...copy[idx], [field]: value }; setEditInputs(copy); };
+  const updateOutput = (idx: number, field: string, value: any) => { const copy = [...editOutputs]; copy[idx] = { ...copy[idx], [field]: value }; setEditOutputs(copy); };
 
   const createStep = async () => {
     if (!newStep.name || !newStep.slug) return;
     try {
-      await legacyApiJson('/step-definitions', {
-        method: 'POST',
-        body: JSON.stringify({ ...newStep, inputSchema: [], outputSchema: [], isReady: false }),
-      });
-      loadDefs();
-      setShowAdd(false);
+      await legacyApiJson('/step-definitions', { method: 'POST', body: JSON.stringify({ ...newStep, inputSchema: [], outputSchema: [], isReady: false }) });
+      loadDefs(); setShowAdd(false);
       setNewStep({ name: '', slug: '', category: 'setup', description: '', executorFn: 'placeholder', executorLabel: 'Placeholder', outputFormat: '' });
     } catch (err: any) { alert(err.message); }
   };
@@ -225,6 +246,7 @@ function DefinitionsTab() {
 
   return (
     <div className="flex gap-6 h-full">
+      {/* Left: Step list */}
       <div className="w-[380px] shrink-0 flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-bold text-white">Step Definities ({defs.length})</h2>
@@ -264,138 +286,211 @@ function DefinitionsTab() {
         </div>
       </div>
 
+      {/* Right: Detail panel */}
       {selected ? (
         <div className="flex-1 glass rounded-2xl p-5 overflow-auto">
           <div className="flex items-center justify-between mb-1">
             <h3 className="text-base font-bold text-white">{selected.name}</h3>
             {!editing ? (
-              <button onClick={startEdit} className="btn-secondary text-xs !px-2.5 !py-1"><Edit3 className="w-3 h-3" /> Bewerk I/O</button>
+              <button onClick={startEdit} className="btn-secondary text-xs !px-2.5 !py-1"><Edit3 className="w-3 h-3" /> Alles Bewerken</button>
             ) : (
               <div className="flex gap-1">
-                <button onClick={saveSchema} disabled={saving} className="btn-primary text-xs !px-2.5 !py-1"><Save className="w-3 h-3" /> {saving ? '...' : 'Opslaan'}</button>
+                <button onClick={saveAll} disabled={saving} className="btn-primary text-xs !px-2.5 !py-1"><Save className="w-3 h-3" /> {saving ? '...' : 'Opslaan'}</button>
                 <button onClick={() => setEditing(false)} className="btn-secondary text-xs !px-2.5 !py-1">Annuleren</button>
               </div>
             )}
           </div>
           <p className="text-xs text-zinc-500 mb-4">{selected.description}</p>
 
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            {/* INPUTS */}
-            <div className="bg-surface-200/50 rounded-lg p-3">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-[10px] text-zinc-500 font-semibold uppercase">Inputs ({editing ? editInputs.length : (selected.inputSchema || []).length})</h4>
-                {editing && (
-                  <div className="flex gap-1">
-                    <button onClick={() => setShowAddInput(!showAddInput)} className="text-brand-400 hover:text-brand-300 text-[9px] flex items-center gap-0.5"><Zap className="w-3 h-3" /> Uit stap</button>
-                    <button onClick={addCustomInput} className="text-zinc-400 hover:text-zinc-300"><Plus className="w-3 h-3" /></button>
-                  </div>
-                )}
+          {editing ? (
+            <div className="space-y-4">
+              {/* FIX 10: ALL fields editable with dropdowns where possible */}
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Naam</label><input className="input-base text-xs" value={editFields.name} onChange={e => setEditFields({ ...editFields, name: e.target.value })} /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Slug</label><input className="input-base text-xs font-mono" value={editFields.slug} onChange={e => setEditFields({ ...editFields, slug: e.target.value })} /></div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Category</label>
+                  <select className="input-base text-xs" value={editFields.category} onChange={e => setEditFields({ ...editFields, category: e.target.value })}>
+                    {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Output Format</label>
+                  <select className="input-base text-xs" value={editFields.outputFormat} onChange={e => setEditFields({ ...editFields, outputFormat: e.target.value })}>
+                    {OUTPUT_FORMATS.map(f => <option key={f} value={f}>{f || '(leeg)'}</option>)}
+                  </select>
+                </div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Executor Function</label><input className="input-base text-xs font-mono" value={editFields.executorFn} onChange={e => setEditFields({ ...editFields, executorFn: e.target.value })} /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Executor Label</label><input className="input-base text-xs" value={editFields.executorLabel} onChange={e => setEditFields({ ...editFields, executorLabel: e.target.value })} /></div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">LLM Model</label>
+                  <select className="input-base text-xs" value={editFields.llmModelId || ''} onChange={e => setEditFields({ ...editFields, llmModelId: e.target.value ? parseInt(e.target.value) : null })}>
+                    <option value="">-- Geen --</option>
+                    {models.map(m => <option key={m.id} value={m.id}>{m.name} ({m.provider}) — {m.modelType}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Primary Tool</label>
+                  <select className="input-base text-xs" value={editFields.toolPrimaryId || ''} onChange={e => setEditFields({ ...editFields, toolPrimaryId: e.target.value ? parseInt(e.target.value) : null })}>
+                    <option value="">-- Geen --</option>
+                    {tools.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Fallback Tool</label>
+                  <select className="input-base text-xs" value={editFields.toolFallbackId || ''} onChange={e => setEditFields({ ...editFields, toolFallbackId: e.target.value ? parseInt(e.target.value) : null })}>
+                    <option value="">-- Geen --</option>
+                    {tools.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-300">
+                    <input type="checkbox" checked={editFields.isReady} onChange={e => setEditFields({ ...editFields, isReady: e.target.checked })} className="rounded w-4 h-4" /> Ready
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-300">
+                    <input type="checkbox" checked={editFields.isActive} onChange={e => setEditFields({ ...editFields, isActive: e.target.checked })} className="rounded w-4 h-4" /> Active
+                  </label>
+                </div>
               </div>
 
-              {/* Smart input picker */}
-              {editing && showAddInput && (
-                <div className="bg-surface-300/50 rounded-lg p-2 mb-2 max-h-[200px] overflow-auto">
-                  <p className="text-[9px] text-zinc-500 mb-1.5">Kies een output van een andere stap als input:</p>
-                  {availableOutputs.map((o, idx) => {
-                    const already = editInputs.find((i: any) => i.key === o.key);
-                    return (
-                      <button key={idx} onClick={() => !already && addInputFromOutput(o)} disabled={!!already}
-                        className={`w-full text-left px-2 py-1 rounded text-[10px] flex items-center gap-2 ${already ? 'opacity-30' : 'hover:bg-white/[0.05]'}`}>
-                        <span className="text-zinc-500 w-24 truncate">{o.fromStep}</span>
-                        <span className="text-zinc-300 flex-1">{o.label}</span>
-                        <code className="text-[8px] text-brand-300 font-mono">{o.key}</code>
-                        {already && <span className="text-[8px] text-zinc-600">al toegevoegd</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              <div><label className="text-[10px] text-zinc-500 block mb-1">Beschrijving</label><textarea className="input-base text-xs min-h-[60px]" value={editFields.description} onChange={e => setEditFields({ ...editFields, description: e.target.value })} /></div>
+              <div><label className="text-[10px] text-zinc-500 block mb-1">System Prompt</label><textarea className="input-base font-mono text-xs min-h-[150px] leading-relaxed" value={editFields.systemPrompt} onChange={e => setEditFields({ ...editFields, systemPrompt: e.target.value })} /></div>
+              <div><label className="text-[10px] text-zinc-500 block mb-1">User Prompt Template</label><textarea className="input-base font-mono text-xs min-h-[150px] leading-relaxed" value={editFields.userPromptTpl} onChange={e => setEditFields({ ...editFields, userPromptTpl: e.target.value })} /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Default Config (JSON)</label><textarea className="input-base font-mono text-xs min-h-[80px]" value={editFields.defaultConfig} onChange={e => setEditFields({ ...editFields, defaultConfig: e.target.value })} /></div>
+                <div><label className="text-[10px] text-zinc-500 block mb-1">Config Schema (JSON)</label><textarea className="input-base font-mono text-xs min-h-[80px]" value={typeof editFields.configSchema === 'string' ? editFields.configSchema : JSON.stringify(editFields.configSchema, null, 2)} onChange={e => setEditFields({ ...editFields, configSchema: e.target.value })} /></div>
+              </div>
+              <div><label className="text-[10px] text-zinc-500 block mb-1">Notities</label><textarea className="input-base text-xs min-h-[40px]" value={editFields.notes} onChange={e => setEditFields({ ...editFields, notes: e.target.value })} /></div>
 
-              {editing ? (
-                <div className="space-y-2">
-                  {editInputs.map((inp: any, idx: number) => (
-                    <div key={idx} className="bg-surface-300/50 rounded-lg p-2 space-y-1">
-                      <div className="flex gap-1">
-                        <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="key" value={inp.key} onChange={e => updateInput(idx, 'key', e.target.value)} />
-                        <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="label" value={inp.label} onChange={e => updateInput(idx, 'label', e.target.value)} />
-                        <button onClick={() => removeInput(idx)} className="text-zinc-600 hover:text-red-400 p-0.5"><Trash2 className="w-3 h-3" /></button>
+              {/* I/O Schema editing */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-surface-200/50 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-[10px] text-zinc-500 font-semibold uppercase">Inputs ({editInputs.length})</h4>
+                    <div className="flex gap-1">
+                      <button onClick={() => setShowAddInput(!showAddInput)} className="text-brand-400 hover:text-brand-300 text-[9px] flex items-center gap-0.5"><Zap className="w-3 h-3" /> Uit stap</button>
+                      <button onClick={addCustomInput} className="text-zinc-400 hover:text-zinc-300"><Plus className="w-3 h-3" /></button>
+                    </div>
+                  </div>
+                  {showAddInput && (
+                    <div className="bg-surface-300/50 rounded-lg p-2 mb-2 max-h-[200px] overflow-auto">
+                      <p className="text-[9px] text-zinc-500 mb-1.5">Kies een output van een andere stap als input:</p>
+                      {availableOutputs.map((o, idx) => {
+                        const already = editInputs.find((i: any) => i.key === o.key);
+                        return (
+                          <button key={idx} onClick={() => !already && addInputFromOutput(o)} disabled={!!already}
+                            className={`w-full text-left px-2 py-1 rounded text-[10px] flex items-center gap-2 ${already ? 'opacity-30' : 'hover:bg-white/[0.05]'}`}>
+                            <span className="text-zinc-500 w-24 truncate">{o.fromStep}</span>
+                            <span className="text-zinc-300 flex-1">{o.label}</span>
+                            <code className="text-[8px] text-brand-300 font-mono">{o.key}</code>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    {editInputs.map((inp: any, idx: number) => (
+                      <div key={idx} className="bg-surface-300/50 rounded-lg p-2 space-y-1">
+                        <div className="flex gap-1">
+                          <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="key" value={inp.key} onChange={e => updateInput(idx, 'key', e.target.value)} />
+                          <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="label" value={inp.label} onChange={e => updateInput(idx, 'label', e.target.value)} />
+                          <button onClick={() => removeInput(idx)} className="text-zinc-600 hover:text-red-400 p-0.5"><Trash2 className="w-3 h-3" /></button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <select className="input-base text-[9px] !py-0 w-20" value={inp.type} onChange={e => updateInput(idx, 'type', e.target.value)}>
+                            {IO_TYPES.map(t => <option key={t}>{t}</option>)}
+                          </select>
+                          <select className="input-base text-[9px] !py-0 w-20" value={inp.source || 'pipeline'} onChange={e => updateInput(idx, 'source', e.target.value)}>
+                            <option value="pipeline">pipeline</option><option value="project">project</option>
+                          </select>
+                          <label className="flex items-center gap-1 text-[9px] text-zinc-400">
+                            <input type="checkbox" checked={inp.required} onChange={e => updateInput(idx, 'required', e.target.checked)} className="rounded w-3 h-3" /> Verplicht
+                          </label>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <select className="input-base text-[9px] !py-0 w-20" value={inp.type} onChange={e => updateInput(idx, 'type', e.target.value)}>
-                          {['json', 'text', 'file', 'audio', 'image', 'video'].map(t => <option key={t}>{t}</option>)}
-                        </select>
-                        <select className="input-base text-[9px] !py-0 w-20" value={inp.source || 'pipeline'} onChange={e => updateInput(idx, 'source', e.target.value)}>
-                          <option value="pipeline">pipeline</option>
-                          <option value="project">project</option>
-                        </select>
-                        <label className="flex items-center gap-1 text-[9px] text-zinc-400">
-                          <input type="checkbox" checked={inp.required} onChange={e => updateInput(idx, 'required', e.target.checked)} className="rounded w-3 h-3" /> Verplicht
-                        </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-surface-200/50 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-[10px] text-zinc-500 font-semibold uppercase">Outputs ({editOutputs.length})</h4>
+                    <button onClick={addOutput} className="text-brand-400 hover:text-brand-300"><Plus className="w-3 h-3" /></button>
+                  </div>
+                  <div className="space-y-2">
+                    {editOutputs.map((out: any, idx: number) => (
+                      <div key={idx} className="bg-surface-300/50 rounded-lg p-2 space-y-1">
+                        <div className="flex gap-1">
+                          <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="key" value={out.key} onChange={e => updateOutput(idx, 'key', e.target.value)} />
+                          <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="label" value={out.label} onChange={e => updateOutput(idx, 'label', e.target.value)} />
+                          <button onClick={() => removeOutput(idx)} className="text-zinc-600 hover:text-red-400 p-0.5"><Trash2 className="w-3 h-3" /></button>
+                        </div>
+                        <div className="flex gap-1">
+                          <select className="input-base text-[9px] !py-0 w-20" value={out.type} onChange={e => updateOutput(idx, 'type', e.target.value)}>
+                            {IO_TYPES.map(t => <option key={t}>{t}</option>)}
+                          </select>
+                          <input className="input-base text-[9px] !py-0 flex-1" placeholder="filePath" value={out.filePath || ''} onChange={e => updateOutput(idx, 'filePath', e.target.value)} />
+                        </div>
                       </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="bg-surface-200/50 rounded-lg p-3">
+                  <h4 className="text-[10px] text-zinc-500 font-semibold uppercase mb-2">Inputs ({(selected.inputSchema || []).length})</h4>
+                  {(selected.inputSchema || []).map((i: any) => (
+                    <div key={i.key} className="text-[11px] py-0.5 flex items-center gap-1">
+                      <span className={i.required ? 'text-zinc-200' : 'text-zinc-500'}>{i.label}</span>
+                      <span className="text-zinc-600 font-mono text-[9px]">{i.key}</span>
+                      {i.required && <span className="text-red-400 text-[9px]">*</span>}
+                      {i.source === 'project' && <span className="text-blue-400 text-[8px] ml-auto">project</span>}
                     </div>
                   ))}
                 </div>
-              ) : (
-                (selected.inputSchema || []).map((i: any) => (
-                  <div key={i.key} className="text-[11px] py-0.5 flex items-center gap-1">
-                    <span className={i.required ? 'text-zinc-200' : 'text-zinc-500'}>{i.label}</span>
-                    <span className="text-zinc-600 font-mono text-[9px]">{i.key}</span>
-                    {i.required && <span className="text-red-400 text-[9px]">*</span>}
-                    {i.source === 'project' && <span className="text-blue-400 text-[8px] ml-auto">project</span>}
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* OUTPUTS */}
-            <div className="bg-surface-200/50 rounded-lg p-3">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-[10px] text-zinc-500 font-semibold uppercase">Outputs ({editing ? editOutputs.length : (selected.outputSchema || []).length})</h4>
-                {editing && <button onClick={addOutput} className="text-brand-400 hover:text-brand-300"><Plus className="w-3 h-3" /></button>}
-              </div>
-              {editing ? (
-                <div className="space-y-2">
-                  {editOutputs.map((out: any, idx: number) => (
-                    <div key={idx} className="bg-surface-300/50 rounded-lg p-2 space-y-1">
-                      <div className="flex gap-1">
-                        <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="key" value={out.key} onChange={e => updateOutput(idx, 'key', e.target.value)} />
-                        <input className="input-base text-[10px] !py-0.5 flex-1" placeholder="label" value={out.label} onChange={e => updateOutput(idx, 'label', e.target.value)} />
-                        <button onClick={() => removeOutput(idx)} className="text-zinc-600 hover:text-red-400 p-0.5"><Trash2 className="w-3 h-3" /></button>
-                      </div>
-                      <div className="flex gap-1">
-                        <select className="input-base text-[9px] !py-0 w-20" value={out.type} onChange={e => updateOutput(idx, 'type', e.target.value)}>
-                          {['json', 'text', 'file', 'audio', 'image', 'video'].map(t => <option key={t}>{t}</option>)}
-                        </select>
-                        <input className="input-base text-[9px] !py-0 flex-1" placeholder="filePath" value={out.filePath || ''} onChange={e => updateOutput(idx, 'filePath', e.target.value)} />
-                      </div>
+                <div className="bg-surface-200/50 rounded-lg p-3">
+                  <h4 className="text-[10px] text-zinc-500 font-semibold uppercase mb-2">Outputs ({(selected.outputSchema || []).length})</h4>
+                  {(selected.outputSchema || []).map((o: any) => (
+                    <div key={o.key} className="text-[11px] py-0.5">
+                      <span className="text-zinc-200">{o.label}</span>
+                      <span className="text-zinc-600 ml-1 font-mono text-[9px]">{o.filePath}</span>
                     </div>
                   ))}
                 </div>
-              ) : (
-                (selected.outputSchema || []).map((o: any) => (
-                  <div key={o.key} className="text-[11px] py-0.5">
-                    <span className="text-zinc-200">{o.label}</span>
-                    <span className="text-zinc-600 ml-1 font-mono text-[9px]">{o.filePath}</span>
-                  </div>
-                ))
+              </div>
+              <div className="space-y-2 text-[11px]">
+                <InfoRow label="Slug" value={selected.slug} />
+                <InfoRow label="Category" value={selected.category} />
+                <InfoRow label="Executor" value={`${selected.executorFn}()`} />
+                <InfoRow label="Executor Label" value={selected.executorLabel} />
+                <InfoRow label="Output Format" value={selected.outputFormat || 'n.v.t.'} />
+                <InfoRow label="LLM Model" value={selected.llmModel?.name || 'geen'} />
+                <InfoRow label="Primary Tool" value={tools.find(t => t.id === selected.toolPrimaryId)?.name || 'geen'} />
+                <InfoRow label="Fallback Tool" value={tools.find(t => t.id === selected.toolFallbackId)?.name || 'geen'} />
+                <InfoRow label="Status" value={`${selected.isReady ? 'Ready' : 'Skeleton'} / ${selected.isActive ? 'Active' : 'Inactive'}`} />
+              </div>
+              {selected.systemPrompt && (
+                <div className="mt-4">
+                  <h4 className="text-[10px] text-zinc-500 font-semibold uppercase mb-1">System Prompt</h4>
+                  <pre className="text-[10px] text-zinc-400 bg-surface-200 rounded-lg p-3 font-mono whitespace-pre-wrap max-h-[200px] overflow-auto">{selected.systemPrompt}</pre>
+                </div>
               )}
-            </div>
-          </div>
-
-          <div className="space-y-2 text-[11px]">
-            <InfoRow label="Slug" value={selected.slug} />
-            <InfoRow label="Category" value={selected.category} />
-            <InfoRow label="Executor" value={`${selected.executorFn}()`} />
-            <InfoRow label="Output Format" value={selected.outputFormat || 'n.v.t.'} />
-            <InfoRow label="LLM Model" value={selected.llmModel?.name || 'geen'} />
-            <InfoRow label="Status" value={selected.isReady ? 'Ready' : 'Skeleton'} />
-          </div>
-
-          {selected.systemPrompt && (
-            <div className="mt-4">
-              <h4 className="text-[10px] text-zinc-500 font-semibold uppercase mb-1">System Prompt</h4>
-              <pre className="text-[10px] text-zinc-400 bg-surface-200 rounded-lg p-3 font-mono whitespace-pre-wrap max-h-[200px] overflow-auto">{selected.systemPrompt}</pre>
-            </div>
+              {selected.userPromptTpl && (
+                <div className="mt-3">
+                  <h4 className="text-[10px] text-zinc-500 font-semibold uppercase mb-1">User Prompt Template</h4>
+                  <pre className="text-[10px] text-zinc-400 bg-surface-200 rounded-lg p-3 font-mono whitespace-pre-wrap max-h-[200px] overflow-auto">{selected.userPromptTpl}</pre>
+                </div>
+              )}
+              {selected.notes && (
+                <div className="mt-3">
+                  <h4 className="text-[10px] text-zinc-500 font-semibold uppercase mb-1">Notities</h4>
+                  <p className="text-[11px] text-zinc-400">{selected.notes}</p>
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : (
@@ -408,7 +503,7 @@ function DefinitionsTab() {
 }
 
 // ═══════════════════════════════════════════════
-// TAB 3: LLM MODELLEN
+// TAB 3: LLM MODELLEN — FIX 9: Shows ALL model types
 // ═══════════════════════════════════════════════
 
 function ModelsTab() {
@@ -416,6 +511,7 @@ function ModelsTab() {
   const [testing, setTesting] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('all');
 
   useEffect(() => { legacyApiJson('/llm-models').then(setModels).catch(() => {}).finally(() => setLoading(false)); }, []);
 
@@ -428,11 +524,25 @@ function ModelsTab() {
 
   if (loading) return <Spinner />;
 
+  const modelTypes = ['all', ...new Set(models.map(m => m.modelType))];
+  const filtered = filter === 'all' ? models : models.filter(m => m.modelType === filter);
+
   return (
     <div>
-      <h2 className="text-lg font-bold text-white mb-4">LLM Modellen ({models.length})</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-bold text-white">LLM Modellen ({models.length})</h2>
+        {/* FIX 9: Filter tabs zodat research (Sonar) ook zichtbaar is */}
+        <div className="flex gap-1">
+          {modelTypes.map(t => (
+            <button key={t} onClick={() => setFilter(t)}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition ${filter === t ? 'bg-brand-600/20 text-brand-300' : 'text-zinc-500 hover:text-zinc-300'}`}>
+              {t === 'all' ? 'Alles' : t.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="space-y-2">
-        {models.map(m => (
+        {filtered.map(m => (
           <div key={m.id} className="glass rounded-xl p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -460,7 +570,7 @@ function ModelsTab() {
 }
 
 // ═══════════════════════════════════════════════
-// TAB 4: TOOLS & APIS — BEWERKBAAR MET SUB-TOOLS
+// TAB 4: TOOLS & APIS — FIX 6,7,8: Self health, GenAI credits
 // ═══════════════════════════════════════════════
 
 function ToolsTab() {
@@ -474,35 +584,44 @@ function ToolsTab() {
   const [editNotes, setEditNotes] = useState('');
   const [tp, setTp] = useState({ method: 'GET', url: '', headers: '{}', body: '' });
   const [tr, setTr] = useState<any>(null);
+  const [genaiCredits, setGenaiCredits] = useState<any>(null);
+  const [checkingCredits, setCheckingCredits] = useState(false);
 
   const loadTools = () => { legacyApiJson('/api-tools').then(setTools).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(loadTools, []);
 
+  // FIX 6: Tools self health check
   const healthAll = async () => {
     setChecking(true);
-    try { const results = await legacyApiJson('/api-tools/health-all', { method: 'POST' }); setTools(prev => prev.map(t => { const r = results.find((x: any) => x.id === t.id); return r ? { ...t, lastHealthOk: r.ok, lastHealthMs: r.durationMs } : t; })); } catch {}
+    try {
+      const results = await legacyApiJson('/api-tools/health-all', { method: 'POST' });
+      setTools(prev => prev.map(t => { const r = results.find((x: any) => x.id === t.id); return r ? { ...t, lastHealthOk: r.ok, lastHealthMs: r.durationMs, lastHealthCheck: new Date().toISOString() } : t; }));
+    } catch {}
     setChecking(false);
   };
 
+  // FIX 8: GenAI credit checker
+  const checkGenaiCredits = async () => {
+    setCheckingCredits(true); setGenaiCredits(null);
+    try {
+      const r = await legacyApiJson('/api-tools/test', {
+        method: 'POST',
+        body: JSON.stringify({ method: 'GET', url: 'https://genaipro.vn/api/v1/veo/me', headers: {} }),
+      });
+      try { setGenaiCredits(JSON.parse(r.response)); } catch { setGenaiCredits({ raw: r.response, statusCode: r.statusCode }); }
+    } catch (err: any) { setGenaiCredits({ error: err.message }); }
+    setCheckingCredits(false);
+  };
+
   const startEdit = (tool: any) => {
-    setEditingId(tool.id);
-    setEditDesc(tool.description || '');
-    setEditNotes(tool.notes || '');
+    setEditingId(tool.id); setEditDesc(tool.description || ''); setEditNotes(tool.notes || '');
     try { setEditCaps(JSON.parse(tool.capabilities || '[]').join('\n')); } catch { setEditCaps(''); }
   };
 
   const saveTool = async (id: number) => {
     try {
-      await legacyApiJson(`/api-tools/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          description: editDesc,
-          capabilities: JSON.stringify(editCaps.split('\n').filter(l => l.trim())),
-          notes: editNotes,
-        }),
-      });
-      loadTools();
-      setEditingId(null);
+      await legacyApiJson(`/api-tools/${id}`, { method: 'PATCH', body: JSON.stringify({ description: editDesc, capabilities: JSON.stringify(editCaps.split('\n').filter(l => l.trim())), notes: editNotes }) });
+      loadTools(); setEditingId(null);
     } catch (err: any) { alert(err.message); }
   };
 
@@ -512,9 +631,7 @@ function ToolsTab() {
     catch (err: any) { setTr({ error: err.message }); }
   };
 
-  const parseCaps = (tool: any): string[] => {
-    try { return JSON.parse(tool.capabilities || '[]'); } catch { return []; }
-  };
+  const parseCaps = (tool: any): string[] => { try { return JSON.parse(tool.capabilities || '[]'); } catch { return []; } };
 
   if (loading) return <Spinner />;
 
@@ -522,10 +639,31 @@ function ToolsTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold text-white">Tools & APIs ({tools.length})</h2>
-        <button onClick={healthAll} disabled={checking} className="btn-secondary text-xs !px-3 !py-1.5">
-          <Heart className={`w-3 h-3 ${checking ? 'animate-pulse' : ''}`} /> Health All
-        </button>
+        <div className="flex gap-2">
+          <button onClick={checkGenaiCredits} disabled={checkingCredits} className="btn-secondary text-xs !px-3 !py-1.5">
+            {checkingCredits ? <RefreshCw className="w-3 h-3 animate-spin" /> : <AlertCircle className="w-3 h-3" />} GenAI Credits
+          </button>
+          <button onClick={healthAll} disabled={checking} className="btn-secondary text-xs !px-3 !py-1.5">
+            <Heart className={`w-3 h-3 ${checking ? 'animate-pulse' : ''}`} /> Health Check Alles
+          </button>
+        </div>
       </div>
+
+      {/* FIX 8: GenAI credit display */}
+      {genaiCredits && (
+        <div className="glass rounded-xl p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-white">GenAIPro Credits</h3>
+            <button onClick={() => setGenaiCredits(null)} className="text-zinc-600 hover:text-zinc-300"><X className="w-3.5 h-3.5" /></button>
+          </div>
+          {genaiCredits.error ? (
+            <p className="text-xs text-red-400">{genaiCredits.error}</p>
+          ) : (
+            <pre className="text-[11px] text-zinc-300 font-mono bg-surface-200 rounded-lg p-3 max-h-[150px] overflow-auto">{JSON.stringify(genaiCredits, null, 2)}</pre>
+          )}
+        </div>
+      )}
+
       <div className="space-y-2">
         {tools.map(t => {
           const caps = parseCaps(t);
@@ -540,6 +678,7 @@ function ToolsTab() {
                     <span className="text-sm font-medium text-white">{t.name}</span>
                     <Badge color="zinc" text={t.authType} />
                     {t.lastHealthMs && <span className="text-[10px] text-emerald-400">{t.lastHealthMs}ms</span>}
+                    {t.lastHealthCheck && <span className="text-[9px] text-zinc-600">{new Date(t.lastHealthCheck).toLocaleTimeString()}</span>}
                   </div>
                   <p className="text-[10px] text-zinc-500 mt-0.5">{t.description || t.baseUrl || '(geen beschrijving)'}</p>
                 </div>
@@ -550,28 +689,16 @@ function ToolsTab() {
               {isOpen && (
                 <div className="px-4 pb-4 border-t border-white/[0.04] space-y-3">
                   {isEdit ? (
-                    /* Edit mode */
                     <div className="pt-3 space-y-2">
-                      <div>
-                        <label className="text-[10px] text-zinc-500 block mb-0.5">Beschrijving</label>
-                        <textarea className="input-base text-xs min-h-[60px]" value={editDesc} onChange={e => setEditDesc(e.target.value)} />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-zinc-500 block mb-0.5">Functies (1 per regel)</label>
-                        <textarea className="input-base text-xs min-h-[100px] font-mono" value={editCaps} onChange={e => setEditCaps(e.target.value)}
-                          placeholder="TTS met 10+ stemmen&#10;AI Image generatie&#10;AI Video generatie" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-zinc-500 block mb-0.5">Notities</label>
-                        <textarea className="input-base text-xs min-h-[40px]" value={editNotes} onChange={e => setEditNotes(e.target.value)} />
-                      </div>
+                      <div><label className="text-[10px] text-zinc-500 block mb-0.5">Beschrijving</label><textarea className="input-base text-xs min-h-[60px]" value={editDesc} onChange={e => setEditDesc(e.target.value)} /></div>
+                      <div><label className="text-[10px] text-zinc-500 block mb-0.5">Functies (1 per regel)</label><textarea className="input-base text-xs min-h-[100px] font-mono" value={editCaps} onChange={e => setEditCaps(e.target.value)} placeholder={'TTS met 10+ stemmen\nAI Image generatie\nAI Video generatie'} /></div>
+                      <div><label className="text-[10px] text-zinc-500 block mb-0.5">Notities</label><textarea className="input-base text-xs min-h-[40px]" value={editNotes} onChange={e => setEditNotes(e.target.value)} /></div>
                       <div className="flex gap-2">
                         <button onClick={() => saveTool(t.id)} className="btn-primary text-xs !px-3 !py-1.5"><Save className="w-3 h-3" /> Opslaan</button>
                         <button onClick={() => setEditingId(null)} className="btn-secondary text-xs !px-3 !py-1.5">Annuleren</button>
                       </div>
                     </div>
                   ) : (
-                    /* View mode */
                     <>
                       <div className="pt-3 flex items-center justify-between">
                         <div><span className="text-[10px] text-zinc-500">Base URL</span><br /><code className="text-[11px] text-brand-300 font-mono">{t.baseUrl || 'n.v.t.'}</code></div>
@@ -580,14 +707,7 @@ function ToolsTab() {
                       {caps.length > 0 && (
                         <div>
                           <span className="text-[10px] text-zinc-500 font-semibold uppercase block mb-1.5">Functies & Mogelijkheden</span>
-                          <div className="space-y-1">
-                            {caps.map((cap, i) => (
-                              <div key={i} className="flex items-start gap-2 text-[11px]">
-                                <Zap className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
-                                <span className="text-zinc-300">{cap}</span>
-                              </div>
-                            ))}
-                          </div>
+                          <div className="space-y-1">{caps.map((cap, i) => (<div key={i} className="flex items-start gap-2 text-[11px]"><Zap className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" /><span className="text-zinc-300">{cap}</span></div>))}</div>
                         </div>
                       )}
                       <div className="grid grid-cols-3 gap-3 text-[10px]">
@@ -605,6 +725,7 @@ function ToolsTab() {
         })}
       </div>
 
+      {/* API Test Panel */}
       <div className="glass rounded-2xl p-5">
         <h3 className="text-sm font-bold text-white mb-3">API Test Panel</h3>
         <div className="grid grid-cols-[100px_1fr] gap-3 mb-3">
@@ -643,12 +764,8 @@ function VideoTypesTab() {
 
   const loadTypes = () => {
     legacyApiJson('/video-types/list').then(data => {
-      // API returns string array, convert to objects
-      if (Array.isArray(data) && typeof data[0] === 'string') {
-        setTypes(data.map(vt => ({ videoType: vt, name: vt, isActive: true })));
-      } else {
-        setTypes(data);
-      }
+      if (Array.isArray(data) && typeof data[0] === 'string') setTypes(data.map(vt => ({ videoType: vt, name: vt, isActive: true })));
+      else setTypes(data);
     }).catch(() => {}).finally(() => setLoading(false));
   };
   useEffect(loadTypes, []);
@@ -656,29 +773,18 @@ function VideoTypesTab() {
   const addType = async () => {
     if (!newType.slug || !newType.name) return;
     try {
-      await legacyApiJson('/video-types/add', {
-        method: 'POST',
-        body: JSON.stringify({ name: newType.slug, copyFrom: '' }),
-      });
-      loadTypes();
-      setShowAdd(false);
-      setNewType({ slug: '', name: '', description: '' });
+      await legacyApiJson('/video-types/add', { method: 'POST', body: JSON.stringify({ name: newType.slug, copyFrom: '' }) });
+      loadTypes(); setShowAdd(false); setNewType({ slug: '', name: '', description: '' });
     } catch (err: any) { alert(err.message); }
   };
 
   const toggleType = async (videoType: string) => {
-    try {
-      await legacyApiJson(`/video-types/${videoType}/toggle`, { method: 'POST' });
-      loadTypes();
-    } catch (err: any) { alert(err.message); }
+    try { await legacyApiJson(`/video-types/${videoType}/toggle`, { method: 'POST' }); loadTypes(); } catch (err: any) { alert(err.message); }
   };
 
   const deleteType = async (videoType: string) => {
     if (!confirm(`Video type "${videoType}" verwijderen?`)) return;
-    try {
-      await legacyApiJson(`/video-types/${videoType}`, { method: 'DELETE' });
-      loadTypes();
-    } catch (err: any) { alert(err.message); }
+    try { await legacyApiJson(`/video-types/${videoType}`, { method: 'DELETE' }); loadTypes(); } catch (err: any) { alert(err.message); }
   };
 
   if (loading) return <Spinner />;
@@ -689,7 +795,6 @@ function VideoTypesTab() {
         <h2 className="text-lg font-bold text-white">Video Types ({types.length})</h2>
         <button onClick={() => setShowAdd(!showAdd)} className="btn-primary text-xs !px-3 !py-1.5"><Plus className="w-3 h-3" /> Nieuw Type</button>
       </div>
-
       {showAdd && (
         <div className="glass rounded-xl p-4 space-y-2">
           <h4 className="text-[11px] font-semibold text-white">Nieuw Video Type</h4>
@@ -704,7 +809,6 @@ function VideoTypesTab() {
           </div>
         </div>
       )}
-
       <div className="space-y-2">
         {types.map((t: any) => (
           <div key={t.videoType || t.slug} className="glass rounded-xl p-4 flex items-center gap-4">
@@ -715,24 +819,20 @@ function VideoTypesTab() {
                 <code className="text-[9px] text-zinc-500 font-mono">{t.videoType || t.slug}</code>
               </div>
               {t.description && <p className="text-[10px] text-zinc-500 mt-0.5">{t.description}</p>}
-              {t._count?.steps !== undefined && <span className="text-[10px] text-zinc-600">{t._count.steps} stappen</span>}
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={() => toggleType(t.videoType || t.slug)} className="btn-secondary text-xs !px-2 !py-1">
-                {t.isActive !== false ? 'Deactiveer' : 'Activeer'}
-              </button>
+              <button onClick={() => toggleType(t.videoType || t.slug)} className="btn-secondary text-xs !px-2 !py-1">{t.isActive !== false ? 'Deactiveer' : 'Activeer'}</button>
               <button onClick={() => deleteType(t.videoType || t.slug)} className="text-zinc-600 hover:text-red-400 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
             </div>
           </div>
         ))}
-        {types.length === 0 && <p className="text-zinc-500 text-sm">Geen video types gevonden.</p>}
       </div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════
-// TAB 6: AI ASSISTENT
+// TAB 6: AI ASSISTENT — FIX 5: Opus 4.5
 // ═══════════════════════════════════════════════
 
 function AssistantTab() {
@@ -741,6 +841,7 @@ function AssistantTab() {
   const [convId, setConvId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [convs, setConvs] = useState<any[]>([]);
+  const [model, setModel] = useState('claude-opus-4.5'); // FIX 5: default Opus 4.5
 
   useEffect(() => { legacyApiJson('/assistant/conversations').then(setConvs).catch(() => {}); }, []);
 
@@ -750,7 +851,7 @@ function AssistantTab() {
     setMessages(p => [...p, { role: 'user', content: msg }]);
     setSending(true);
     try {
-      const r = await legacyApiJson('/assistant/chat', { method: 'POST', body: JSON.stringify({ conversationId: convId, message: msg }) });
+      const r = await legacyApiJson('/assistant/chat', { method: 'POST', body: JSON.stringify({ conversationId: convId, message: msg, model }) });
       setConvId(r.conversationId);
       setMessages(p => [...p, { role: 'assistant', content: r.message }]);
     } catch (err: any) {
@@ -759,22 +860,39 @@ function AssistantTab() {
     setSending(false);
   };
 
+  const deleteConv = async (id: string) => {
+    try { await legacyApiJson(`/assistant/conversations/${id}`, { method: 'DELETE' }); setConvs(p => p.filter(c => c.id !== id)); if (convId === id) { setConvId(null); setMessages([]); } } catch {}
+  };
+
   return (
     <div className="flex gap-4 h-full">
-      <div className="w-44 shrink-0">
+      <div className="w-48 shrink-0">
         <button onClick={() => { setMessages([]); setConvId(null); }} className="btn-secondary text-xs w-full mb-3 !py-2"><Plus className="w-3 h-3" /> Nieuw</button>
+        {/* FIX 5: Model selector */}
+        <select className="input-base text-xs w-full mb-3" value={model} onChange={e => setModel(e.target.value)}>
+          <option value="claude-opus-4.5">Claude Opus 4.5</option>
+          <option value="claude-sonnet-4.5">Claude Sonnet 4.5</option>
+          <option value="gpt-5">GPT-5</option>
+          <option value="deepseek-v3.1">DeepSeek v3.1</option>
+          <option value="gemini-3-pro">Gemini 3 Pro</option>
+        </select>
         <div className="space-y-0.5">
           {convs.map(c => (
-            <button key={c.id} onClick={async () => { try { const d = await legacyApiJson(`/assistant/conversations/${c.id}`); setMessages(d.messages); setConvId(c.id); } catch {} }}
-              className={`w-full text-left px-2 py-1.5 rounded-lg text-[11px] truncate ${convId === c.id ? 'bg-brand-600/15 text-brand-300' : 'text-zinc-400 hover:bg-white/[0.04]'}`}>
-              {c.title}
-            </button>
+            <div key={c.id} className="flex items-center group">
+              <button onClick={async () => { try { const d = await legacyApiJson(`/assistant/conversations/${c.id}`); setMessages(d.messages); setConvId(c.id); } catch {} }}
+                className={`flex-1 text-left px-2 py-1.5 rounded-lg text-[11px] truncate ${convId === c.id ? 'bg-brand-600/15 text-brand-300' : 'text-zinc-400 hover:bg-white/[0.04]'}`}>
+                {c.title}
+              </button>
+              <button onClick={() => deleteConv(c.id)} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 p-1"><Trash2 className="w-3 h-3" /></button>
+            </div>
           ))}
         </div>
       </div>
       <div className="flex-1 flex flex-col glass rounded-2xl overflow-hidden">
         <div className="p-3 border-b border-white/[0.06] flex items-center gap-2">
-          <Bot className="w-4 h-4 text-brand-400" /><span className="text-sm font-semibold text-white">AI Assistent</span>
+          <Bot className="w-4 h-4 text-brand-400" />
+          <span className="text-sm font-semibold text-white">AI Assistent</span>
+          <span className="text-[10px] text-zinc-500 ml-auto">{model}</span>
         </div>
         <div className="flex-1 overflow-auto p-4 space-y-3">
           {messages.length === 0 && (
