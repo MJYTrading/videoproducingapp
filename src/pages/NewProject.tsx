@@ -3,59 +3,25 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store';
 import { Language, ScriptSource, MontageClip, VideoType, VIDEO_TYPE_LABELS } from '../types';
 
-import { VIDEO_STYLES, STYLE_STEP_DEFAULTS } from '../data/styles';
+import { VIDEO_STYLES } from '../data/styles';
 import StylePicker from '../components/StylePicker';
-import CheckpointsSection from '../components/CheckpointsSection';
-// ClipTypesSection removed - pipeline handles clips
 import ImageSelectionSection from '../components/ImageSelectionSection';
 import * as api from '../api';
 
-const STEP_DEFS: Record<number, { name: string; executor: string; icon: string }> = {
-  0:  { name: 'Ideation',              executor: 'App',              icon: '💡' },
-  1:  { name: 'Project Formulier',     executor: 'App',              icon: '📋' },
-  2:  { name: 'Research JSON',         executor: 'Elevate Sonar',    icon: '🔍' },
-  3:  { name: 'Transcripts Ophalen',   executor: 'App',              icon: '📝' },
-  4:  { name: 'Trending Clips Research', executor: 'Elevate Sonar',  icon: '📊' },
-  5:  { name: 'Style Profile',         executor: 'Elevate AI',       icon: '🎨' },
-  6:  { name: 'Script Orchestrator',   executor: 'Elevate Opus',     icon: '🎯' },
-  7:  { name: 'Script Schrijven',      executor: 'Elevate AI',       icon: '✍️' },
-  8:  { name: 'Voice Over',            executor: 'Elevate',          icon: '🎙️' },
-  9:  { name: 'Avatar / Spokesperson', executor: 'HeyGen',           icon: '🧑' },
-  10: { name: 'Timestamps Ophalen',    executor: 'Assembly AI',      icon: '⏱️' },
-  11: { name: 'Scene Prompts',         executor: 'Elevate AI',       icon: '🖼️' },
-  12: { name: 'Assets Zoeken',         executor: 'App',              icon: '🔎' },
-  13: { name: 'Clips Downloaden',      executor: 'App',              icon: '⬇️' },
-  14: { name: 'Images Genereren',      executor: 'Elevate',          icon: '🖌️' },
-  15: { name: 'Video Scenes Genereren', executor: 'Elevate',         icon: '🎥' },
-  16: { name: "Director's Cut",        executor: 'Claude Opus',      icon: '🎼' },
-  17: { name: 'Achtergrondmuziek',     executor: 'FFMPEG',           icon: '🎵' },
-  18: { name: 'Color Grading',         executor: 'FFMPEG',           icon: '🌈' },
-  19: { name: 'Subtitles',             executor: 'FFMPEG',           icon: '💬' },
-  20: { name: 'Overlay',               executor: 'FFMPEG',           icon: '📐' },
-  21: { name: 'Sound Effects',         executor: 'FFMPEG',           icon: '🔊' },
-  22: { name: 'Video Effects',         executor: 'FFMPEG',           icon: '✨' },
-  23: { name: 'Final Export',          executor: 'FFMPEG',           icon: '📦' },
-  24: { name: 'Thumbnail',             executor: 'App',              icon: '🖼️' },
-  25: { name: 'Drive Upload',          executor: 'App',              icon: '☁️' },
-};
-
-// Map videoType naar STYLE_STEP_DEFAULTS key
-const VIDEO_TYPE_TO_STYLE_KEY: Record<string, string> = {
-  ai: 'ai',
-  spokesperson_ai: 'spokesperson-ai',
-  trending: 'trending',
-  documentary: 'documentary',
-  compilation: 'compilatie',
-  spokesperson: 'spokesperson-trending',
-};
+interface PipelineNodeInfo {
+  sortOrder: number;
+  name: string;
+  slug: string;
+  executor: string;
+  isCheckpoint: boolean;
+  category: string;
+}
 
 export default function NewProject() {
   const navigate = useNavigate();
   const { channelId: routeChannelId } = useParams<{ channelId?: string }>();
   const addProject = useStore((state) => state.addProject);
 
-  const [enabledSteps, setEnabledSteps] = useState<number[]>([]);
-  const [showStepToggles, setShowStepToggles] = useState(false);
   const [channels, setChannels] = useState<Array<any>>([]);
   const [channelId, setChannelId] = useState(routeChannelId || '');
   const [channelLoaded, setChannelLoaded] = useState(false);
@@ -83,7 +49,31 @@ export default function NewProject() {
   const [subtitles, setSubtitles] = useState(true);
   const [output, setOutput] = useState('youtube-1080p');
   const [aspectRatio, setAspectRatio] = useState('landscape');
-  const [checkpoints, setCheckpoints] = useState<number[]>([7, 11, 14, 16]);
+  const [checkpoints, setCheckpoints] = useState<number[]>([]);
+
+  // Pipeline nodes voor het geselecteerde videoType
+  const [pipelineNodes, setPipelineNodes] = useState<PipelineNodeInfo[]>([]);
+  const [loadingPipeline, setLoadingPipeline] = useState(false);
+
+  // Laad pipeline nodes wanneer videoType verandert
+  const loadPipelineNodes = async (vt: string) => {
+    setLoadingPipeline(true);
+    try {
+      const res = await fetch(`/api/pipelines/${vt}/nodes`);
+      if (res.ok) {
+        const data = await res.json();
+        setPipelineNodes(data.nodes || []);
+        // Zet default checkpoints op nodes die isCheckpoint=true hebben
+        const defaultCheckpoints = (data.nodes || [])
+          .filter((n: PipelineNodeInfo) => n.isCheckpoint)
+          .map((n: PipelineNodeInfo) => n.sortOrder);
+        setCheckpoints(defaultCheckpoints);
+      }
+    } catch (err) {
+      console.error('Pipeline nodes laden mislukt:', err);
+    }
+    setLoadingPipeline(false);
+  };
 
   useEffect(() => {
     api.channels.getAll().then(setChannels).catch(() => {});
@@ -91,7 +81,7 @@ export default function NewProject() {
       setVOICES(v);
       if (v.length > 0 && !voice) setVoice(v[0].voiceId);
     }).catch(() => {});
-    applyStepDefaults('ai');
+    loadPipelineNodes('ai');
   }, []);
 
   // Kanaal defaults laden
@@ -106,7 +96,7 @@ export default function NewProject() {
   const applyChannelDefaults = (channel: any) => {
     if (channel.defaultVideoType) {
       setVideoType(channel.defaultVideoType);
-      applyStepDefaults(channel.defaultVideoType);
+      loadPipelineNodes(channel.defaultVideoType);
     }
     if (channel.defaultVoiceId) setVoice(channel.defaultVoiceId);
     if (channel.defaultScriptLengthMinutes) setScriptLengthMinutes(channel.defaultScriptLengthMinutes);
@@ -131,14 +121,9 @@ export default function NewProject() {
     setChannelLoaded(false);
   };
 
-  // Pipeline stappen baseren op videoType
-  const applyStepDefaults = (vt: string) => {
-    const styleKey = VIDEO_TYPE_TO_STYLE_KEY[vt] || vt;
-    const defaults = STYLE_STEP_DEFAULTS[styleKey];
-    if (defaults) {
-      const enabled = Object.entries(defaults).filter(([_, v]) => v === true).map(([k]) => Number(k));
-      setEnabledSteps(enabled);
-    }
+  const handleVideoTypeChange = (vt: VideoType) => {
+    setVideoType(vt);
+    loadPipelineNodes(vt);
   };
 
   const selectedVoice = VOICES.find((v) => v.voiceId === voice);
@@ -162,14 +147,11 @@ export default function NewProject() {
     setVisualStyleParent(parentId);
   };
 
-  const handleVideoTypeChange = (vt: VideoType) => {
-    setVideoType(vt);
-    applyStepDefaults(vt);
-  };
-
-  const toggleStep = (stepNumber: number) => {
-    setEnabledSteps(prev =>
-      prev.includes(stepNumber) ? prev.filter(s => s !== stepNumber) : [...prev, stepNumber].sort((a, b) => a - b)
+  const toggleCheckpoint = (sortOrder: number) => {
+    setCheckpoints(prev =>
+      prev.includes(sortOrder)
+        ? prev.filter(s => s !== sortOrder)
+        : [...prev, sortOrder].sort((a, b) => a - b)
     );
   };
 
@@ -194,16 +176,11 @@ export default function NewProject() {
       montageClips: isAiVideoType ? [] : montageClips, stockImages, checkpoints, feedbackHistory: [],
       colorGrading: 'auto' as any,
       subtitles, output: output as any,
-      aspectRatio, enabledSteps, channelId: channelId || undefined,
+      aspectRatio, channelId: channelId || undefined,
       videoType,
     });
     navigate(`/project/${project.id}`);
   };
-
-  const isStockImagesDisabled = !!(selectedStyle && 'allowsRealImages' in selectedStyle && selectedStyle.allowsRealImages === false);
-
-  const currentDefaults = STYLE_STEP_DEFAULTS[VIDEO_TYPE_TO_STYLE_KEY[videoType] || videoType] || {};
-  const enabledCount = enabledSteps.length;
 
   const selectedChannel = channels.find(ch => ch.id === channelId);
 
@@ -326,76 +303,22 @@ export default function NewProject() {
           </section>
         )}
 
-        {/* ═══ PIPELINE STAPPEN — gebaseerd op videoType ═══ */}
+        {/* ═══ PIPELINE STAPPEN — uit database ═══ */}
         <section className="section-card">
-          <div className="flex items-center justify-between mb-1">
-            <h2 className="section-title !mb-0">Pipeline Stappen</h2>
-            <div className="flex items-center gap-3">
-              <span className="text-[11px] text-zinc-500 font-mono">{enabledCount}/26 actief</span>
-              <button type="button" onClick={() => setShowStepToggles(!showStepToggles)}
-                className="text-xs text-brand-400 hover:text-brand-300 font-medium">
-                {showStepToggles ? 'Verbergen' : 'Aanpassen'}
-              </button>
-            </div>
-          </div>
+          <h2 className="section-title">Pipeline Stappen</h2>
           <p className="text-xs text-zinc-600 mb-3">
-            Gebaseerd op video type: <strong className="text-zinc-400">{VIDEO_TYPE_LABELS[videoType]}</strong>
+            Pipeline voor <strong className="text-zinc-400">{VIDEO_TYPE_LABELS[videoType]}</strong> — {pipelineNodes.length} stappen
           </p>
 
-          {!showStepToggles && (
+          {loadingPipeline ? (
+            <p className="text-xs text-zinc-500">Pipeline laden...</p>
+          ) : (
             <div className="flex flex-wrap gap-1.5">
-              {Array.from({ length: 26 }, (_, i) => i).map((stepNum) => {
-                const step = STEP_DEFS[stepNum];
-                if (!step) return null;
-                const isEnabled = enabledSteps.includes(stepNum);
-                return (
-                  <span key={stepNum} className={`text-[10px] px-2 py-1 rounded-md border transition-colors ${
-                    isEnabled
-                      ? 'bg-brand-500/10 border-brand-500/20 text-brand-300'
-                      : 'bg-surface-200 border-white/[0.04] text-zinc-600 line-through'
-                  }`}>
-                    {step.icon} {stepNum}
-                  </span>
-                );
-              })}
-            </div>
-          )}
-
-          {showStepToggles && (
-            <div className="space-y-1 max-h-[500px] overflow-y-auto pr-1">
-              {Array.from({ length: 26 }, (_, i) => i).map((stepNum) => {
-                const step = STEP_DEFS[stepNum];
-                if (!step) return null;
-                const isEnabled = enabledSteps.includes(stepNum);
-                const isDefault = currentDefaults[stepNum] === true;
-                const isOverridden = isEnabled !== isDefault;
-
-                return (
-                  <div key={stepNum} className={`flex items-center justify-between px-3 py-2 rounded-lg border transition-all ${
-                    isEnabled ? 'bg-white/[0.02] border-white/[0.06]' : 'bg-surface-100 border-white/[0.03] opacity-60'
-                  }`}>
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="text-sm">{step.icon}</span>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] text-zinc-600 font-mono w-5">{stepNum}</span>
-                          <span className="text-xs font-medium truncate">{step.name}</span>
-                          {isOverridden && <span className="text-[9px] px-1 py-0.5 bg-amber-500/15 text-amber-400 rounded border border-amber-500/20">aangepast</span>}
-                        </div>
-                        <span className="text-[10px] text-zinc-600">{step.executor}</span>
-                      </div>
-                    </div>
-                    <button type="button" onClick={() => toggleStep(stepNum)}
-                      className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${isEnabled ? 'bg-brand-500' : 'bg-surface-400'}`}>
-                      <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${isEnabled ? 'translate-x-4' : ''}`} />
-                    </button>
-                  </div>
-                );
-              })}
-              <button type="button" onClick={() => applyStepDefaults(videoType)}
-                className="text-xs text-zinc-500 hover:text-zinc-300 mt-2">
-                ↩ Reset naar standaard voor {VIDEO_TYPE_LABELS[videoType]}
-              </button>
+              {pipelineNodes.map((node) => (
+                <span key={node.sortOrder} className="text-[10px] px-2 py-1 rounded-md border bg-brand-500/10 border-brand-500/20 text-brand-300">
+                  {node.sortOrder}. {node.name}
+                </span>
+              ))}
             </div>
           )}
         </section>
@@ -405,9 +328,64 @@ export default function NewProject() {
           <ImageSelectionSection mode={imageSelectionMode} imagesPerScene={imagesPerScene} onModeChange={setImageSelectionMode} onImagesPerSceneChange={setImagesPerScene} />
         )}
 
+        {/* ═══ CHECKPOINTS ═══ */}
+        <section className="section-card">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <h2 className="section-title !mb-1">Checkpoints</h2>
+              <p className="text-xs text-zinc-600">
+                De pipeline pauzeert bij deze stappen zodat je het resultaat kunt reviewen.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const defaults = pipelineNodes.filter(n => n.isCheckpoint).map(n => n.sortOrder);
+                setCheckpoints(defaults);
+              }}
+              className="btn-secondary text-xs"
+            >
+              Standaard
+            </button>
+          </div>
 
-        {/* ═══ CHECKPOINTS — gefilterd op enabledSteps ═══ */}
-        <CheckpointsSection checkpoints={checkpoints} onChange={setCheckpoints} enabledSteps={enabledSteps} />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+            {pipelineNodes.map((node) => {
+              const isChecked = checkpoints.includes(node.sortOrder);
+              const isDefault = node.isCheckpoint;
+              return (
+                <label
+                  key={node.sortOrder}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
+                    isChecked
+                      ? 'bg-brand-500/8 border-brand-500/20'
+                      : 'bg-surface-200/30 border-white/[0.04] hover:border-white/[0.08]'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => toggleCheckpoint(node.sortOrder)}
+                    className="w-4 h-4 rounded border-zinc-600 bg-surface-200 text-brand-600 focus:ring-2 focus:ring-brand-500/40 focus:ring-offset-0 cursor-pointer"
+                  />
+                  <span className="text-[11px] text-zinc-600 font-mono w-5">{node.sortOrder}</span>
+                  <span className="flex-1 text-sm">{node.name}</span>
+                  {isDefault && (
+                    <span className="text-[10px] text-brand-400 font-medium">standaard</span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+
+          {checkpoints.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-white/[0.04]">
+              <p className="text-[11px] text-zinc-500">
+                {checkpoints.length} checkpoint{checkpoints.length !== 1 ? 's' : ''}: stap {checkpoints.join(', ')}
+              </p>
+            </div>
+          )}
+        </section>
 
         <button type="submit" className="btn-primary w-full py-3.5 text-sm">
           Project Aanmaken

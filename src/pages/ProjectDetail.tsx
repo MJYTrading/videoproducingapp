@@ -23,35 +23,6 @@ const TABS: Array<{ key: TabType; label: string; icon?: string }> = [
   { key: 'config', label: 'Config', icon: '⚙️' },
 ];
 
-const ALL_STEPS: Array<{ id: number; label: string }> = [
-  { id: 0,  label: '0. Ideation' },
-  { id: 1,  label: '1. Formulier' },
-  { id: 2,  label: '2. Research' },
-  { id: 3,  label: '3. Transcripts' },
-  { id: 4,  label: '4. Clips Research' },
-  { id: 5,  label: '5. Style Profile' },
-  { id: 6,  label: '6. Orchestrator' },
-  { id: 7,  label: '7. Script' },
-  { id: 8,  label: '8. Voice Over' },
-  { id: 9,  label: '9. Avatar' },
-  { id: 10, label: '10. Timestamps' },
-  { id: 11, label: '11. Scene Prompts' },
-  { id: 12, label: '12. Assets' },
-  { id: 13, label: '13. Clips' },
-  { id: 14, label: '14. Images' },
-  { id: 15, label: '15. Video Scenes' },
-  { id: 16, label: '16. Director Cut' },
-  { id: 17, label: '17. Muziek' },
-  { id: 18, label: '18. Color Grade' },
-  { id: 19, label: '19. Subtitles' },
-  { id: 20, label: '20. Overlay' },
-  { id: 21, label: '21. Sound FX' },
-  { id: 22, label: '22. Video FX' },
-  { id: 23, label: '23. Export' },
-  { id: 24, label: '24. Thumbnail' },
-  { id: 25, label: '25. Drive Upload' },
-];
-
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -95,11 +66,8 @@ export default function ProjectDetail() {
     );
   }
 
-  // Filter stappen op enabledSteps — toon alleen actieve stappen
-  const enabledSteps = project.enabledSteps || [];
-  const STEP_NAV = enabledSteps.length > 0
-    ? ALL_STEPS.filter(s => enabledSteps.includes(s.id))
-    : ALL_STEPS;
+  // Step navigatie — dynamisch uit project.steps
+  const STEP_NAV = project.steps.map(s => ({ id: s.id, label: `${s.id}. ${s.name}` }));
 
   const getStatusBadge = (status: ProjectStatus) => {
     const map: Record<string, string> = {
@@ -114,12 +82,8 @@ export default function ProjectDetail() {
     return map[status] || 'badge-neutral';
   };
 
-  // Alleen enabled stappen tellen voor voortgang
-  const activeSteps = enabledSteps.length > 0
-    ? project.steps.filter(s => enabledSteps.includes(s.id))
-    : project.steps;
-  const doneSteps = activeSteps.filter((s) => s.status === 'completed' || s.status === 'skipped').length;
-  const totalSteps = activeSteps.length;
+  const doneSteps = project.steps.filter((s) => s.status === 'completed' || s.status === 'skipped').length;
+  const totalSteps = project.steps.length;
   const progress = totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
 
   const formatElapsedTime = (seconds: number) => {
@@ -148,8 +112,8 @@ export default function ProjectDetail() {
     setShowForceContinueConfirm(false);
   };
 
-  const getStepStatusIcon = (stepNumber: number) => {
-    const step = project.steps.find(s => s.id === stepNumber);
+  const getStepStatusIcon = (stepId: number) => {
+    const step = project.steps.find(s => s.id === stepId);
     if (!step) return '⬜';
     switch (step.status) {
       case 'completed': return '✅';
@@ -262,7 +226,7 @@ export default function ProjectDetail() {
           </div>
 
           <div className="p-6 flex gap-5">
-            {/* Step navigator sidebar — filtered on enabledSteps */}
+            {/* Step navigator sidebar — dynamisch uit project.steps */}
             {activeTab === 'pipeline' && (
               <div className="w-40 shrink-0 hidden lg:block">
                 <div className="sticky top-4 space-y-0.5 max-h-[75vh] overflow-y-auto pr-1 scrollbar-thin">
@@ -286,7 +250,7 @@ export default function ProjectDetail() {
             <div className="flex-1 min-w-0">
               {activeTab === 'pipeline' && <PipelineTab project={project} />}
               {activeTab === 'preview' && <PreviewTab project={project} />}
-              {activeTab === 'script' && <ScriptTab project={project} onRefresh={() => loadProject()} />}
+              {activeTab === 'script' && <ScriptTab project={project} onRefresh={() => {}} />}
               {activeTab === 'review' && <ReviewPanel project={project} />}
               {activeTab === 'logs' && <LogsTab project={project} />}
               {activeTab === 'stats' && <StatsTab project={project} />}

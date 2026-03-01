@@ -22,11 +22,8 @@ export default function PipelineTab({ project }: PipelineTabProps) {
   const rollbackToStep = useStore((state) => state.rollbackToStep);
   const skipStep = useStore((state) => state.skipStep);
 
-  // Filter op enabledSteps
-  const enabledSteps = project.enabledSteps || [];
-  const visibleSteps = enabledSteps.length > 0
-    ? project.steps.filter(s => enabledSteps.includes(s.id))
-    : project.steps;
+  // Toon alle stappen — pipeline bepaalt welke er zijn
+  const visibleSteps = project.steps;
 
   const getStepStatusIcon = (status: StepStatus) => {
     switch (status) {
@@ -65,6 +62,9 @@ export default function PipelineTab({ project }: PipelineTabProps) {
       'Elevate Sonar':  'bg-violet-600/25 text-violet-200 border-violet-500/30',
       'HeyGen':         'bg-teal-600/25 text-teal-200 border-teal-500/30',
       'FFMPEG':         'bg-green-600/25 text-green-200 border-green-500/30',
+      'GenAIPro':       'bg-amber-600/25 text-amber-200 border-amber-500/30',
+      'Pexels':         'bg-lime-600/25 text-lime-200 border-lime-500/30',
+      'Sonar':          'bg-teal-600/25 text-teal-200 border-teal-500/30',
     };
     return map[executor] || 'bg-zinc-800 text-zinc-300 border-zinc-600/40';
   };
@@ -109,7 +109,7 @@ export default function PipelineTab({ project }: PipelineTabProps) {
         </div>
       )}
 
-      {/* Steps — alleen enabled stappen */}
+      {/* Steps */}
       {visibleSteps.map((step) => (
         <div
           key={step.id}
@@ -212,18 +212,6 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                   : parsed?._source ? 'script/style-profile.json'
                   : null;
 
-                // Toon uitgebreide preview voor data-rijke stappen
-                const renderValue = (val: any, depth = 0): string => {
-                  if (val === null || val === undefined) return '';
-                  if (typeof val === 'string') return val.length > 500 ? val.slice(0, 500) + '...' : val;
-                  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
-                  if (Array.isArray(val)) return val.length > 0 ? `[${val.length} items]` : '[]';
-                  if (typeof val === 'object' && depth < 2) {
-                    return Object.entries(val).map(([k, v]) => `${k}: ${renderValue(v, depth + 1)}`).join('\n');
-                  }
-                  return JSON.stringify(val).slice(0, 200);
-                };
-
                 return (
                   <div className="p-4 bg-surface-200 border border-white/[0.04] rounded-lg mb-3">
                     <div className="flex items-center justify-between mb-2">
@@ -289,11 +277,11 @@ export default function PipelineTab({ project }: PipelineTabProps) {
                 );
               })()}
 
-              {/* Review panel */}
-              {step.status === 'review' && step.id !== 13 && (
+              {/* Review panel — dynamic based on step name */}
+              {step.status === 'review' && step.name !== 'AI Images Genereren' && (
                 <ReviewPanel project={project} step={step} />
               )}
-              {step.status === 'review' && step.id === 13 && (
+              {step.status === 'review' && step.name === 'AI Images Genereren' && (
                 <ImageReviewPanel project={project} step={step} />
               )}
 
@@ -371,7 +359,7 @@ export default function PipelineTab({ project }: PipelineTabProps) {
               )}
 
               {/* Approve button for review steps */}
-              {step.status === 'review' && step.id !== 13 && (
+              {step.status === 'review' && step.name !== 'AI Images Genereren' && (
                 <button
                   onClick={() => useStore.getState().approveStep(project.id, step.id)}
                   className="mt-2 btn-success text-xs py-1.5"
