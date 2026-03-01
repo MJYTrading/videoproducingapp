@@ -642,7 +642,14 @@ function VideoTypesTab() {
   const [newType, setNewType] = useState({ slug: '', name: '', description: '' });
 
   const loadTypes = () => {
-    legacyApiJson('/video-types/list').then(setTypes).catch(() => {}).finally(() => setLoading(false));
+    legacyApiJson('/video-types/list').then(data => {
+      // API returns string array, convert to objects
+      if (Array.isArray(data) && typeof data[0] === 'string') {
+        setTypes(data.map(vt => ({ videoType: vt, name: vt, isActive: true })));
+      } else {
+        setTypes(data);
+      }
+    }).catch(() => {}).finally(() => setLoading(false));
   };
   useEffect(loadTypes, []);
 
@@ -651,7 +658,7 @@ function VideoTypesTab() {
     try {
       await legacyApiJson('/video-types/add', {
         method: 'POST',
-        body: JSON.stringify({ videoType: newType.slug, name: newType.name, description: newType.description }),
+        body: JSON.stringify({ name: newType.slug, copyFrom: '' }),
       });
       loadTypes();
       setShowAdd(false);
