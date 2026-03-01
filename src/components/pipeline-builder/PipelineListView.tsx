@@ -1,17 +1,16 @@
 /**
- * PipelineListView — Verticale stappen-lijst (vervangt React Flow canvas)
+ * PipelineListView v4.2 — Verticale stappen-lijst
  * 
- * - Simpele lijst van stappen, van boven naar beneden
- * - Data erft automatisch door de keten
- * - Klik op stap = accordion opent met config
- * - Parallelle stappen gegroepeerd
+ * Nieuw in v4.2:
+ * - Drag & drop reordering (HTML5 native)
+ * - Kanaal data variabelen in prompts ({channel:name}, {channel:style}, etc.)
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronDown, ChevronRight, Plus, Trash2, GripVertical, Save,
   AlertCircle, RefreshCw, ArrowUp, ArrowDown, Database,
-  Zap, Pause, X, Settings2,
+  Zap, Pause, X, Settings2, Hash,
 } from 'lucide-react';
 import { apiJson, CATEGORY_COLORS, type PipelineData, type PipelineNodeData, type StepInput, type StepOutput } from './types';
 
@@ -22,6 +21,23 @@ interface ConfigField {
   source?: string; required?: boolean; group?: string;
 }
 interface ConfigSchema { stepType: 'llm' | 'api' | 'app'; fields: ConfigField[]; }
+
+// Channel data keys available for prompt insertion
+const CHANNEL_VARS = [
+  { key: 'name', label: 'Kanaal Naam' },
+  { key: 'description', label: 'Beschrijving' },
+  { key: 'defaultVideoType', label: 'Video Type' },
+  { key: 'defaultLanguage', label: 'Taal' },
+  { key: 'defaultVisualStyle', label: 'Visuele Stijl' },
+  { key: 'defaultScriptLengthMinutes', label: 'Script Lengte (min)' },
+  { key: 'baseStyleProfile', label: 'Style Profile' },
+  { key: 'baseResearchTemplate', label: 'Research Template' },
+  { key: 'styleExtraInstructions', label: 'Style Instructies' },
+  { key: 'defaultVoiceId', label: 'Stem ID' },
+  { key: 'defaultAspectRatio', label: 'Aspect Ratio' },
+  { key: 'defaultOutputFormat', label: 'Output Format' },
+  { key: 'competitors', label: 'Concurrenten' },
+];
 
 interface Props {
   pipelineId: number;
@@ -38,6 +54,10 @@ export default function PipelineListView({ pipelineId }: Props) {
   const [stepDefs, setStepDefs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<number | null>(null);
+
+  // Drag & drop state
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dragOverId, setDragOverId] = useState<number | null>(null);
 
   const loadPipeline = useCallback(async () => {
     try {
@@ -65,25 +85,20 @@ export default function PipelineListView({ pipelineId }: Props) {
     return [...pipeline.nodes].sort((a, b) => a.sortOrder - b.sortOrder);
   }, [pipeline]);
 
-  // Compute upstream data for each node (all outputs from earlier steps)
+  // Compute upstream data for each node
   const upstreamDataMap = useMemo(() => {
     const map: Record<number, { nodeId: number; nodeName: string; category: string; key: string; label: string; type: string; filePath: string }[]> = {};
     for (let i = 0; i < sortedNodes.length; i++) {
       const available: typeof map[0] = [];
-      // Collect all outputs from all previous nodes
       for (let j = 0; j < i; j++) {
         const prev = sortedNodes[j];
         const outputs: StepOutput[] = prev.stepDefinition.outputSchema || [];
         for (const out of outputs) {
           if (!available.find(a => a.key === out.key)) {
             available.push({
-              nodeId: prev.id,
-              nodeName: prev.stepDefinition.name,
-              category: prev.stepDefinition.category,
-              key: out.key,
-              label: out.label,
-              type: out.type,
-              filePath: out.filePath || '',
+              nodeId: prev.id, nodeName: prev.stepDefinition.name,
+              category: prev.stepDefinition.category, key: out.key,
+              label: out.label, type: out.type, filePath: out.filePath || '',
             });
           }
         }
@@ -93,22 +108,19 @@ export default function PipelineListView({ pipelineId }: Props) {
     return map;
   }, [sortedNodes]);
 
-  // Move node up/down
+  // Move node up/down (fallback for non-drag)
   const moveNode = async (nodeId: number, direction: 'up' | 'down') => {
     const idx = sortedNodes.findIndex(n => n.id === nodeId);
     if (idx < 0) return;
     const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
     if (swapIdx < 0 || swapIdx >= sortedNodes.length) return;
-
     const positions = sortedNodes.map((n, i) => {
       let order = i;
       if (i === idx) order = swapIdx;
       if (i === swapIdx) order = idx;
       return { id: n.id, sortOrder: order };
     });
-
     try {
-      // Update sortOrder via positions endpoint (repurpose)
       for (const p of positions) {
         await apiJson('/pipelines/' + pipelineId + '/nodes/' + p.id, {
           method: 'PATCH', body: JSON.stringify({ sortOrder: p.sortOrder }),
@@ -118,16 +130,43 @@ export default function PipelineListView({ pipelineId }: Props) {
     } catch (err) { console.error(err); }
   };
 
+  // Drag & drop handlers
+  const handleDragStart = (nodeId: number) => setDragId(nodeId);
+  const handleDragOver = (e: React.DragEvent, nodeId: number) => { e.preventDefault(); setDragOverId(nodeId); };
+  const handleDragLeave = () => setDragOverId(null);
+  const handleDrop = async (targetNodeId: number) => {
+    if (!dragId || dragId === targetNodeId) { setDragId(null); setDragOverId(null); return; }
+    const fromIdx = sortedNodes.findIndex(n => n.id === dragId);
+    const toIdx = sortedNodes.findIndex(n => n.id === targetNodeId);
+    if (fromIdx < 0 || toIdx < 0) { setDragId(null); setDragOverId(null); return; }
+
+    // Reorder: remove from fromIdx, insert at toIdx
+    const reordered = [...sortedNodes];
+    const [moved] = reordered.splice(fromIdx, 1);
+    reordered.splice(toIdx, 0, moved);
+
+    // Update all sortOrders
+    try {
+      for (let i = 0; i < reordered.length; i++) {
+        if (reordered[i].sortOrder !== i) {
+          await apiJson('/pipelines/' + pipelineId + '/nodes/' + reordered[i].id, {
+            method: 'PATCH', body: JSON.stringify({ sortOrder: i }),
+          });
+        }
+      }
+      loadPipeline();
+    } catch (err) { console.error(err); }
+    setDragId(null);
+    setDragOverId(null);
+  };
+  const handleDragEnd = () => { setDragId(null); setDragOverId(null); };
+
   // Add step
   const addStep = async (stepDefId: number) => {
     try {
       await apiJson('/pipelines/' + pipelineId + '/nodes', {
         method: 'POST',
-        body: JSON.stringify({
-          stepDefinitionId: stepDefId,
-          positionX: 0, positionY: 0,
-          sortOrder: sortedNodes.length,
-        }),
+        body: JSON.stringify({ stepDefinitionId: stepDefId, positionX: 0, positionY: 0, sortOrder: sortedNodes.length }),
       });
       setShowAddStep(false);
       loadPipeline();
@@ -192,28 +231,39 @@ export default function PipelineListView({ pipelineId }: Props) {
         </div>
       )}
 
-      {/* Step list */}
+      {/* Step list with drag & drop */}
       <div className="space-y-1.5">
         {sortedNodes.map((node, idx) => (
-          <StepCard
+          <div
             key={node.id}
-            node={node}
-            index={idx}
-            total={sortedNodes.length}
-            isOpen={openNodeId === node.id}
-            onToggle={() => setOpenNodeId(openNodeId === node.id ? null : node.id)}
-            onMove={dir => moveNode(node.id, dir)}
-            onRemove={() => removeStep(node.id, node.stepDefinition.name)}
-            upstreamData={upstreamDataMap[node.id] || []}
-            models={models}
-            voices={voices}
-            styles={styles}
-            colorGrades={colorGrades}
-            pipelineId={pipelineId}
-            onSave={loadPipeline}
-            saving={saving === node.id}
-            setSaving={setSaving}
-          />
+            draggable
+            onDragStart={() => handleDragStart(node.id)}
+            onDragOver={(e) => handleDragOver(e, node.id)}
+            onDragLeave={handleDragLeave}
+            onDrop={() => handleDrop(node.id)}
+            onDragEnd={handleDragEnd}
+            className={dragOverId === node.id && dragId !== node.id ? 'border-t-2 border-brand-400' : ''}
+          >
+            <StepCard
+              node={node}
+              index={idx}
+              total={sortedNodes.length}
+              isOpen={openNodeId === node.id}
+              isDragging={dragId === node.id}
+              onToggle={() => setOpenNodeId(openNodeId === node.id ? null : node.id)}
+              onMove={dir => moveNode(node.id, dir)}
+              onRemove={() => removeStep(node.id, node.stepDefinition.name)}
+              upstreamData={upstreamDataMap[node.id] || []}
+              models={models}
+              voices={voices}
+              styles={styles}
+              colorGrades={colorGrades}
+              pipelineId={pipelineId}
+              onSave={loadPipeline}
+              saving={saving === node.id}
+              setSaving={setSaving}
+            />
+          </div>
         ))}
       </div>
 
@@ -236,6 +286,7 @@ interface StepCardProps {
   index: number;
   total: number;
   isOpen: boolean;
+  isDragging: boolean;
   onToggle: () => void;
   onMove: (dir: 'up' | 'down') => void;
   onRemove: () => void;
@@ -250,7 +301,7 @@ interface StepCardProps {
   setSaving: (id: number | null) => void;
 }
 
-function StepCard({ node, index, total, isOpen, onToggle, onMove, onRemove, upstreamData, models, voices, styles, colorGrades, pipelineId, onSave, saving, setSaving }: StepCardProps) {
+function StepCard({ node, index, total, isOpen, isDragging, onToggle, onMove, onRemove, upstreamData, models, voices, styles, colorGrades, pipelineId, onSave, saving, setSaving }: StepCardProps) {
   const def = node.stepDefinition;
   const cat = CATEGORY_COLORS[def.category] || CATEGORY_COLORS.general;
   const inputs: StepInput[] = def.inputSchema || [];
@@ -320,8 +371,8 @@ function StepCard({ node, index, total, isOpen, onToggle, onMove, onRemove, upst
     setSaving(null);
   };
 
-  const insertVar = (key: string) => {
-    setF(prev => ({ ...prev, userPromptOverride: prev.userPromptOverride + ' {upstream:' + key + '}' }));
+  const insertVar = (varStr: string) => {
+    setF(prev => ({ ...prev, userPromptOverride: prev.userPromptOverride + ' ' + varStr }));
   };
 
   const groupedFields = useMemo(() => {
@@ -335,9 +386,16 @@ function StepCard({ node, index, total, isOpen, onToggle, onMove, onRemove, upst
   }, [configSchema.fields]);
 
   return (
-    <div className={'rounded-xl border transition-all ' + (isOpen ? 'border-brand-500/30 bg-surface-100' : node.isActive ? 'border-white/[0.06] bg-surface-50/60 hover:bg-surface-100/60' : 'border-white/[0.04] bg-surface-50/30 opacity-50')}>
+    <div className={'rounded-xl border transition-all ' +
+      (isDragging ? 'opacity-40 border-brand-400/50 ' : '') +
+      (isOpen ? 'border-brand-500/30 bg-surface-100' : node.isActive ? 'border-white/[0.06] bg-surface-50/60 hover:bg-surface-100/60' : 'border-white/[0.04] bg-surface-50/30 opacity-50')}>
       {/* Header row */}
       <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none" onClick={onToggle}>
+        {/* Drag handle */}
+        <div className="cursor-grab active:cursor-grabbing text-zinc-600 hover:text-zinc-400 shrink-0" onClick={e => e.stopPropagation()}>
+          <GripVertical className="w-4 h-4" />
+        </div>
+
         {/* Step number */}
         <span className="text-[10px] text-zinc-600 font-mono w-5 text-center shrink-0">{index + 1}</span>
 
@@ -438,7 +496,7 @@ function StepCard({ node, index, total, isOpen, onToggle, onMove, onRemove, upst
                           <span className={'text-[9px] font-semibold ' + c.text}>{items[0].nodeName}</span>
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {items.map(d => (
-                              <button key={d.key} onClick={() => insertVar(d.key)}
+                              <button key={d.key} onClick={() => insertVar('{upstream:' + d.key + '}')}
                                 className="text-[8px] px-1.5 py-0.5 rounded bg-surface-300 text-brand-300 font-mono hover:bg-brand-600/20 transition">
                                 {'{upstream:' + d.key + '}'}
                               </button>
@@ -449,6 +507,26 @@ function StepCard({ node, index, total, isOpen, onToggle, onMove, onRemove, upst
                     });
                   })()}
                   {upstreamData.length === 0 && <p className="text-[9px] text-zinc-600">Eerste stap — geen upstream data.</p>}
+                </div>
+              </div>
+
+              {/* Channel data variables */}
+              <div>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Hash className="w-3 h-3 text-blue-400" />
+                  <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider">Kanaal Data</span>
+                </div>
+                <p className="text-[9px] text-zinc-600 mb-2">Wordt automatisch ingevuld met kanaalinstellingen van het project.</p>
+                <div className="bg-blue-500/5 rounded-lg p-2.5 border border-blue-500/10">
+                  <div className="flex flex-wrap gap-1">
+                    {CHANNEL_VARS.map(cv => (
+                      <button key={cv.key} onClick={() => insertVar('{channel:' + cv.key + '}')}
+                        className="text-[8px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono hover:bg-blue-500/20 transition"
+                        title={cv.label}>
+                        {'{channel:' + cv.key + '}'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -488,7 +566,7 @@ function StepCard({ node, index, total, isOpen, onToggle, onMove, onRemove, upst
   );
 }
 
-// ── Dynamic Field (compact for grid) ──
+// ── Dynamic Field ──
 
 function DynField({ field, value, onChange, sourceOptions }: {
   field: ConfigField; value: any; onChange: (v: any) => void; sourceOptions?: { value: string; label: string }[];
