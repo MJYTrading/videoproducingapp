@@ -89,8 +89,8 @@ model Channel {
   specialEditsEnabled   Boolean @default(true)
 
   // Pipeline v2 presets
-  sfxLevel              String  @default("medium")       // "low" | "medium" | "high"
-  motionGraphicsLevel   String  @default("medium")       // "low" | "medium" | "high"
+  sfxLevel              String  @default("medium")
+  motionGraphicsLevel   String  @default("medium")
 
   // Standaard project instellingen
   defaultScriptLengthMinutes Float    @default(8)
@@ -103,7 +103,7 @@ model Channel {
   defaultVisualStyleParent   String?  @default("ai")
   referenceScriptUrls        String   @default("[]")
 
-  // Analytics — RPM (Revenue Per Mille) per kanaal
+  // Analytics
   rpm                        Float    @default(0)
 
   // Relaties
@@ -118,7 +118,7 @@ model Channel {
   viewSnapshots         ChannelViewSnapshot[]
 }
 
-// ─── Channel View Snapshots (per-uur views tracking) ────
+// ─── Channel View Snapshots ─────────────────────────────
 
 model ChannelViewSnapshot {
   id            String   @id @default(cuid())
@@ -135,7 +135,7 @@ model ChannelViewSnapshot {
   @@index([hour])
 }
 
-// ─── Video View Snapshots (per-video views tracking) ────
+// ─── Video View Snapshots ───────────────────────────────
 
 model VideoViewSnapshot {
   id            String   @id @default(cuid())
@@ -200,12 +200,15 @@ model Project {
   videoType           String    @default("ai")
   subtitleStyle       String    @default("classic")
 
+  // v3: Pipeline reference
+  pipelineId          String?
+
   channel             Channel?  @relation(fields: [channelId], references: [id])
   steps               Step[]
   logs                LogEntry[]
 }
 
-// ─── Pipeline ───────────────────────────────────────────
+// ─── Pipeline Steps (per project run) ──────────────────
 
 model Step {
   id             String    @id @default(cuid())
@@ -234,8 +237,13 @@ model LogEntry {
   step      Int
   source    String
   message   String
+  detail    String?
+  durationMs Int?
   projectId String
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, step])
+  @@index([projectId, timestamp])
 }
 
 // ─── Voices ─────────────────────────────────────────────
@@ -278,7 +286,7 @@ model ResearchTemplate {
   updatedAt   DateTime @updatedAt
 }
 
-// ─── NexLev Data Cache ─────────────────────────────────
+// ─── NexLev Data Cache ──────────────────────────────────
 
 model NexLevCache {
   id          String   @id @default(cuid())
@@ -291,7 +299,7 @@ model NexLevCache {
   @@index([channelId])
 }
 
-// ─── Competitors ───────────────────────────────────────
+// ─── Competitors ────────────────────────────────────────
 
 model Competitor {
   id              String   @id @default(cuid())
@@ -308,7 +316,7 @@ model Competitor {
   @@index([channelId])
 }
 
-// ─── Clip Library (gedeeld over alle kanalen) ───────────
+// ─── Clip Library ───────────────────────────────────────
 
 model AssetClip {
   id            String    @id @default(cuid())
@@ -494,7 +502,7 @@ model AssetImage {
 }
 
 // ═══════════════════════════════════════════════════════════
-// PIPELINE ADMIN — Nieuwe modellen
+// PIPELINE BUILDER v3 — Visuele Pipeline Builder
 // ═══════════════════════════════════════════════════════════
 
 // ─── LLM Modellen ───────────────────────────────────────
@@ -514,61 +522,10 @@ model LlmModel {
   notes           String    @default("")
   createdAt       DateTime  @default(now())
 
+  // Relations (v2 legacy + v3)
   pipelineSteps   PipelineStep[]
-}
-
-// ─── Pipeline Stappen ───────────────────────────────────
-
-model PipelineStep {
-  id              Int       @id @default(autoincrement())
-  stepNumber      Int       @unique
-  name            String
-  description     String    @default("")
-
-  executorLabel   String    @default("App")
-  executorFn      String    @default("")
-
-  toolPrimary     String    @default("")
-  toolFallback    String?
-
-  llmModelId      Int?
-  llmModel        LlmModel? @relation(fields: [llmModelId], references: [id])
-  systemPrompt    String    @default("")
-  userPromptTpl   String    @default("")
-  outputFormat    String    @default("")
-  temperature     Float     @default(0.7)
-  maxTokens       Int?
-
-  dependsOn       String    @default("[]")
-  parallelGroup   String?
-  isCheckpoint    Boolean   @default(false)
-  checkpointCond  String?
-
-  timeout         Int       @default(300000)
-  maxRetries      Int       @default(3)
-  retryDelays     String    @default("[5000,15000,30000]")
-
-  readyToUse      Boolean   @default(false)
-  isActive        Boolean   @default(true)
-  sortOrder       Int       @default(0)
-
-  notes           String    @default("")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  videoTypeConfigs PipelineVideoTypeConfig[]
-}
-
-// ─── Video Type → Step Config ───────────────────────────
-
-model PipelineVideoTypeConfig {
-  id           Int           @id @default(autoincrement())
-  videoType    String
-  stepId       Int
-  step         PipelineStep  @relation(fields: [stepId], references: [id], onDelete: Cascade)
-  enabled      Boolean       @default(true)
-
-  @@unique([videoType, stepId])
+  stepDefinitions StepDefinition[]
+  pipelineNodes   PipelineNode[]
 }
 
 // ─── API Tools ──────────────────────────────────────────
@@ -606,7 +563,7 @@ model ApiTestLog {
   createdAt    DateTime  @default(now())
 }
 
-// ─── AI Assistent Gesprekken ────────────────────────────
+// ─── AI Assistent ───────────────────────────────────────
 
 model AssistantConversation {
   id           String    @id @default(cuid())
@@ -615,4 +572,164 @@ model AssistantConversation {
   context      String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+}
+
+// ─── v2 Legacy: Pipeline Steps (blijft als fallback) ────
+
+model PipelineStep {
+  id              Int       @id @default(autoincrement())
+  stepNumber      Int       @unique
+  name            String
+  description     String    @default("")
+  executorLabel   String    @default("App")
+  executorFn      String    @default("")
+  toolPrimary     String    @default("")
+  toolFallback    String?
+  llmModelId      Int?
+  llmModel        LlmModel? @relation(fields: [llmModelId], references: [id])
+  systemPrompt    String    @default("")
+  userPromptTpl   String    @default("")
+  outputFormat    String    @default("")
+  temperature     Float     @default(0.7)
+  maxTokens       Int?
+  dependsOn       String    @default("[]")
+  parallelGroup   String?
+  isCheckpoint    Boolean   @default(false)
+  checkpointCond  String?
+  timeout         Int       @default(300000)
+  maxRetries      Int       @default(3)
+  retryDelays     String    @default("[5000,15000,30000]")
+  readyToUse      Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  sortOrder       Int       @default(0)
+  notes           String    @default("")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  videoTypeConfigs PipelineVideoTypeConfig[]
+}
+
+model PipelineVideoTypeConfig {
+  id           Int           @id @default(autoincrement())
+  videoType    String
+  stepId       Int
+  step         PipelineStep  @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  enabled      Boolean       @default(true)
+  @@unique([videoType, stepId])
+}
+
+// ═══════════════════════════════════════════════════════════
+// PIPELINE BUILDER v3 — Nieuwe modellen
+// ═══════════════════════════════════════════════════════════
+
+// ─── Step Definitions (globale catalogus van atomaire stappen) ──
+
+model StepDefinition {
+  id              Int       @id @default(autoincrement())
+  name            String                                // "Research JSON"
+  slug            String    @unique                     // "research-json"
+  category        String    @default("general")         // research | script | audio | visual | post | output
+  description     String    @default("")
+  executorFn      String    @default("")                // "executeStepResearch"
+  executorLabel   String    @default("App")             // "Sonar Deep Research"
+
+  // Tool & LLM defaults
+  toolPrimaryId   Int?
+  toolFallbackId  Int?
+  llmModelId      Int?
+  llmModel        LlmModel? @relation(fields: [llmModelId], references: [id])
+
+  // Default prompts & config
+  defaultConfig   String    @default("{}")              // JSON: temperature, maxTokens, etc.
+  systemPrompt    String    @default("")
+  userPromptTpl   String    @default("")
+  outputFormat    String    @default("")                // "json" | "text" | "file" | "multi-file"
+
+  // Input/Output schema
+  inputSchema     String    @default("[]")              // JSON: [{ key, type, label, required }]
+  outputSchema    String    @default("[]")              // JSON: [{ key, type, label, filePath }]
+
+  // Status
+  isReady         Boolean   @default(false)             // Is de executor gebouwd?
+  isActive        Boolean   @default(true)
+  notes           String    @default("")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  pipelineNodes   PipelineNode[]
+}
+
+// ─── Pipeline (per video type — eigen configuratie) ─────
+
+model Pipeline {
+  id              Int       @id @default(autoincrement())
+  name            String                                // "AI Generated Video"
+  slug            String    @unique                     // "ai"
+  description     String    @default("")
+  isDefault       Boolean   @default(false)             // Standaard pipeline voor dit type
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  nodes           PipelineNode[]
+  connections     PipelineConnection[]
+}
+
+// ─── Pipeline Node (een stap geplaatst in een pipeline) ─
+
+model PipelineNode {
+  id                  Int       @id @default(autoincrement())
+  pipelineId          Int
+  pipeline            Pipeline  @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  stepDefinitionId    Int
+  stepDefinition      StepDefinition @relation(fields: [stepDefinitionId], references: [id])
+
+  // Visuele positie op canvas
+  positionX           Float     @default(0)
+  positionY           Float     @default(0)
+  sortOrder           Int       @default(0)             // Fallback executie volgorde
+
+  // Per-pipeline overrides (overschrijft StepDefinition defaults)
+  configOverrides     String    @default("{}")           // JSON: temperature, maxTokens, etc.
+  systemPromptOverride String?                           // null = gebruik default
+  userPromptOverride   String?                           // null = gebruik default
+  llmModelOverrideId   Int?
+  llmModelOverride     LlmModel? @relation(fields: [llmModelOverrideId], references: [id])
+
+  // Pipeline execution config
+  isActive            Boolean   @default(true)
+  isCheckpoint        Boolean   @default(false)
+  checkpointCond      String?
+  timeout             Int       @default(300000)
+  maxRetries          Int       @default(3)
+  retryDelays         String    @default("[5000,15000,30000]")
+
+  // Relations
+  outgoingConnections PipelineConnection[] @relation("SourceNode")
+  incomingConnections PipelineConnection[] @relation("TargetNode")
+
+  @@unique([pipelineId, stepDefinitionId])
+  @@index([pipelineId])
+}
+
+// ─── Pipeline Connection (draad tussen twee nodes) ──────
+
+model PipelineConnection {
+  id              Int       @id @default(autoincrement())
+  pipelineId      Int
+  pipeline        Pipeline  @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  sourceNodeId    Int
+  sourceNode      PipelineNode @relation("SourceNode", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  sourceOutputKey String                                // "research_json"
+
+  targetNodeId    Int
+  targetNode      PipelineNode @relation("TargetNode", fields: [targetNodeId], references: [id], onDelete: Cascade)
+  targetInputKey  String                                // "research_data"
+
+  @@unique([pipelineId, sourceNodeId, sourceOutputKey, targetNodeId, targetInputKey])
+  @@index([pipelineId])
+  @@index([sourceNodeId])
+  @@index([targetNodeId])
 }
